@@ -78,6 +78,7 @@
         .status-badges {
             display: flex;
             gap: 12px;
+            align-items: center;
         }
 
         .badge {
@@ -148,7 +149,7 @@
             color: var(--text-muted);
         }
 
-        input[type="text"], input[type="file"] {
+        input[type="text"], input[type="file"], select {
             background: rgba(0, 0, 0, 0.3);
             border: 1px solid var(--card-border);
             padding: 12px 16px;
@@ -159,14 +160,14 @@
             transition: border-color 0.2s;
         }
 
-        input[type="text"]:focus {
+        input[type="text"]:focus, select:focus {
             border-color: #6366f1;
         }
 
         .btn {
             padding: 12px 20px;
             border-radius: 10px;
-            border: none;
+            border: 1px solid transparent;
             font-family: inherit;
             font-weight: 600;
             font-size: 14px;
@@ -190,12 +191,13 @@
         }
 
         .btn-secondary {
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--card-border);
             color: #fff;
         }
 
         .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.18);
+            background: rgba(255, 255, 255, 0.16);
         }
 
         .preset-buttons {
@@ -400,12 +402,12 @@
                 <p>Silero VAD • Zipformer ASR • WavLM Speaker ID • Qdrant • Ollama LLM</p>
             </div>
             <div class="status-badges">
+                <div class="badge" id="latency-meter" style="background: rgba(99, 102, 241, 0.15); border-color: rgba(99, 102, 241, 0.3); color: #a5b4fc;">
+                    ⚡ Latency ASR: -- ms
+                </div>
                 <div class="badge">
                     <span class="badge-dot pulse" id="ws-dot"></span>
                     <span id="ws-status">AI Server WebSocket: Connected</span>
-                </div>
-                <div class="badge">
-                    <span>Qdrant DB: Active</span>
                 </div>
             </div>
         </header>
@@ -444,14 +446,24 @@
                 </div>
             </div>
 
-            <!-- Card 2: Simulation & Test Control -->
+            <!-- Card 2: Simulation & Live Audio Monitor Control -->
             <div class="card">
                 <div class="card-title">
-                    <span>🚀</span> Bảng Điều Khiển Mô Phỏng Cuộc Họp (Test Client)
+                    <span>🎧</span> Giám Sát Âm Thanh Realtime & Đo Độ Trễ ASR
                 </div>
                 <p style="font-size: 14px; color: var(--text-muted); line-height: 1.5;">
-                    Khởi chạy đồng thời 2 Micro (Mic_A và Mic_B) đẩy luồng âm thanh thời gian thực lên Server LiveKit & AI Processing Pipeline.
+                    Phát âm thanh trực tiếp từ các luồng Micro về trình duyệt để nghe kiểm tra và đánh giá trực quan độ trễ (delay) với chữ ASR STT.
                 </p>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button class="btn btn-secondary" id="btn-toggle-audio" style="flex: 2; height: 42px;" onclick="toggleAudioMonitor()">
+                        🔇 Live Audio Monitor: <span style="color: #ef4444; margin-left: 4px;">ĐÃ TẮT</span>
+                    </button>
+                    <select id="select-audio-mic" style="flex: 1; height: 42px;" onchange="selectedAudioMic = this.value">
+                        <option value="all">🔊 Tất cả Mic</option>
+                        <option value="Mic_A">Chỉ Mic_A</option>
+                        <option value="Mic_B">Chỉ Mic_B</option>
+                    </select>
+                </div>
                 <div style="display: flex; gap: 12px; margin-top: auto;">
                     <button class="btn btn-primary" style="flex: 2; height: 48px; font-size: 15px;" onclick="runSimulation()">
                         ▶ Khởi Chạy Test Mô Phỏng 2 Mic
@@ -510,6 +522,64 @@
         let ws = null;
         const minutes = [];
 
+        // --- REAL-TIME AUDIO MONITOR & LATENCY DECODER ---
+        let audioCtx = null;
+        let isAudioMonitorOn = false;
+        let selectedAudioMic = "all";
+        const nextPlayTimeMap = {};
+
+        function toggleAudioMonitor() {
+            isAudioMonitorOn = !isAudioMonitorOn;
+            const btn = document.getElementById('btn-toggle-audio');
+            if (isAudioMonitorOn) {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                btn.innerHTML = `🔊 Live Audio Monitor: <span style="color: #10b981; margin-left: 4px;">ĐANG BẬT</span>`;
+                btn.style.borderColor = "#10b981";
+            } else {
+                btn.innerHTML = `🔇 Live Audio Monitor: <span style="color: #ef4444; margin-left: 4px;">ĐÃ TẮT</span>`;
+                btn.style.borderColor = "var(--card-border)";
+            }
+        }
+
+        function playPcmBase64(identity, b64Audio) {
+            if (!isAudioMonitorOn || !audioCtx) return;
+            if (selectedAudioMic !== "all" && selectedAudioMic !== identity) return;
+
+            try {
+                const binaryStr = window.atob(b64Audio);
+                const len = binaryStr.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binaryStr.charCodeAt(i);
+                }
+                const pcm16 = new Int16Array(bytes.buffer);
+                const float32 = new Float32Array(pcm16.length);
+                for (let i = 0; i < pcm16.length; i++) {
+                    float32[i] = pcm16[i] / 32768.0;
+                }
+
+                const buffer = audioCtx.createBuffer(1, float32.length, 16000);
+                buffer.getChannelData(0).set(float32);
+                const source = audioCtx.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioCtx.destination);
+
+                const now = audioCtx.currentTime;
+                if (!nextPlayTimeMap[identity] || nextPlayTimeMap[identity] < now) {
+                    nextPlayTimeMap[identity] = now;
+                }
+                source.start(nextPlayTimeMap[identity]);
+                nextPlayTimeMap[identity] += buffer.duration;
+            } catch (e) {
+                console.error("Lỗi phát audio realtime:", e);
+            }
+        }
+
         function connectWebSocket() {
             ws = new WebSocket(WS_URL);
             ws.onopen = () => {
@@ -531,10 +601,17 @@
         const micTimers = {};
 
         function handleServerMessage(data) {
-            if (data.type === "enrolled_speakers") {
+            if (data.type === "live_audio") {
+                playPcmBase64(data.identity, data.audio);
+            } else if (data.type === "enrolled_speakers") {
                 renderSpeakers(data.speakers, data.similarity);
             } else if (data.partial) {
                 // Streaming draft update
+                if (data.ts) {
+                    const delayMs = Math.max(10, Math.round((Date.now() / 1000 - data.ts) * 1000));
+                    document.getElementById('latency-meter').innerText = `⚡ Latency ASR: ${delayMs} ms`;
+                }
+
                 const micId = data.identity;
                 const draftEl = document.getElementById(`draft-${micId}`);
                 const boxEl = document.getElementById(`mic-box-${micId}`);
@@ -589,7 +666,6 @@
             const timeline = document.getElementById('minutes-timeline');
             if (minutes.length === 1) timeline.innerHTML = "";
 
-            // Format thời gian đẹp mắt
             const startTimeStr = new Date(minute.start_time * 1000).toLocaleTimeString('vi-VN');
             const endTimeStr = new Date(minute.end_time * 1000).toLocaleTimeString('vi-VN');
 

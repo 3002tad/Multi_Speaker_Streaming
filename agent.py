@@ -19,10 +19,10 @@ async def process_track(track: rtc.Track, identity: str):
     try:
         async with websockets.connect(uri) as ws:
             
-            last_speaker = None
-            last_text = None
+            last_text = ""
+            last_print_ts = 0.0
             async def receive_from_server():
-                nonlocal last_speaker, last_text
+                nonlocal last_text, last_print_ts
                 try:
                     while True:
                         msg = await ws.recv()
@@ -30,19 +30,14 @@ async def process_track(track: rtc.Track, identity: str):
                         if "partial" in data:
                             identity_label = data.get("identity", identity)
                             partial_text = data["partial"]
-                            if last_speaker != identity_label:
-                                last_speaker = identity_label
+                            now = time.time()
+                            if last_text != partial_text and (now - last_print_ts > 0.35):
+                                last_print_ts = now
                                 last_text = partial_text
-                                disp = partial_text[-75:] if len(partial_text) > 75 else partial_text
-                                print(f"\n[💬 Nháp] [{identity_label}]: ...{disp:<75}", end="", flush=True)
-                            elif last_text != partial_text:
-                                last_text = partial_text
-                                disp = partial_text[-75:] if len(partial_text) > 75 else partial_text
-                                print(f"\r[💬 Nháp] [{identity_label}]: ...{disp:<75}", end="", flush=True)
+                                print(f"[💬 Nháp] [{identity_label}]: ...{partial_text[-65:]}")
                         else:
-                            last_speaker = None
-                            last_text = None
-                            print(f"\n\n[📦 BIÊN BẢN CHÍNH THỨC]: {json.dumps(data, ensure_ascii=False)}\n")
+                            last_text = ""
+                            print(f"\n[📦 BIÊN BẢN CHÍNH THỨC]: {json.dumps(data, ensure_ascii=False)}\n")
                 except websockets.exceptions.ConnectionClosed:
                     pass
                 except Exception as e:
