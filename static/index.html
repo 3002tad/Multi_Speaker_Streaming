@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Speaker AI Streaming Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #090d16;
+            --card-bg: rgba(22, 30, 46, 0.7);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --primary-gradient: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-amber: #f59e0b;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 24px;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(99, 102, 241, 0.15) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(236, 72, 153, 0.12) 0%, transparent 40%);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 28px;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 18px;
+            backdrop-filter: blur(12px);
+        }
+
+        .logo-section h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-section p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .status-badges {
+            display: flex;
+            gap: 12px;
+        }
+
+        .badge {
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--card-border);
+        }
+
+        .badge-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+        }
+
+        .badge-dot.pulse {
+            animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        /* Control Grid */
+        .grid-top {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 18px;
+            padding: 24px;
+            backdrop-filter: blur(12px);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Form elements */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .form-group label {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        input[type="text"], input[type="file"] {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--card-border);
+            padding: 12px 16px;
+            border-radius: 10px;
+            color: #fff;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus {
+            border-color: #6366f1;
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border-radius: 10px;
+            border: none;
+            font-family: inherit;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--primary-gradient);
+            color: #fff;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.18);
+        }
+
+        .preset-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        /* Speakers enrolled list */
+        .speakers-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .speaker-chip {
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Main Workspace Grid */
+        .grid-main {
+            display: grid;
+            grid-template-columns: 1fr 1.6fr;
+            gap: 24px;
+        }
+
+        /* Streaming Drafts Panel */
+        .drafts-container {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            max-height: 550px;
+            overflow-y: auto;
+        }
+
+        .mic-box {
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .mic-box.active {
+            border-color: #6366f1;
+            box-shadow: 0 0 15px rgba(99, 102, 241, 0.2);
+        }
+
+        .mic-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .mic-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: #a5b4fc;
+        }
+
+        .draft-text {
+            font-size: 14px;
+            color: #d1d5db;
+            line-height: 1.5;
+            min-height: 48px;
+            max-height: 72px;
+            overflow-y: auto;
+            font-style: italic;
+            transition: color 0.2s ease;
+        }
+
+        /* Meeting Minutes Panel - Timeline Layout */
+        .minutes-timeline {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-height: 550px;
+            overflow-y: auto;
+            padding-left: 20px;
+            padding-right: 10px;
+            position: relative;
+        }
+
+        .minutes-timeline::before {
+            content: '';
+            position: absolute;
+            top: 10px;
+            bottom: 10px;
+            left: 8px;
+            width: 2px;
+            background: linear-gradient(180deg, #6366f1 0%, rgba(99, 102, 241, 0.2) 100%);
+            border-radius: 2px;
+        }
+
+        .minute-card {
+            position: relative;
+            background: rgba(15, 23, 42, 0.75);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            backdrop-filter: blur(10px);
+            animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .minute-card::before {
+            content: '';
+            position: absolute;
+            left: -19px;
+            top: 22px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #6366f1;
+            box-shadow: 0 0 10px #6366f1;
+            border: 2px solid #090d16;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .minute-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .speaker-badge {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(168, 85, 247, 0.25));
+            color: #c084fc;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid rgba(168, 85, 247, 0.3);
+        }
+
+        .time-badge {
+            font-size: 12px;
+            color: #a5b4fc;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 3px 10px;
+            border-radius: 10px;
+        }
+
+        .minute-text {
+            font-size: 15px;
+            line-height: 1.6;
+            color: #f9fafb;
+        }
+
+        .raw-text-toggle {
+            font-size: 12px;
+            color: #6b7280;
+            cursor: pointer;
+            margin-top: 4px;
+        }
+
+        .raw-text {
+            font-size: 12px;
+            color: #9ca3af;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 8px 12px;
+            border-radius: 6px;
+            display: none;
+            margin-top: 6px;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo-section">
+                <h1>🎙️ Multi-Speaker AI Streaming Dashboard</h1>
+                <p>Silero VAD • Zipformer ASR • WavLM Speaker ID • Qdrant • Ollama LLM</p>
+            </div>
+            <div class="status-badges">
+                <div class="badge">
+                    <span class="badge-dot pulse" id="ws-dot"></span>
+                    <span id="ws-status">AI Server WebSocket: Connected</span>
+                </div>
+                <div class="badge">
+                    <span>Qdrant DB: Active</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Top Controls -->
+        <div class="grid-top">
+            <!-- Card 1: Speaker Enrollment -->
+            <div class="card">
+                <div class="card-title">
+                    <span>👤</span> Ghi Danh Vân Tay Giọng Nói (Enrollment)
+                </div>
+                <div class="form-group">
+                    <label>Tên người phát biểu:</label>
+                    <input type="text" id="speaker-name" placeholder="Ví dụ: thay_Dung">
+                </div>
+                <div class="form-group">
+                    <label>File âm thanh giọng mẫu (.wav):</label>
+                    <input type="file" id="speaker-file" accept=".wav">
+                </div>
+                <button class="btn btn-primary" id="btn-enroll-manual" onclick="uploadEnrollment()">
+                    ⬆️ Gửi Vân Tay Lên AI Server
+                </button>
+                <div class="preset-buttons">
+                    <button class="btn btn-secondary" style="flex:1;" onclick="quickEnroll('thay_Dung', 'audio/thayDung_goc.wav')">
+                        ⚡ Enroll Thầy Dũng
+                    </button>
+                    <button class="btn btn-secondary" style="flex:1;" onclick="quickEnroll('thay_Phuoc', 'audio/thayPhuoc_goc.wav')">
+                        ⚡ Enroll Thầy Phước
+                    </button>
+                </div>
+                <div>
+                    <label style="font-size: 13px; color: var(--text-muted);">Danh sách đã Enroll trong DB:</label>
+                    <div class="speakers-list" id="speakers-list">
+                        <span class="speaker-chip">Chưa có vân tay nào</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 2: Simulation & Test Control -->
+            <div class="card">
+                <div class="card-title">
+                    <span>🚀</span> Bảng Điều Khiển Mô Phỏng Cuộc Họp (Test Client)
+                </div>
+                <p style="font-size: 14px; color: var(--text-muted); line-height: 1.5;">
+                    Khởi chạy đồng thời 2 Micro (Mic_A và Mic_B) đẩy luồng âm thanh thời gian thực lên Server LiveKit & AI Processing Pipeline.
+                </p>
+                <div style="display: flex; gap: 12px; margin-top: auto;">
+                    <button class="btn btn-primary" style="flex: 2; height: 48px; font-size: 15px;" onclick="runSimulation()">
+                        ▶ Khởi Chạy Test Mô Phỏng 2 Mic
+                    </button>
+                    <button class="btn btn-secondary" style="flex: 1;" onclick="clearMinutes()">
+                        🗑️ Xóa Biên Bản
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Workspace -->
+        <div class="grid-main">
+            <!-- Left: Streaming Drafts -->
+            <div class="card">
+                <div class="card-title">
+                    <span>💬</span> Nháp Thời Gian Thực (Streaming Drafts)
+                </div>
+                <div class="drafts-container">
+                    <div class="mic-box" id="mic-box-Mic_A">
+                        <div class="mic-header">
+                            <span class="mic-name">🎙️ Mic_A (Vị trí 1)</span>
+                            <span class="badge" id="mic-status-Mic_A" style="font-size: 11px;">Chờ tín hiệu</span>
+                        </div>
+                        <div class="draft-text" id="draft-Mic_A">Đang đợi âm thanh...</div>
+                    </div>
+                    <div class="mic-box" id="mic-box-Mic_B">
+                        <div class="mic-header">
+                            <span class="mic-name">🎙️ Mic_B (Vị trí 2)</span>
+                            <span class="badge" id="mic-status-Mic_B" style="font-size: 11px;">Chờ tín hiệu</span>
+                        </div>
+                        <div class="draft-text" id="draft-Mic_B">Đang đợi âm thanh...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Official Meeting Minutes -->
+            <div class="card">
+                <div class="card-title" style="justify-content: space-between;">
+                    <span>📦 Biên Bản Cuộc Họp Chính Thức (Official Minutes)</span>
+                    <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 12px;" onclick="exportMarkdown()">
+                        📥 Xuất Markdown
+                    </button>
+                </div>
+                <div class="minutes-timeline" id="minutes-timeline">
+                    <div style="text-align: center; color: var(--text-muted); padding: 40px 0; font-size: 14px;">
+                        Chưa có lượt phát biểu nào được chốt biên bản.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const WS_URL = `ws://${window.location.host}/ws/web_dashboard`;
+        let ws = null;
+        const minutes = [];
+
+        function connectWebSocket() {
+            ws = new WebSocket(WS_URL);
+            ws.onopen = () => {
+                console.log("WebSocket connected to AI Server Dashboard");
+                document.getElementById('ws-status').innerText = "AI Server WebSocket: Connected";
+                document.getElementById('ws-dot').style.background = "#10b981";
+            };
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleServerMessage(data);
+            };
+            ws.onclose = () => {
+                document.getElementById('ws-status').innerText = "AI Server WebSocket: Disconnected";
+                document.getElementById('ws-dot').style.background = "#ef4444";
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        const micTimers = {};
+
+        function handleServerMessage(data) {
+            if (data.type === "enrolled_speakers") {
+                renderSpeakers(data.speakers, data.similarity);
+            } else if (data.partial) {
+                // Streaming draft update
+                const micId = data.identity;
+                const draftEl = document.getElementById(`draft-${micId}`);
+                const boxEl = document.getElementById(`mic-box-${micId}`);
+                const statusEl = document.getElementById(`mic-status-${micId}`);
+                const micNameEl = boxEl ? boxEl.querySelector('.mic-name') : null;
+
+                if (draftEl) {
+                    draftEl.innerText = data.partial;
+                    if (micNameEl && data.speaker) {
+                        micNameEl.innerHTML = `🎙️ ${micId} — <span style="color: #c084fc;">👤 ${data.speaker}</span>`;
+                    }
+                    if (!boxEl.classList.contains('active')) {
+                        boxEl.classList.add('active');
+                        statusEl.innerText = "🎙️ Đang phát biểu...";
+                    }
+                    if (micTimers[micId]) clearTimeout(micTimers[micId]);
+                    micTimers[micId] = setTimeout(() => {
+                        boxEl.classList.remove('active');
+                        statusEl.innerText = "Tạm dừng";
+                    }, 3000);
+                }
+            } else if (data.text && data.speaker) {
+                // Final official meeting minute
+                const micId = data.identity;
+                const boxEl = document.getElementById(`mic-box-${micId}`);
+                const statusEl = document.getElementById(`mic-status-${micId}`);
+                
+                if (boxEl) {
+                    boxEl.classList.remove('active');
+                    statusEl.innerText = "Tạm dừng";
+                }
+                
+                addMinuteCard(data);
+            }
+        }
+
+        function renderSpeakers(speakers, sim) {
+            const listEl = document.getElementById('speakers-list');
+            if (!speakers || speakers.length === 0) {
+                listEl.innerHTML = `<span class="speaker-chip">Chưa có vân tay nào</span>`;
+                return;
+            }
+            let html = speakers.map(s => `<span class="speaker-chip">👤 ${s}</span>`).join('');
+            if (sim) {
+                html += `<span class="speaker-chip" style="background: rgba(16, 185, 129, 0.15); border-color: #10b981;">📊 Similarity: ${sim}</span>`;
+            }
+            listEl.innerHTML = html;
+        }
+
+        function addMinuteCard(minute) {
+            minutes.push(minute);
+            const timeline = document.getElementById('minutes-timeline');
+            if (minutes.length === 1) timeline.innerHTML = "";
+
+            // Format thời gian đẹp mắt
+            const startTimeStr = new Date(minute.start_time * 1000).toLocaleTimeString('vi-VN');
+            const endTimeStr = new Date(minute.end_time * 1000).toLocaleTimeString('vi-VN');
+
+            const card = document.createElement('div');
+            card.className = 'minute-card';
+            card.innerHTML = `
+                <div class="minute-meta">
+                    <span class="speaker-badge">👤 ${minute.speaker} <small style="opacity: 0.7; font-weight: normal;">(${minute.identity})</small></span>
+                    <span class="time-badge">⏱️ ${startTimeStr} - ${endTimeStr} (${(minute.end_time - minute.start_time).toFixed(1)}s)</span>
+                </div>
+                <div class="minute-text">${minute.text}</div>
+                <div class="raw-text-toggle" onclick="toggleRaw(this)">🔍 Xem câu thô ASR</div>
+                <div class="raw-text">${minute.raw_text}</div>
+            `;
+            timeline.prepend(card);
+        }
+
+        function toggleRaw(el) {
+            const raw = el.nextElementSibling;
+            raw.style.display = raw.style.display === 'block' ? 'none' : 'block';
+        }
+
+        async function uploadEnrollment() {
+            const name = document.getElementById('speaker-name').value.trim();
+            const fileInput = document.getElementById('speaker-file');
+            if (!name || fileInput.files.length === 0) {
+                alert("Vui lòng nhập tên người phát biểu và chọn file .wav");
+                return;
+            }
+            const formData = new FormData();
+            formData.append("speaker_name", name);
+            formData.append("file", fileInput.files[0]);
+
+            const res = await fetch("/enroll", { method: "POST", body: formData });
+            const result = await res.json();
+            alert(`Đã đăng ký thành công cho ${result.speaker_name}!`);
+        }
+
+        async function quickEnroll(name, path) {
+            const res = await fetch("/api/quick_enroll", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ speaker_name: name, wav_path: path })
+            });
+            const data = await res.json();
+            alert(data.message);
+        }
+
+        async function runSimulation() {
+            const res = await fetch("/api/simulate", { method: "POST" });
+            const data = await res.json();
+            console.log("Simulation triggered:", data);
+        }
+
+        function clearMinutes() {
+            minutes.length = 0;
+            document.getElementById('minutes-timeline').innerHTML = `
+                <div style="text-align: center; color: var(--text-muted); padding: 40px 0; font-size: 14px;">
+                    Chưa có lượt phát biểu nào được chốt biên bản.
+                </div>
+            `;
+        }
+
+        function exportMarkdown() {
+            if (minutes.length === 0) { alert("Chưa có biên bản để xuất!"); return; }
+            let md = `# BIÊN BẢN CUỘC HỌP CHÍNH THỨC\n\n`;
+            minutes.forEach((m, idx) => {
+                md += `### ${idx + 1}. [${m.speaker}] (${m.identity})\n`;
+                md += `**Nội dung:** ${m.text}\n\n`;
+                md += `*Thời gian:* ${m.start_time}s - ${m.end_time}s\n\n---\n\n`;
+            });
+            const blob = new Blob([md], { type: "text/markdown" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url; a.download = "bien_ban_cuoc_hop.md"; a.click();
+        }
+
+        connectWebSocket();
+    </script>
+</body>
+</html>
