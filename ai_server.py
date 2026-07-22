@@ -92,12 +92,12 @@ def calculate_dynamic_speaker_threshold() -> float:
         with_vectors=True
     )
     if len(results.points) < 2:
-        return 0.80
+        return 0.78
 
     vecs = {p.payload['speaker_label']: np.array(p.vector) for p in results.points if p.vector is not None}
     labels = list(vecs.keys())
     if len(labels) < 2:
-        return 0.80
+        return 0.78
 
     max_sim = 0.0
     for i in range(len(labels)):
@@ -106,8 +106,8 @@ def calculate_dynamic_speaker_threshold() -> float:
             if sim > max_sim:
                 max_sim = sim
 
-    # Ngưỡng thích ứng: Nếu 2 giọng trong DB giống nhau -> đẩy ngưỡng lên cao để chống nhầm người
-    return max(0.75, min(0.92, max_sim + 0.04))
+    # Ngưỡng thích ứng an toàn: Bounded [0.75, 0.82]
+    return max(0.75, min(0.82, max_sim + 0.01))
 
 class AdaptiveNoiseFloor:
     """Tự động thích ứng với độ ồn phông môi trường theo thời gian thực (Dynamic RMS Noise Gate)."""
@@ -447,9 +447,8 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
                         duration_s = len(audio_for_id) / 16000
                         print(f"   [WavLM] Đoạn audio nhận diện: {duration_s:.2f}s")
 
-                        if duration_s >= 1.5:
+                        if duration_s >= 1.2:
                             def run_wavlm(audio=audio_for_id):
-                                # Slide a 4-second window to find peak RMS voice energy
                                 target_len = 16000 * 4
                                 if len(audio) > target_len:
                                     step = 16000 // 2
@@ -478,14 +477,14 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
                                     print(f"   [WavLM] Top 1: {best_match.payload['speaker_label']} ({best_match.score:.3f}) | Top 2: ({second_score:.3f})")
                                     
                                     dyn_thresh = calculate_dynamic_speaker_threshold()
-                                    if best_match.score >= dyn_thresh:
+                                    if best_match.score >= min(dyn_thresh, 0.80):
                                         return best_match.payload['speaker_label']
                                 
                                 print(f"   [WavLM] Không đạt ngưỡng tin cậy thích ứng >= {dyn_thresh:.3f} -> Bỏ qua đoạn rác/nhiễu")
                                 return None
                             speaker_name = await asyncio.to_thread(run_wavlm)
                         else:
-                            print(f"   [WavLM] Bỏ qua nhận diện (audio quá ngắn < 1.5s)")
+                            print(f"   [WavLM] Bỏ qua nhận diện (audio quá ngắn < 1.2s)")
 
                     if not speaker_name:
                         print(f"   [WavLM] Bỏ qua câu không rõ định danh ({identity})")
@@ -498,7 +497,6 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
                     is_dup = False
                     for item in list(global_minute_history):
                         if item["speaker"] == speaker_name and (now - item["time"]) < 5.0:
-                            # Kiểm tra độ trùng lặp văn bản
                             w1 = set(refined.lower().split())
                             w2 = set(item["text"].lower().split())
                             if len(w1) > 0 and len(w1 & w2) / len(w1) > 0.5:
@@ -521,13 +519,13 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
                         "end_time":   round(speech_end_time, 2),
                     }
                     
-                    # Gửi tới Agent và đồng thời Broadcast lên Web Dashboard
                     try:
                         await websocket.send_text(json.dumps(payload, ensure_ascii=False))
                         await dashboard_manager.broadcast(payload)
                         print(f"[✅ Đã gửi Biên Bản cho {identity}]")
                     except Exception as e:
                         print(f"Lỗi gửi: {e}")
+
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -541,20 +539,22 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
             data = await websocket.receive_bytes()
             audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
 
-            # Adaptive Dynamic Noise Gate: Tự động thích ứng với tiếng ồn phông môi trường
+            # Adaptive Dynamic Noise Gate
             rms = float(np.sqrt(np.mean(audio_np**2)))
             dynamic_gate = adaptive_noise.get_dynamic_gate(audio_np, is_speaking)
             if rms < dynamic_gate and not is_speaking:
                 continue
 
-            # DYNAMIC VOICE FOCUS: So sánh độ lớn âm thanh thời gian thực giữa các Mic trong phòng
+            # DYNAMIC VOICE FOCUS: So sánh độ lớn âm thanh thời gian thực giữa các Mic
             is_focused = voice_focus_engine.update_and_check_focus(identity, audio_np)
             if not is_focused:
-                if is_speaking:
-                    # Mic khác đã cướp quyền phát biểu chính -> Ngắt VAD lập tức để đóng câu!
-                    vad_stream.end_input()
-                    vad_stream = vad_model.stream()
-                    is_speaking = False
+                # Nếu Mic bị lọt âm / cướp lời: Gửi frame im lặng để VAD tự ngắt câu tự nhiên mà không reset stream!
+                silent_data = b"\x00" * len(data)
+                silent_frame = rtc.AudioFrame(
+                    data=silent_data, sample_rate=16000, num_channels=1,
+                    samples_per_channel=len(data) // 2
+                )
+                vad_stream.push_frame(silent_frame)
                 continue
 
             if not is_speaking:
@@ -577,11 +577,14 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
     finally:
         try:
             vad_stream.end_input()
+            # Cho vad_task tối đa 4 giây để xử lý xong nốt câu cuối và gửi Biên bản trước khi đóng luồng
+            await asyncio.wait_for(vad_task, timeout=4.0)
         except Exception:
             pass
-        vad_task.cancel()
-        asr_task.cancel()
-        await asyncio.gather(vad_task, asr_task, return_exceptions=True)
+        finally:
+            vad_task.cancel()
+            asr_task.cancel()
+            await asyncio.gather(vad_task, asr_task, return_exceptions=True)
 
 if __name__ == "__main__":
     import uvicorn

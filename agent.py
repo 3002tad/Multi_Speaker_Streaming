@@ -31,12 +31,14 @@ async def process_track(track: rtc.Track, identity: str):
                             identity_label = data.get("identity", identity)
                             partial_text = data["partial"]
                             if last_speaker != identity_label:
-                                print(f"\n[💬 Nháp] [{identity_label}]: {partial_text}", end="", flush=True)
                                 last_speaker = identity_label
                                 last_text = partial_text
+                                disp = partial_text[-75:] if len(partial_text) > 75 else partial_text
+                                print(f"\n[💬 Nháp] [{identity_label}]: ...{disp:<75}", end="", flush=True)
                             elif last_text != partial_text:
-                                print(f"\r[💬 Nháp] [{identity_label}]: {partial_text}", end="", flush=True)
                                 last_text = partial_text
+                                disp = partial_text[-75:] if len(partial_text) > 75 else partial_text
+                                print(f"\r[💬 Nháp] [{identity_label}]: ...{disp:<75}", end="", flush=True)
                         else:
                             last_speaker = None
                             last_text = None
