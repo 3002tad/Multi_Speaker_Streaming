@@ -552,11 +552,16 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
                     }
                     
                     try:
-                        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
                         await dashboard_manager.broadcast(payload)
-                        print(f"[✅ Đã gửi Biên Bản cho {identity}]")
                     except Exception as e:
-                        print(f"Lỗi gửi: {e}")
+                        print(f"Lỗi broadcast Dashboard: {e}")
+
+                    try:
+                        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                    except Exception:
+                        pass
+
+                    print(f"[✅ Đã xuất Biên Bản cho {identity}]")
 
         except asyncio.CancelledError:
             pass
