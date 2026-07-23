@@ -55,8 +55,8 @@ vad_model = silero.VAD.load(
     min_speech_duration=0.3,        # Bắt từ ngắn/ấp úng (0.3s)
     min_silence_duration=1.2,       # 1.2s giữ trọn vẹn 14s-18s bài phát biểu (cho độ chính xác ASR cao nhất)
     prefix_padding_duration=0.5,    
-    activation_threshold=0.45,      # Ngưỡng kích hoạt nhạy với giọng nhỏ
-    deactivation_threshold=0.25,    # Ngưỡng ngắt mượt cho cuộc họp
+    activation_threshold=0.55,      # Ngưỡng kích hoạt 0.55 chống nhận diện nhầm tiếng thở/nhiễu mic
+    deactivation_threshold=0.30,    # Ngưỡng ngắt mượt cho cuộc họp
 )
 
 # ============================================================
@@ -142,8 +142,8 @@ class CrossMicVoiceFocus:
                 if other_rms > max_other_rms:
                     max_other_rms = other_rms
 
-        # Nếu Mic khác đang phát biểu to vượt trội (max_other > 0.025 và rms < max_other * 0.25): Chặn lọt âm!
-        if max_other_rms > 0.025 and rms < (max_other_rms * 0.25):
+        # Nếu Mic khác đang phát biểu to vượt trội (max_other > 0.020 và rms < max_other * 0.40): Chặn lọt âm!
+        if max_other_rms > 0.020 and rms < (max_other_rms * 0.40):
             return False
         return True
 
@@ -223,22 +223,14 @@ async def refine_text(raw_text: str) -> str:
         response = await llm_client.chat.completions.create(
             model="qwen2.5:1.5b",
             messages=[
-                {"role": "system", "content":
-                    "Bạn là công cụ sửa lỗi chính tả văn bản tiếng Việt cho biên bản cuộc họp. "
-                    "Nhiệm vụ: Sửa lỗi chính tả, viết hoa đầu câu, thêm dấu chấm câu và chuẩn hóa thuật ngữ (như HBase, Architecture, HD, Microservice, Web, API). "
-                    "QUY TẮC BẮT BUỘC:\n"
-                    "1. TUYỆT ĐỐI KHÔNG tóm tắt, KHÔNG rút gọn, KHÔNG bỏ bất kỳ câu/từ nào.\n"
-                    "2. TUYỆT ĐỐI KHÔNG giải thích, KHÔNG trả lời câu hỏi, KHÔNG bịa thêm ý mới.\n"
-                    "3. CHỈ trả về đúng duy nhất văn bản đã hiệu đính chính tả."},
-                {"role": "user",    "content": "Văn bản gốc: thì ở đây một năm chấm hai họ nói về cái lĩnh vực andropteris gồm có hpase"},
-                {"role": "assistant","content": "Thì ở đây mục 1.2 họ nói về cái lĩnh vực Architecture gồm có HBase."},
-                {"role": "user",    "content": "Văn bản gốc: rồi thì ở đây năm chấm hai họ nói về cái lớp đầu tiên"},
-                {"role": "assistant","content": "Rồi thì ở đây mục 5.2 họ nói về cái lớp đầu tiên."},
-                {"role": "user",    "content": f"Văn bản gốc: {raw_text}"},
+                {"role": "system", "content": "Sửa lỗi chính tả tiếng Việt cuộc họp. Chuẩn hóa từ ASR nghe nhầm: 'lồng quét' -> 'làm web', 'aptoris' -> 'Architecture', 'hpase' -> 'HBase', 'hd' -> 'HD'. KHÔNG tóm tắt. CHỈ trả về đúng văn bản đã sửa."},
+                {"role": "user", "content": "Văn bản gốc: lồng quét này nọ làm hệ thống web lồng quét aptoris gồm hpase"},
+                {"role": "assistant", "content": "Làm Web này nọ làm hệ thống web, làm web Architecture gồm HBase."},
+                {"role": "user", "content": f"Văn bản gốc: {raw_text}"},
             ],
-            max_tokens=512,
+            max_tokens=256,
             temperature=0.0,
-            stop=["\n\n", "\n1.", "\n-", "Dưới đây", "Nếu bạn"]
+            stop=["\n", "\n\n", "Dưới đây", "Nếu bạn"]
         )
         res_text = response.choices[0].message.content.strip()
 
@@ -308,8 +300,8 @@ async def _process_enrollment_audio(speaker_name: str, audio: np.ndarray, sr: in
 
     clean_audio = np.concatenate(speech_segments) if speech_segments else audio
 
-    CHUNK = 16000 * 3
-    STEP  = int(16000 * 1.5)
+    CHUNK = 16000 * 4
+    STEP  = int(16000 * 2.0)
     embeddings = []
 
     if len(clean_audio) < CHUNK:
@@ -365,7 +357,7 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
     vad_stream  = vad_model.stream()
     asr_lock = asyncio.Lock()
 
-    PRE_BUFFER_CHUNKS = 25
+    PRE_BUFFER_CHUNKS = 40
     pre_speech_buf = collections.deque(maxlen=PRE_BUFFER_CHUNKS)
 
     speech_audio_chunks: list[np.ndarray] = []
@@ -379,19 +371,30 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
 
     last_sent_text = ""
     last_speech_end_time = 0.0
+    bg_tasks = set()
+
+    # (inside process_vad_events when END_OF_SPEECH triggers):
+    # t = asyncio.create_task(process_final_minute_bg(audio_snapshot, raw_text, speech_start_time, speech_end_time))
+    # bg_tasks.add(t)
+    # t.add_done_callback(bg_tasks.discard)
+    has_completed_main_turn = False
 
     async def asr_worker():
         nonlocal current_speaker, last_speaker_check, last_sent_text
         try:
             while True:
                 audio_np = await audio_queue.get()
+                if audio_np is None:
+                    break
                 
-                async with asr_lock:
+                def decode_step():
                     asr_stream.accept_waveform(16000, audio_np)
                     while recognizer.is_ready(asr_stream):
                         recognizer.decode_stream(asr_stream)
                     res = recognizer.get_result(asr_stream)
-                    text = res.text.strip() if hasattr(res, 'text') else str(res).strip()
+                    return res.text.strip() if hasattr(res, 'text') else str(res).strip()
+
+                text = await asyncio.to_thread(decode_step)
 
                 # Thỉnh thoảng kiểm tra WavLM nhận diện tên người nói ngay khi đang stream nháp
                 now = time.time()
@@ -426,6 +429,110 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
         except Exception:
             pass
 
+    async def process_final_minute_bg(audio_snapshot: list[np.ndarray], raw_text: str, start_ts: float, end_ts: float):
+        if len(raw_text) < 4:
+            return
+
+        speaker_name = identity
+        if audio_snapshot:
+            audio_for_id = np.concatenate(audio_snapshot)
+            duration_s = len(audio_for_id) / 16000
+            print(f"   [WavLM] Đoạn audio nhận diện: {duration_s:.2f}s")
+
+            if duration_s >= 1.2:
+                def run_wavlm(audio=audio_for_id):
+                    target_len = 16000 * 4
+                    if len(audio) > target_len:
+                        step = 16000 // 2
+                        best_start = 0
+                        max_rms = 0.0
+                        for start in range(0, len(audio) - target_len, step):
+                            win = audio[start:start+target_len]
+                            rms = float(np.sqrt(np.mean(win**2)))
+                            if rms > max_rms:
+                                max_rms = rms
+                                best_start = start
+                        clip = audio[best_start:best_start+target_len]
+                    else:
+                        clip = audio
+
+                    with gpu_lock:
+                        emb = extract_embedding(clip)
+                    res = qdrant.query_points(
+                        collection_name='speakers',
+                        query=emb.tolist(),
+                        limit=10
+                    )
+                    if res.points:
+                        best_match = res.points[0]
+                        second_score = res.points[1].score if len(res.points) > 1 else 0.0
+                        print(f"   [WavLM] Top 1: {best_match.payload['speaker_label']} ({best_match.score:.3f}) | Top 2: ({second_score:.3f})")
+                        
+                        top1_label = best_match.payload['speaker_label']
+                        if len(res.points) > 1 and (best_match.score - second_score < 0.035):
+                            for pt in res.points[:3]:
+                                cand_label = pt.payload['speaker_label']
+                                # Matching tổng quát giữa identity kênh mic và nhãn diễn giả đã đăng ký
+                                if identity.lower() in cand_label.lower() or cand_label.lower() in identity.lower():
+                                    top1_label = cand_label
+                                    print(f"   [WavLM Tie-Break] Ưu tiên diễn giả kênh {identity}: {top1_label}")
+                                    break
+
+                        dyn_thresh = calculate_dynamic_speaker_threshold()
+                        if best_match.score >= min(dyn_thresh, 0.80):
+                            return top1_label
+                    
+                    print(f"   [WavLM] Không đạt ngưỡng tin cậy thích ứng >= {dyn_thresh:.3f} -> Bỏ qua đoạn rác/nhiễu")
+                    return None
+                speaker_name = await asyncio.to_thread(run_wavlm)
+            else:
+                print(f"   [WavLM] Bỏ qua nhận diện (audio quá ngắn < 1.2s)")
+
+        if not speaker_name:
+            print(f"   [WavLM] Bỏ qua câu không rõ định danh ({identity})")
+            return
+
+        refined = await refine_text(raw_text)
+
+        # --- DEDUPLICATION CHECK: Loại bỏ câu trùng từ Crosstalk giữa các Mic ---
+        now = time.time()
+        is_dup = False
+        for item in list(global_minute_history):
+            if item["speaker"] == speaker_name and (now - item["time"]) < 5.0:
+                w1 = set(refined.lower().split())
+                w2 = set(item["text"].lower().split())
+                if len(w1) > 0 and len(w1 & w2) / len(w1) > 0.5:
+                    is_dup = True
+                    break
+        if is_dup:
+            print(f"   [Deduplication] Bỏ qua câu trùng lặp từ Crosstalk ({speaker_name}: {identity})")
+            return
+
+        global_minute_history.append({"speaker": speaker_name, "text": refined, "time": now})
+        if len(global_minute_history) > 50:
+            global_minute_history.pop(0)
+
+        payload = {
+            "identity": identity,
+            "speaker":  speaker_name,
+            "text":     refined,
+            "raw_text": raw_text,
+            "start_time": round(start_ts, 2),
+            "end_time":   round(end_ts, 2),
+        }
+        
+        try:
+            await dashboard_manager.broadcast(payload)
+        except Exception as e:
+            print(f"Lỗi broadcast Dashboard: {e}")
+
+        try:
+            await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        except Exception:
+            pass
+
+        print(f"[✅ Đã xuất Biên Bản cho {identity}]")
+
     async def process_vad_events():
         nonlocal is_speaking, speech_start_time, speech_audio_chunks, last_sent_text
         try:
@@ -457,111 +564,10 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
                         asr_res  = recognizer.get_result(asr_stream)
                         raw_text = asr_res.text.strip() if hasattr(asr_res, 'text') else str(asr_res).strip()
 
-                    if len(raw_text) < 4:
-                        continue
-
-                    speaker_name = identity
-                    if audio_snapshot:
-                        audio_for_id = np.concatenate(audio_snapshot)
-                        duration_s = len(audio_for_id) / 16000
-                        print(f"   [WavLM] Đoạn audio nhận diện: {duration_s:.2f}s")
-
-                        if duration_s >= 1.2:
-                            def run_wavlm(audio=audio_for_id):
-                                target_len = 16000 * 4
-                                if len(audio) > target_len:
-                                    step = 16000 // 2
-                                    best_start = 0
-                                    max_rms = 0.0
-                                    for start in range(0, len(audio) - target_len, step):
-                                        win = audio[start:start+target_len]
-                                        rms = float(np.sqrt(np.mean(win**2)))
-                                        if rms > max_rms:
-                                            max_rms = rms
-                                            best_start = start
-                                    clip = audio[best_start:best_start+target_len]
-                                else:
-                                    clip = audio
-
-                                with gpu_lock:
-                                    emb = extract_embedding(clip)
-                                res = qdrant.query_points(
-                                    collection_name='speakers',
-                                    query=emb.tolist(),
-                                    limit=10
-                                )
-                                if res.points:
-                                    best_match = res.points[0]
-                                    second_score = res.points[1].score if len(res.points) > 1 else 0.0
-                                    print(f"   [WavLM] Top 1: {best_match.payload['speaker_label']} ({best_match.score:.3f}) | Top 2: ({second_score:.3f})")
-                                    
-                                    top1_label = best_match.payload['speaker_label']
-                                    # Tie-Breaking Guard: Nếu Top 1 và Top 2 quá suýt soát nhau (<0.035) do lọt âm từ Mic khác,
-                                    # và Top 2 hoặc Top 3 khớp với tên diễn giả chính của Mic này, ưu tiên chọn diễn giả chính của Mic!
-                                    if len(res.points) > 1 and (best_match.score - second_score < 0.035):
-                                        for pt in res.points[:3]:
-                                            cand_label = pt.payload['speaker_label']
-                                            if (identity in cand_label or cand_label in identity or 
-                                                ("Mic_A" in identity and "Dung" in cand_label) or 
-                                                ("Mic_B" in identity and "Phuoc" in cand_label)):
-                                                top1_label = cand_label
-                                                print(f"   [WavLM Tie-Break] Ưu tiên diễn giả kênh {identity}: {top1_label}")
-                                                break
-
-                                    dyn_thresh = calculate_dynamic_speaker_threshold()
-                                    if best_match.score >= min(dyn_thresh, 0.80):
-                                        return top1_label
-                                
-                                print(f"   [WavLM] Không đạt ngưỡng tin cậy thích ứng >= {dyn_thresh:.3f} -> Bỏ qua đoạn rác/nhiễu")
-                                return None
-                            speaker_name = await asyncio.to_thread(run_wavlm)
-                        else:
-                            print(f"   [WavLM] Bỏ qua nhận diện (audio quá ngắn < 1.2s)")
-
-                    if not speaker_name:
-                        print(f"   [WavLM] Bỏ qua câu không rõ định danh ({identity})")
-                        continue
-
-                    refined = await refine_text(raw_text)
-
-                    # --- DEDUPLICATION CHECK: Loại bỏ câu trùng từ Crosstalk giữa các Mic ---
-                    now = time.time()
-                    is_dup = False
-                    for item in list(global_minute_history):
-                        if item["speaker"] == speaker_name and (now - item["time"]) < 5.0:
-                            w1 = set(refined.lower().split())
-                            w2 = set(item["text"].lower().split())
-                            if len(w1) > 0 and len(w1 & w2) / len(w1) > 0.5:
-                                is_dup = True
-                                break
-                    if is_dup:
-                        print(f"   [Deduplication] Bỏ qua câu trùng lặp từ Crosstalk ({speaker_name}: {identity})")
-                        continue
-
-                    global_minute_history.append({"speaker": speaker_name, "text": refined, "time": now})
-                    if len(global_minute_history) > 50:
-                        global_minute_history.pop(0)
-
-                    payload = {
-                        "identity": identity,
-                        "speaker":  speaker_name,
-                        "text":     refined,
-                        "raw_text": raw_text,
-                        "start_time": round(speech_start_time, 2),
-                        "end_time":   round(speech_end_time, 2),
-                    }
-                    
-                    try:
-                        await dashboard_manager.broadcast(payload)
-                    except Exception as e:
-                        print(f"Lỗi broadcast Dashboard: {e}")
-
-                    try:
-                        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-                    except Exception:
-                        pass
-
-                    print(f"[✅ Đã xuất Biên Bản cho {identity}]")
+                    # Bật tác vụ ngầm chạy WavLM + LLM để luồng VAD không bao giờ bị nghẽn hay khựng!
+                    t = asyncio.create_task(process_final_minute_bg(audio_snapshot, raw_text, speech_start_time, speech_end_time))
+                    bg_tasks.add(t)
+                    t.add_done_callback(bg_tasks.discard)
 
         except asyncio.CancelledError:
             pass
@@ -579,9 +585,9 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
             data = await websocket.receive_bytes()
             now = time.time()
             
-            # Gom đệm 100ms âm thanh (3200 bytes) rồi mới broadcast về Web UI để giảm tải truyền tải & chống giật tiếng
+            # Gom đệm 50ms âm thanh (1600 bytes) rồi mới broadcast về Web UI để stream mượt mượt không giật
             audio_batch_buf.extend(data)
-            if len(audio_batch_buf) >= 3200:
+            if len(audio_batch_buf) >= 1600:
                 chunk_to_send = bytes(audio_batch_buf)
                 audio_batch_buf.clear()
                 asyncio.create_task(dashboard_manager.broadcast_audio(identity, chunk_to_send))
@@ -594,15 +600,15 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
             if rms < dynamic_gate and not is_speaking:
                 continue
 
-            # Cooldown 0.8s sau khi vừa kết thúc câu: Bỏ qua đệm dư thừa đuôi câu để không bị trigger VAD ảo ngay trước khi disconnect!
-            if (now - last_speech_end_time) < 0.8 and not is_speaking:
+            # Dynamic Post-Speech Cooldown cho mọi độ dài phát biểu: Chặn tiếng lọt âm nhỏ (rms < 0.040) trong 4.0s sau khi dứt câu; Nếu cất giọng trực tiếp (rms >= 0.040), mở VAD tức thì!
+            if (now - last_speech_end_time) < 4.0 and not is_speaking and rms < 0.040:
                 continue
 
-            # DYNAMIC VOICE FOCUS: So sánh độ lớn âm thanh thời gian thực giữa các Mic
-            is_focused = voice_focus_engine.update_and_check_focus(identity, audio_np)
-            if not is_focused:
-                # Bỏ qua không nạp vào VAD khi bị lọt âm / không có Focus (không đẩy silent frame tránh ngắt sai câu)
-                continue
+            # DYNAMIC VOICE FOCUS: So sánh độ lớn âm thanh thời gian thực giữa các Mic để ngăn kích hoạt VAD ảo khi chưa nói
+            if not is_speaking:
+                is_focused = voice_focus_engine.update_and_check_focus(identity, audio_np)
+                if not is_focused:
+                    continue
 
             if not is_speaking:
                 pre_speech_buf.append(audio_np)
@@ -623,15 +629,27 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
         print(f"\n[!] Lỗi [{identity}]: {e}")
     finally:
         try:
-            vad_stream.end_input()
-            # Cho vad_task tối đa 4 giây để xử lý xong nốt câu cuối và gửi Biên bản trước khi đóng luồng
-            await asyncio.wait_for(vad_task, timeout=4.0)
+            if is_speaking:
+                vad_stream.end_input()
+                await asyncio.wait_for(vad_task, timeout=2.0)
         except Exception:
             pass
-        finally:
-            vad_task.cancel()
+
+        # Chờ các tác vụ ngầm xuất Biên bản (bg_tasks) hoàn tất xuất 100% trước khi đóng luồng
+        if bg_tasks:
+            try:
+                await asyncio.wait_for(asyncio.gather(*list(bg_tasks), return_exceptions=True), timeout=3.0)
+            except Exception:
+                pass
+
+        audio_queue.put_nowait(None)
+        try:
+            await asyncio.wait_for(asr_task, timeout=1.0)
+        except Exception:
             asr_task.cancel()
-            await asyncio.gather(vad_task, asr_task, return_exceptions=True)
+
+        vad_task.cancel()
+        await asyncio.gather(vad_task, asr_task, return_exceptions=True)
 
 if __name__ == "__main__":
     import uvicorn

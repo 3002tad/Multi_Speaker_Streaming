@@ -55,17 +55,22 @@ async def simulate_client(identity, wav_path, delay=0):
         await source.capture_frame(frame)
         await asyncio.sleep(0.02)
         
-    print(f"\n[{identity}] Đã hoàn tất Stream và rời phòng!")
-    await room.disconnect()
+    print(f"\n[{identity}] Đã hoàn tất Stream Audio.")
+    return room
 
 async def main():
     print("\n==================================================")
     print("=== BƯỚC 2: MÔ PHỎNG 2 MICRO TRONG PHÒNG HỌP ===")
     print("==================================================")
-    await asyncio.gather(
+    room_a, room_b = await asyncio.gather(
         simulate_client("Mic_A", "audio/thayDung_noi.wav", delay=0),
         simulate_client("Mic_B", "audio/thayPhuoc_noi.wav", delay=0)
     )
+    # Giữ phòng mở cho đến khi cả 2 Mic hoàn tất xuất Biên bản chính thức
+    await asyncio.sleep(4.0)
+    print("\n[Hệ thống] Hoàn tất phiên họp, rời phòng cho cả 2 Mic...")
+    await room_a.disconnect()
+    await room_b.disconnect()
 
 if __name__ == "__main__":
     asyncio.run(main())

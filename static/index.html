@@ -570,8 +570,8 @@
                 source.connect(audioCtx.destination);
 
                 const now = audioCtx.currentTime;
-                if (!nextPlayTimeMap[identity] || nextPlayTimeMap[identity] < now) {
-                    nextPlayTimeMap[identity] = now;
+                if (!nextPlayTimeMap[identity] || nextPlayTimeMap[identity] < now + 0.03) {
+                    nextPlayTimeMap[identity] = now + 0.12;
                 }
                 source.start(nextPlayTimeMap[identity]);
                 nextPlayTimeMap[identity] += buffer.duration;

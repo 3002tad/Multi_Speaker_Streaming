@@ -6,3 +6,4 @@ Zipformer-30M-RNNT-Streaming-6000h/
 *.log
 *.png
 *.ipynb
+.env
