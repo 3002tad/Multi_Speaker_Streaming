@@ -70,6 +70,18 @@ class Settings:
             str(PROJECT_ROOT / "data" / "qdrant_speakers"),
         )
     )
+    speaker_match_threshold: float = float(
+        os.getenv("SPEAKER_MATCH_THRESHOLD", "0.82")
+    )
+    speaker_match_margin: float = float(
+        os.getenv("SPEAKER_MATCH_MARGIN", "0.035")
+    )
+    speaker_consensus_ratio: float = float(
+        os.getenv("SPEAKER_CONSENSUS_RATIO", "0.67")
+    )
+    speaker_min_id_seconds: float = float(
+        os.getenv("SPEAKER_MIN_ID_SECONDS", "2.5")
+    )
 
     @property
     def livekit_configured(self) -> bool:

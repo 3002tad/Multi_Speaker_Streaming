@@ -23,6 +23,10 @@ from livekit import rtc
 from livekit.plugins import silero
 from livekit.agents.vad import VADEventType
 from backend.config import settings
+from backend.speaker_identity import (
+    build_enrollment_profile,
+    decide_open_set_speaker,
+)
 
 print("Bắt đầu khởi tạo các mô hình AI...")
 
@@ -86,24 +90,119 @@ def extract_embedding(audio_array: np.ndarray) -> np.ndarray:
     emb = torch.nn.functional.normalize(emb, dim=-1)
     return emb.squeeze(0).cpu().numpy()
 
+
+def _all_speaker_points(*, with_vectors: bool = False):
+    points = []
+    offset = None
+    while True:
+        page, offset = qdrant.scroll(
+            collection_name="speakers",
+            limit=256,
+            offset=offset,
+            with_payload=True,
+            with_vectors=with_vectors,
+        )
+        points.extend(page)
+        if offset is None:
+            return points
+
+
+def _speaker_label(point) -> str:
+    return str((point.payload or {}).get("speaker_label", "")).strip()
+
+
+def _delete_speaker_profile(speaker_name: str) -> None:
+    normalized = speaker_name.strip().casefold()
+    point_ids = [
+        point.id
+        for point in _all_speaker_points()
+        if _speaker_label(point).casefold() == normalized
+    ]
+    if point_ids:
+        qdrant.delete(
+            collection_name="speakers",
+            points_selector=point_ids,
+            wait=True,
+        )
+
+
+def _query_speaker_scores(embedding: np.ndarray) -> dict[str, float]:
+    result = qdrant.query_points(
+        collection_name="speakers",
+        query=embedding.tolist(),
+        limit=64,
+    )
+    scores: dict[str, float] = {}
+    for point in result.points:
+        label = _speaker_label(point)
+        if label:
+            scores[label] = max(scores.get(label, -1.0), float(point.score))
+    return scores
+
+
+def _speaker_identity_clips(audio: np.ndarray) -> list[np.ndarray]:
+    minimum = int(settings.speaker_min_id_seconds * 16000)
+    if len(audio) < minimum:
+        return []
+
+    window = 4 * 16000
+    step = 2 * 16000
+    if len(audio) <= window:
+        return [audio]
+
+    candidates = []
+    for start in range(0, len(audio) - window + 1, step):
+        clip = audio[start : start + window]
+        rms = float(np.sqrt(np.mean(clip**2)))
+        candidates.append((rms, start, clip))
+
+    selected = sorted(candidates, key=lambda item: item[0], reverse=True)[:3]
+    return [item[2] for item in sorted(selected, key=lambda item: item[1])]
+
+
+def recognize_speaker_open_set(audio: np.ndarray):
+    clips = _speaker_identity_clips(audio)
+    if not clips:
+        return decide_open_set_speaker(
+            [],
+            absolute_threshold=settings.speaker_match_threshold,
+            margin_threshold=settings.speaker_match_margin,
+            consensus_threshold=settings.speaker_consensus_ratio,
+        )
+
+    with gpu_lock:
+        embeddings = [extract_embedding(clip) for clip in clips]
+    observations = [_query_speaker_scores(embedding) for embedding in embeddings]
+    return decide_open_set_speaker(
+        observations,
+        absolute_threshold=calculate_dynamic_speaker_threshold(),
+        margin_threshold=settings.speaker_match_margin,
+        consensus_threshold=settings.speaker_consensus_ratio,
+    )
+
 # ============================================================
 # DYNAMIC ADAPTIVE CONFIGURATION ENGINE
 # ============================================================
 
 def calculate_dynamic_speaker_threshold() -> float:
-    """Tự động tính ngưỡng Cosine Similarity dựa trên khoảng cách giữa các vector diễn giả trong Qdrant."""
-    points, _ = qdrant.scroll(
-        collection_name='speakers',
-        limit=10,
-        with_vectors=True
-    )
-    if len(points) < 2:
-        return 0.78
+    """Raise the acceptance threshold when enrolled voices are close."""
+    grouped: dict[str, list[np.ndarray]] = {}
+    for point in _all_speaker_points(with_vectors=True):
+        label = _speaker_label(point)
+        if label and point.vector is not None:
+            grouped.setdefault(label, []).append(
+                np.asarray(point.vector, dtype=np.float32)
+            )
 
-    vecs = {p.payload['speaker_label']: np.array(p.vector) for p in points if p.vector is not None}
-    labels = list(vecs.keys())
+    vecs = {}
+    for label, vectors in grouped.items():
+        centroid = np.mean(vectors, axis=0)
+        norm = float(np.linalg.norm(centroid))
+        if norm > 1e-8:
+            vecs[label] = centroid / norm
+    labels = list(vecs)
     if len(labels) < 2:
-        return 0.78
+        return settings.speaker_match_threshold
 
     max_sim = 0.0
     for i in range(len(labels)):
@@ -112,8 +211,10 @@ def calculate_dynamic_speaker_threshold() -> float:
             if sim > max_sim:
                 max_sim = sim
 
-    # Ngưỡng thích ứng an toàn: Bounded [0.75, 0.82]
-    return max(0.75, min(0.82, max_sim + 0.01))
+    return max(
+        settings.speaker_match_threshold,
+        min(0.93, max_sim + settings.speaker_match_margin),
+    )
 
 class AdaptiveNoiseFloor:
     """Tự động thích ứng với độ ồn phông môi trường theo thời gian thực (Dynamic RMS Noise Gate)."""
@@ -299,22 +400,25 @@ class WebDashboardManager:
         await self.broadcast(msg)
 
     async def broadcast_speakers(self):
-        points, _ = qdrant.scroll(
-            collection_name='speakers',
-            limit=10,
-            with_vectors=True
-        )
-        speakers = [p.payload['speaker_label'] for p in points]
+        points = _all_speaker_points(with_vectors=True)
+        speakers = [_speaker_label(point) for point in points]
         sim_str = None
-        if len(points) >= 2:
-            vecs = {p.payload['speaker_label']: np.array(p.vector) for p in points if p.vector is not None}
-            labels = list(vecs.keys())
-            if len(labels) >= 2:
-                sim_str = f"{float(np.dot(vecs[labels[0]], vecs[labels[1]])):.4f}"
+        grouped: dict[str, list[np.ndarray]] = {}
+        for point in points:
+            label = _speaker_label(point)
+            if label and point.vector is not None:
+                grouped.setdefault(label, []).append(np.asarray(point.vector))
+        labels = list(grouped)
+        if len(labels) >= 2:
+            left = np.mean(grouped[labels[0]], axis=0)
+            right = np.mean(grouped[labels[1]], axis=0)
+            left /= np.linalg.norm(left)
+            right /= np.linalg.norm(right)
+            sim_str = f"{float(np.dot(left, right)):.4f}"
 
         await self.broadcast({
             "type": "enrolled_speakers",
-            "speakers": list(set(speakers)),
+            "speakers": sorted(set(filter(None, speakers))),
             "similarity": sim_str
         })
 
@@ -452,15 +556,45 @@ async def _process_enrollment_audio(speaker_name: str, audio: np.ndarray, sr: in
 
     clean_audio = np.concatenate(speech_segments) if speech_segments else audio
 
+    clean_duration = len(clean_audio) / 16000
+    if clean_duration < 6.0:
+        return {
+            "status": "error",
+            "message": (
+                f"Giọng nói sạch chỉ có {clean_duration:.1f}s; "
+                "cần ít nhất 6s và nên đọc liên tục 20-30s"
+            ),
+        }
+
     CHUNK = 16000 * 4
-    STEP  = int(16000 * 2.0)
-    clips = []
+    STEP = 16000 * 2
+    raw_clips = []
     if len(clean_audio) < CHUNK:
         if len(clean_audio) >= 16000:
-            clips.append(clean_audio)
+            raw_clips.append(clean_audio)
     else:
         for i in range(0, len(clean_audio) - CHUNK + 1, STEP):
-            clips.append(clean_audio[i:i+CHUNK])
+            raw_clips.append(clean_audio[i : i + CHUNK])
+
+    clip_quality = [
+        (
+            float(np.sqrt(np.mean(clip**2))),
+            float(np.mean(np.abs(clip) >= 0.98)),
+            clip,
+        )
+        for clip in raw_clips
+    ]
+    median_rms = (
+        float(np.median([item[0] for item in clip_quality]))
+        if clip_quality
+        else 0.0
+    )
+    rms_floor = max(0.006, median_rms * 0.35)
+    clips = [
+        clip
+        for rms, clipping_ratio, clip in clip_quality
+        if rms >= rms_floor and clipping_ratio <= 0.03
+    ]
 
     def extract_all_embeddings():
         with gpu_lock:
@@ -472,20 +606,63 @@ async def _process_enrollment_audio(speaker_name: str, audio: np.ndarray, sr: in
         await asyncio.to_thread(extract_all_embeddings) if clips else []
     )
 
-    if not embeddings:
-        return {"status": "error", "message": f"Audio file for {speaker_name} is too short"}
+    if len(embeddings) < 3:
+        return {
+            "status": "error",
+            "message": (
+                "Không đủ cửa sổ giọng nói sạch để ghi danh; "
+                "hãy kiểm tra âm lượng, tránh clipping và đọc lại 20-30s"
+            ),
+        }
 
-    mean_emb = np.mean(embeddings, axis=0)
-    mean_emb /= np.linalg.norm(mean_emb)
-    
-    # Dùng uuid5 để tạo ID cố định dựa trên tên diễn giả (Ghi đè nếu enroll lại)
-    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, speaker_name))
-    point = PointStruct(id=point_id, vector=mean_emb.tolist(), payload={'speaker_label': speaker_name})
-    qdrant.upsert('speakers', points=[point])
-    print(f"\n   [API /enroll] + Đã đăng ký vân tay giọng nói: {speaker_name} ({len(embeddings)} chunk mẫu từ {len(clean_audio)/16000:.1f}s audio sạch)")
+    try:
+        profile = build_enrollment_profile(embeddings)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+
+    normalized_name = speaker_name.strip()
+    _delete_speaker_profile(normalized_name)
+    points = []
+    for index, prototype in enumerate(profile.prototypes):
+        point_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_DNS,
+                f"speaker-profile-v2:{normalized_name.casefold()}:{index}",
+            )
+        )
+        points.append(
+            PointStruct(
+                id=point_id,
+                vector=prototype.tolist(),
+                payload={
+                    "speaker_label": normalized_name,
+                    "profile_version": 2,
+                    "prototype_index": index,
+                    "prototype_kind": (
+                        "centroid" if index == 0 else "sample"
+                    ),
+                },
+            )
+        )
+    qdrant.upsert("speakers", points=points, wait=True)
+    print(
+        f"\n   [API /enroll] + Đã đăng ký vân tay giọng nói: "
+        f"{normalized_name} ({profile.retained_embeddings}/"
+        f"{profile.total_embeddings} cửa sổ đạt chất lượng, "
+        f"{clean_duration:.1f}s audio sạch)"
+    )
     
     await dashboard_manager.broadcast_speakers()
-    return {"status": "success", "speaker_name": speaker_name, "chunks_enrolled": len(embeddings)}
+    return {
+        "status": "success",
+        "speaker_name": normalized_name,
+        "chunks_enrolled": profile.retained_embeddings,
+        "chunks_total": profile.total_embeddings,
+        "prototypes": len(profile.prototypes),
+        "profile_consistency": round(
+            profile.median_centroid_similarity, 4
+        ),
+    }
 
 @app.post("/enroll")
 async def enroll_speaker_api(speaker_name: str = Form(...), file: UploadFile = File(...)):
@@ -499,7 +676,12 @@ async def quick_enroll_api(data: dict = Body(...)):
     wav_path = data.get("wav_path")
     audio, sr = sf.read(wav_path)
     res = await _process_enrollment_audio(speaker_name, audio, sr)
-    return {"status": "success", "message": f"Đã đăng ký thành công cho {speaker_name}!"}
+    if res.get("status") != "success":
+        return res
+    return {
+        **res,
+        "message": f"Đã đăng ký thành công cho {speaker_name}!",
+    }
 
 @app.post("/api/simulate")
 async def simulate_api():
@@ -508,8 +690,13 @@ async def simulate_api():
     return {"status": "success", "message": "Đã bắt đầu mô phỏng 2 Micro!"}
 
 @app.websocket("/ws/{identity}")
-async def websocket_endpoint(websocket: WebSocket, identity: str):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    identity: str,
+    display_name: str | None = None,
+):
     await websocket.accept()
+    fallback_speaker = (display_name or identity).strip() or identity
     print(f"\n[+] Đã cấp phát luồng AI cho Client: {identity}")
 
     asr_stream = recognizer.create_stream()
@@ -526,9 +713,7 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
     is_speaking = False
     speech_start_time = 0.0
     
-    current_speaker = identity
-    last_speaker_check = 0.0
-    speaker_checked_this_turn = False
+    current_speaker = fallback_speaker
     audio_queue = asyncio.Queue()
     adaptive_noise = AdaptiveNoiseFloor()
 
@@ -538,8 +723,7 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
     bg_tasks = set()
 
     async def asr_worker():
-        nonlocal current_speaker, last_speaker_check
-        nonlocal speaker_checked_this_turn
+        nonlocal current_speaker
         nonlocal last_sent_text, last_partial_sent_at
         try:
             while True:
@@ -604,53 +788,7 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
                     for _ in chunks:
                         audio_queue.task_done()
 
-                # Thỉnh thoảng kiểm tra WavLM nhận diện tên người nói ngay khi đang stream nháp
                 now = time.time()
-                if (
-                    is_speaking
-                    and not speaker_checked_this_turn
-                    and (now - speech_start_time >= 4.0)
-                    and (now - last_speaker_check >= 0.5)
-                    and speech_audio_chunks
-                    and qdrant.count(
-                        collection_name="speakers", exact=True
-                    ).count > 0
-                ):
-                    audio_clip = np.concatenate(list(speech_audio_chunks))
-                    if len(audio_clip) >= 24000:
-                        last_speaker_check = now
-                        def quick_id(clip=audio_clip[:16000*5]):
-                            with gpu_lock:
-                                emb = extract_embedding(clip)
-                            res = qdrant.query_points(
-                                collection_name='speakers',
-                                query=emb.tolist(),
-                                limit=2,
-                            )
-                            if not res.points:
-                                return identity
-                            best = res.points[0]
-                            second_score = (
-                                res.points[1].score
-                                if len(res.points) > 1
-                                else 0.0
-                            )
-                            threshold = min(
-                                calculate_dynamic_speaker_threshold(),
-                                0.80,
-                            )
-                            if (
-                                best.score >= threshold
-                                and best.score - second_score >= 0.008
-                            ):
-                                return best.payload['speaker_label']
-                            return identity
-                        ran, detected_speaker = await heavy_work.run_quick(
-                            quick_id
-                        )
-                        if ran:
-                            speaker_checked_this_turn = True
-                            current_speaker = detected_speaker
 
                 if (
                     text
@@ -663,6 +801,8 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
                         "partial": text,
                         "identity": identity,
                         "speaker": current_speaker,
+                        "identity_method": "mic_fallback",
+                        "speaker_confidence": None,
                         "ts": time.time()
                     }
                     try:
@@ -685,7 +825,11 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
 
         final_pipeline_started = time.perf_counter()
 
-        speaker_name = identity
+        speaker_name = fallback_speaker
+        identity_method = "mic_fallback"
+        speaker_confidence = None
+        speaker_margin = None
+        speaker_consensus = None
         signal_rms = 0.0
         if audio_snapshot:
             audio_for_id = np.concatenate(audio_snapshot)
@@ -717,68 +861,57 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
             heavy_work.mark_final()
             print(f"   [WavLM] Đoạn audio nhận diện: {duration_s:.2f}s")
 
-            enrolled_speakers = qdrant.count(
+            enrolled_points = qdrant.count(
                 collection_name="speakers", exact=True
             ).count
 
-            if enrolled_speakers == 0:
-                # Before enrollment the LiveKit bridge will map this channel
-                # identity back to the participant display name. Avoid an
-                # expensive WavLM pass that cannot possibly find a profile.
-                speaker_name = identity
-            elif duration_s >= 1.2:
+            if enrolled_points == 0:
+                print(
+                    f"   [WavLM] Chưa có profile; dùng tên mic "
+                    f"{fallback_speaker}"
+                )
+            elif duration_s >= settings.speaker_min_id_seconds:
                 def run_wavlm(audio=audio_for_id):
-                    target_len = 16000 * 4
-                    if len(audio) > target_len:
-                        step = 16000 // 2
-                        best_start = 0
-                        max_rms = 0.0
-                        for start in range(0, len(audio) - target_len, step):
-                            win = audio[start:start+target_len]
-                            rms = float(np.sqrt(np.mean(win**2)))
-                            if rms > max_rms:
-                                max_rms = rms
-                                best_start = start
-                        clip = audio[best_start:best_start+target_len]
-                    else:
-                        clip = audio
+                    return recognize_speaker_open_set(audio)
 
-                    with gpu_lock:
-                        emb = extract_embedding(clip)
-                    res = qdrant.query_points(
-                        collection_name='speakers',
-                        query=emb.tolist(),
-                        limit=10
+                decision = await heavy_work.run_final_thread(run_wavlm)
+                score_text = (
+                    f"{decision.score:.3f}"
+                    if decision.score is not None
+                    else "n/a"
+                )
+                margin_text = (
+                    f"{decision.margin:.3f}"
+                    if decision.margin is not None
+                    else "n/a"
+                )
+                print(
+                    f"   [WavLM OpenSet] result={decision.reason} "
+                    f"score={score_text} required="
+                    f"{decision.required_score:.3f} margin={margin_text} "
+                    f"consensus={decision.consensus:.2f}"
+                )
+                if decision.accepted and decision.label:
+                    speaker_name = decision.label
+                    identity_method = "voice_profile"
+                    speaker_confidence = round(decision.score, 4)
+                    speaker_margin = (
+                        round(decision.margin, 4)
+                        if decision.margin is not None
+                        else None
                     )
-                    # Enrollment is optional for the first demo pass. The
-                    # bridge maps this channel identity back to display_name.
-                    if not res.points:
-                        return identity
-
-                    best_match = res.points[0]
-                    second_score = res.points[1].score if len(res.points) > 1 else 0.0
-                    print(f"   [WavLM] Top 1: {best_match.payload['speaker_label']} ({best_match.score:.3f}) | Top 2: ({second_score:.3f})")
-
-                    top1_label = best_match.payload['speaker_label']
-
-                    dyn_thresh = calculate_dynamic_speaker_threshold()
-                    if (
-                        best_match.score >= min(dyn_thresh, 0.80)
-                        and best_match.score - second_score >= 0.008
-                    ):
-                        return top1_label
-
-                    print(f"   [WavLM] Không đạt ngưỡng tin cậy thích ứng >= {dyn_thresh:.3f} -> Bỏ qua đoạn rác/nhiễu")
-                    return None
-                speaker_name = await heavy_work.run_final_thread(run_wavlm)
+                    speaker_consensus = round(decision.consensus, 4)
+                else:
+                    print(
+                        f"   [WavLM OpenSet] Không đủ chắc chắn; "
+                        f"fallback về {fallback_speaker}"
+                    )
             else:
-                print(f"   [WavLM] Bỏ qua nhận diện (audio quá ngắn < 1.2s)")
-
-        if not speaker_name:
-            # An uncertain label must never make meeting content disappear.
-            # It can be corrected by the chair or a later refinement pass.
-            speaker_name = "Chưa xác định"
-            print(f"   [WavLM] Giữ nội dung với nhãn chưa xác định ({identity})")
+                print(
+                    f"   [WavLM] Audio < "
+                    f"{settings.speaker_min_id_seconds:.1f}s; "
+                    f"fallback về {fallback_speaker}"
+                )
 
         async def emit_payload(message: dict) -> None:
             try:
@@ -814,6 +947,10 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
             "utterance_id": utterance_id,
             "identity": identity,
             "speaker":  speaker_name,
+            "identity_method": identity_method,
+            "speaker_confidence": speaker_confidence,
+            "speaker_margin": speaker_margin,
+            "speaker_consensus": speaker_consensus,
             "text":     refined,
             "raw_text": raw_text,
             "start_time": round(start_ts, 2),
@@ -860,15 +997,13 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
         nonlocal is_speaking, speech_start_time, speech_audio_chunks
         nonlocal speech_sample_count
         nonlocal last_sent_text, last_speech_end_time, current_speaker
-        nonlocal speaker_checked_this_turn
         try:
             async for evt in vad_stream:
                 if evt.type == VADEventType.START_OF_SPEECH:
                     is_speaking = True
                     speech_start_time = time.time()
                     last_sent_text = ""
-                    current_speaker = identity
-                    speaker_checked_this_turn = False
+                    current_speaker = fallback_speaker
                     print(f"\n[🎙️ VAD] [{identity}] BẮT ĐẦU NÓI...")
 
                     async with asr_lock:
@@ -913,8 +1048,7 @@ async def websocket_endpoint(websocket: WebSocket, identity: str):
 
                     speech_start_time = speech_end_time
                     last_sent_text = ""
-                    current_speaker = identity
-                    speaker_checked_this_turn = False
+                    current_speaker = fallback_speaker
 
                 elif evt.type == VADEventType.END_OF_SPEECH:
                     is_speaking = False

@@ -129,6 +129,14 @@ curl http://100.64.0.4:8000/api/health
 4. Đọc liên tục đoạn văn mẫu trong 20–30 giây.
 5. Dừng ghi và chờ AI tạo vân tay giọng nói.
 
+Đọc bằng một giọng duy nhất, giữ khoảng cách tới mic ổn định, tránh tiếng
+người khác và không để âm lượng bị vỡ. Pipeline yêu cầu tối thiểu 6 giây
+giọng sạch, loại cửa sổ quá nhỏ/quá lớn hoặc không nhất quán, sau đó lưu
+nhiều prototype thay vì chỉ một vector trung bình.
+
+Sau khi nâng cấp thuật toán speaker profile lên phiên bản 2, cần enrollment
+lại từng người để profile cũ được thay thế bằng bộ prototype mới.
+
 Speaker profile được lưu persistent tại:
 
 ```text
@@ -212,10 +220,12 @@ curl -X DELETE http://127.0.0.1:8000/api/transcripts
 - Transcript nháp cập nhật realtime.
 - Lượt nói dài được chia thành segment xấp xỉ 15 giây.
 - WavLM gán đúng người đã enrollment dù đổi vị trí mic.
+- Chỉ nhận tên theo voice profile khi nhiều cửa sổ giọng nói cùng đạt ngưỡng
+  điểm, margin và consensus.
 - Hai mic thu cùng một câu chỉ tạo một bản final; arbiter giữ nguồn có RMS
   tốt hơn.
-- Nội dung không bị mất khi WavLM chưa đủ chắc chắn; khi đó dùng nhãn
-  `Chưa xác định`.
+- Nội dung không bị mất khi WavLM chưa đủ chắc chắn; khi đó dùng tên đăng
+  nhập của mic với `identity_method=mic_fallback`.
 - Bản provisional xuất trong khoảng 5–7 giây.
 - LLM refinement cập nhật cùng `segment_id` với `revision=2`.
 - Hallucination guard loại kết quả Qwen làm thay đổi quá nhiều nội dung gốc.

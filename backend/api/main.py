@@ -71,6 +71,21 @@ class WebSocketHub:
 
 hub = WebSocketHub()
 final_event_lock = asyncio.Lock()
+meeting_reset_lock = asyncio.Lock()
+
+
+async def _reset_meeting_transcripts(reason: str) -> float:
+    async with meeting_reset_lock:
+        reset_at = time.time()
+        repository.clear(settings.meeting_room)
+        await hub.broadcast(
+            {
+                "type": "transcript.cleared",
+                "reason": reason,
+                "reset_at": reset_at,
+            }
+        )
+        return reset_at
 
 
 def _word_similarity(left: str, right: str) -> float:
@@ -173,6 +188,7 @@ async def meeting_info() -> dict[str, Any]:
 @app.post("/api/meeting/create")
 async def create_meeting(request: CreateMeetingRequest) -> dict[str, Any]:
     identity, token = _issue_token(request.host_name, "host")
+    reset_at = await _reset_meeting_transcripts("new_meeting")
     return {
         "status": "success",
         "meeting_code": settings.meeting_code,
@@ -182,6 +198,7 @@ async def create_meeting(request: CreateMeetingRequest) -> dict[str, Any]:
         "display_name": request.host_name,
         "role": "host",
         "token": token,
+        "reset_at": reset_at,
     }
 
 
@@ -212,8 +229,7 @@ async def list_transcripts() -> dict[str, Any]:
 
 @app.delete("/api/transcripts")
 async def clear_transcripts() -> dict[str, str]:
-    repository.clear(settings.meeting_room)
-    await hub.broadcast({"type": "transcript.cleared"})
+    await _reset_meeting_transcripts("manual_clear")
     return {"status": "success"}
 
 

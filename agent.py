@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import signal
 import time
 import uuid
+from urllib.parse import urlencode
 
 import httpx
 import websockets
@@ -34,7 +36,8 @@ async def process_track(
     segment_id: str | None = None
     utterance_segments: dict[str, str] = {}
     audio_stream = rtc.AudioStream(track, sample_rate=16000, num_channels=1)
-    uri = f"{settings.ai_server_ws_url}/ws/{identity}"
+    query = urlencode({"display_name": display_name})
+    uri = f"{settings.ai_server_ws_url}/ws/{identity}?{query}"
 
     print(f"[track] Đang xử lý mic: {display_name} ({identity})")
     try:
@@ -72,6 +75,12 @@ async def process_track(
                             "segment_id": resolved_segment_id,
                             "source_id": identity,
                             "speaker": speaker,
+                            "identity_method": result.get(
+                                "identity_method", "mic_fallback"
+                            ),
+                            "speaker_confidence": result.get(
+                                "speaker_confidence"
+                            ),
                             "text": result["partial"],
                             "timestamp": now,
                         }
@@ -81,6 +90,22 @@ async def process_track(
                             "segment_id": resolved_segment_id,
                             "source_id": identity,
                             "speaker": speaker,
+                            "speaker_id": (
+                                speaker
+                                if result.get("identity_method")
+                                == "voice_profile"
+                                else None
+                            ),
+                            "identity_method": result.get(
+                                "identity_method", "mic_fallback"
+                            ),
+                            "speaker_confidence": result.get(
+                                "speaker_confidence"
+                            ),
+                            "speaker_margin": result.get("speaker_margin"),
+                            "speaker_consensus": result.get(
+                                "speaker_consensus"
+                            ),
                             "raw_text": result.get(
                                 "raw_text", result.get("text", "")
                             ),
@@ -133,6 +158,16 @@ async def main() -> None:
     settings.validate_livekit()
     room = rtc.Room()
     track_tasks: dict[str, asyncio.Task] = {}
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def request_shutdown() -> None:
+        if not stop_event.is_set():
+            print("\n[worker] Đã nhận tín hiệu dừng.")
+            stop_event.set()
+
+    for shutdown_signal in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(shutdown_signal, request_shutdown)
 
     async with httpx.AsyncClient(timeout=10.0) as client:
 
@@ -185,15 +220,36 @@ async def main() -> None:
         await room.connect(settings.livekit_url, token)
         print("[worker] Sẵn sàng nhận các luồng microphone.")
         try:
-            await asyncio.Event().wait()
+            await stop_event.wait()
         finally:
+            print("[worker] Đang dừng các luồng microphone...")
             for task in track_tasks.values():
                 task.cancel()
-            await asyncio.gather(
-                *track_tasks.values(), return_exceptions=True
-            )
-            await room.disconnect()
+            if track_tasks:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(
+                            *track_tasks.values(), return_exceptions=True
+                        ),
+                        timeout=5.0,
+                    )
+                except asyncio.TimeoutError:
+                    print(
+                        "[worker] Một số luồng không phản hồi; "
+                        "tiếp tục ngắt LiveKit."
+                    )
+            try:
+                await asyncio.wait_for(room.disconnect(), timeout=5.0)
+            except asyncio.TimeoutError:
+                print("[worker] LiveKit disconnect quá hạn; buộc kết thúc.")
+            except Exception as exc:
+                print(f"[worker] LiveKit đã đóng với cảnh báo: {exc}")
+            print("[worker] Đã dừng hoàn toàn.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # Fallback for platforms where asyncio cannot register signal handlers.
+        pass

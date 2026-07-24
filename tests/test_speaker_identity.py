@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+import unittest
+
+import numpy as np
+
+from backend.speaker_identity import (
+    build_enrollment_profile,
+    decide_open_set_speaker,
+)
+
+
+class EnrollmentProfileTests(unittest.TestCase):
+    def test_profile_rejects_too_few_windows(self) -> None:
+        with self.assertRaises(ValueError):
+            build_enrollment_profile(
+                [np.array([1.0, 0.0]), np.array([0.99, 0.01])]
+            )
+
+    def test_profile_discards_a_clear_outlier(self) -> None:
+        embeddings = [
+            np.array([1.0, 0.02, 0.0]),
+            np.array([0.99, -0.01, 0.01]),
+            np.array([0.98, 0.03, -0.01]),
+            np.array([1.0, -0.02, 0.0]),
+            np.array([0.0, 1.0, 0.0]),
+        ]
+
+        profile = build_enrollment_profile(embeddings)
+
+        self.assertEqual(profile.total_embeddings, 5)
+        self.assertEqual(profile.retained_embeddings, 4)
+        self.assertGreater(profile.centroid[0], 0.99)
+        self.assertGreaterEqual(len(profile.prototypes), 2)
+
+
+class OpenSetDecisionTests(unittest.TestCase):
+    def test_accepts_stable_multi_window_match(self) -> None:
+        decision = decide_open_set_speaker(
+            [
+                {"An": 0.89, "Binh": 0.73},
+                {"An": 0.87, "Binh": 0.72},
+                {"An": 0.90, "Binh": 0.75},
+            ],
+            absolute_threshold=0.82,
+            margin_threshold=0.035,
+            consensus_threshold=0.67,
+        )
+
+        self.assertTrue(decision.accepted)
+        self.assertEqual(decision.label, "An")
+
+    def test_rejects_ambiguous_top_two(self) -> None:
+        decision = decide_open_set_speaker(
+            [
+                {"An": 0.87, "Binh": 0.85},
+                {"An": 0.86, "Binh": 0.84},
+                {"An": 0.88, "Binh": 0.85},
+            ],
+            absolute_threshold=0.82,
+            margin_threshold=0.035,
+            consensus_threshold=0.67,
+        )
+
+        self.assertFalse(decision.accepted)
+        self.assertEqual(decision.reason, "ambiguous_top_two")
+
+    def test_rejects_inconsistent_windows(self) -> None:
+        decision = decide_open_set_speaker(
+            [
+                {"An": 0.90, "Binh": 0.72},
+                {"An": 0.84, "Binh": 0.91},
+                {"An": 0.89, "Binh": 0.75},
+                {"An": 0.83, "Binh": 0.92},
+            ],
+            absolute_threshold=0.82,
+            margin_threshold=0.01,
+            consensus_threshold=0.67,
+        )
+
+        self.assertFalse(decision.accepted)
+        self.assertEqual(decision.reason, "inconsistent_windows")
+
+    def test_single_known_profile_requires_stronger_score(self) -> None:
+        decision = decide_open_set_speaker(
+            [{"An": 0.83}, {"An": 0.84}, {"An": 0.83}],
+            absolute_threshold=0.82,
+            margin_threshold=0.035,
+            consensus_threshold=0.67,
+        )
+
+        self.assertFalse(decision.accepted)
+        self.assertEqual(decision.required_score, 0.84)
+
+
+if __name__ == "__main__":
+    unittest.main()

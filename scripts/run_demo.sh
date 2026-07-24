@@ -44,24 +44,81 @@ if ! curl --silent --fail --max-time 120 \
 fi
 
 pids=()
+process_names=()
+cleanup_started=0
+
+start_process() {
+  local name="$1"
+  shift
+  "$@" &
+  pids+=("$!")
+  process_names+=("$name")
+}
+
 cleanup() {
-  for pid in "${pids[@]:-}"; do
-    kill "$pid" 2>/dev/null || true
+  local exit_code="${1:-$?}"
+  local alive=0
+
+  if (( cleanup_started )); then
+    return
+  fi
+  cleanup_started=1
+  trap - EXIT INT TERM
+
+  echo
+  echo "[stop] Bắt đầu dừng hệ thống..."
+  for index in "${!pids[@]}"; do
+    pid="${pids[$index]}"
+    name="${process_names[$index]}"
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "[stop] Gửi tín hiệu dừng tới $name (PID $pid)..."
+      kill -TERM "$pid" 2>/dev/null || true
+    else
+      echo "[stop] $name đã dừng."
+    fi
   done
+
+  # Give Python/LiveKit enough time to close sockets and flush final output.
+  for _ in $(seq 1 75); do
+    alive=0
+    for pid in "${pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        alive=1
+        break
+      fi
+    done
+    (( alive == 0 )) && break
+    sleep 0.2
+  done
+
+  for index in "${!pids[@]}"; do
+    pid="${pids[$index]}"
+    name="${process_names[$index]}"
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "[stop] $name quá thời hạn; buộc kết thúc (PID $pid)."
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+
+  for pid in "${pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+
+  echo "[stop] Đã dừng toàn bộ backend. Terminal đã sẵn sàng."
+  return "$exit_code"
 }
 on_signal() {
-  cleanup
+  cleanup 130
   exit 130
 }
-trap cleanup EXIT
+trap 'cleanup $?' EXIT
 trap on_signal INT TERM
 
-"$PYTHON_BIN" -m uvicorn backend.api.main:app \
-  --host 0.0.0.0 --port 8000 &
-pids+=("$!")
+start_process "Web/API" \
+  "$PYTHON_BIN" -m uvicorn backend.api.main:app \
+  --host 0.0.0.0 --port 8000
 
-"$PYTHON_BIN" -u ai_server.py &
-pids+=("$!")
+start_process "AI pipeline" "$PYTHON_BIN" -u ai_server.py
 
 echo "Đang chờ AI pipeline nạp model..."
 for _ in $(seq 1 300); do
@@ -76,15 +133,7 @@ if ! curl --silent --fail http://127.0.0.1:8001/ >/dev/null; then
   exit 1
 fi
 
-run_agent() {
-  while true; do
-    "$PYTHON_BIN" -u agent.py
-    echo "LiveKit worker đã dừng; thử kết nối lại sau 2 giây..."
-    sleep 2
-  done
-}
-run_agent &
-pids+=("$!")
+start_process "LiveKit worker" "$PYTHON_BIN" -u agent.py
 
 echo
 echo "Demo đã chạy:"

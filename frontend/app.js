@@ -12,6 +12,30 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+function resetTranscriptState() {
+  state.drafts.clear();
+  state.minutes.clear();
+  renderDrafts();
+  renderMinutes();
+}
+
+function captureScrollState(container) {
+  return {
+    top: container.scrollTop,
+    stickToBottom:
+      container.scrollHeight <= container.clientHeight ||
+      container.scrollHeight - container.scrollTop - container.clientHeight < 72,
+  };
+}
+
+function restoreScrollState(container, scrollState) {
+  requestAnimationFrame(() => {
+    container.scrollTop = scrollState.stickToBottom
+      ? container.scrollHeight
+      : scrollState.top;
+  });
+}
+
 async function checkApi() {
   try {
     const response = await fetch("/api/health");
@@ -135,6 +159,7 @@ async function joinRoom(mode) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "Không thể tham gia phòng");
+    if (mode === "create") resetTranscriptState();
 
     const room = new Room({
       adaptiveStream: false,
@@ -221,15 +246,16 @@ function handleMeetingEvent(payload) {
     renderDrafts();
     renderMinutes();
   } else if (payload.type === "transcript.cleared") {
-    state.minutes.clear();
-    renderMinutes();
+    resetTranscriptState();
   }
 }
 
 function renderDrafts() {
   const container = $("draft-list");
+  const scrollState = captureScrollState(container);
   if (!state.drafts.size) {
     container.innerHTML = '<div class="empty-state">Đang chờ người tiếp theo phát biểu...</div>';
+    restoreScrollState(container, scrollState);
     return;
   }
   container.innerHTML = Array.from(state.drafts.values())
@@ -242,6 +268,7 @@ function renderDrafts() {
       `,
     )
     .join("");
+  restoreScrollState(container, scrollState);
 }
 
 function formatTime(timestamp) {
@@ -251,11 +278,13 @@ function formatTime(timestamp) {
 
 function renderMinutes() {
   const container = $("minutes-list");
+  const scrollState = captureScrollState(container);
   const items = Array.from(state.minutes.values()).sort(
-    (a, b) => (b.start_time || 0) - (a.start_time || 0),
+    (a, b) => (a.start_time || 0) - (b.start_time || 0),
   );
   if (!items.length) {
     container.innerHTML = '<div class="empty-state">Chưa có nội dung được chốt.</div>';
+    restoreScrollState(container, scrollState);
     return;
   }
   container.innerHTML = items
@@ -272,12 +301,14 @@ function renderMinutes() {
       `,
     )
     .join("");
+  restoreScrollState(container, scrollState);
 }
 
 async function loadMinutes() {
   const response = await fetch("/api/transcripts");
   if (!response.ok) return;
   const data = await response.json();
+  state.minutes.clear();
   for (const item of data.items) state.minutes.set(item.segment_id, item);
   renderMinutes();
 }
@@ -469,7 +500,8 @@ $("confirm-playback").addEventListener("click", () => {
 });
 $("clear-button").addEventListener("click", async () => {
   if (!confirm("Xóa toàn bộ biên bản của phiên demo?")) return;
-  await fetch("/api/transcripts", { method: "DELETE" });
+  const response = await fetch("/api/transcripts", { method: "DELETE" });
+  if (response.ok) resetTranscriptState();
 });
 
 checkApi();

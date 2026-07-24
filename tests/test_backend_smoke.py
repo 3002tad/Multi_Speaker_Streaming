@@ -27,9 +27,28 @@ class BackendSmokeTests(unittest.TestCase):
             livekit_api_key="demo-key",
             livekit_api_secret="demo-secret",
         )
-        with patch("backend.api.main.settings", test_settings), TestClient(
-            app
-        ) as client:
+        temporary_directory = TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        test_repository = TranscriptRepository(
+            Path(temporary_directory.name) / "meeting.db"
+        )
+        test_repository.upsert(
+            {
+                "segment_id": "old-segment",
+                "meeting_id": test_settings.meeting_room,
+                "speaker": "Phiên cũ",
+                "raw_text": "nội dung cũ",
+                "text": "Nội dung cũ.",
+                "start_time": 1,
+                "end_time": 2,
+                "created_at": 1,
+            }
+        )
+        with (
+            patch("backend.api.main.settings", test_settings),
+            patch("backend.api.main.repository", test_repository),
+            TestClient(app) as client,
+        ):
             created = client.post(
                 "/api/meeting/create",
                 json={"host_name": "Chủ trì"},
@@ -38,6 +57,10 @@ class BackendSmokeTests(unittest.TestCase):
             room_code = created.json()["meeting_code"]
             self.assertEqual(created.json()["role"], "host")
             self.assertTrue(created.json()["token"])
+            self.assertIn("reset_at", created.json())
+            self.assertEqual(
+                client.get("/api/transcripts").json()["items"], []
+            )
 
             joined = client.post(
                 "/api/meeting/join",
