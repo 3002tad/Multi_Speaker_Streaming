@@ -237,13 +237,137 @@ Smoke tests kiểm tra:
 - Cập nhật LLM revision trên cùng segment.
 - Loại final trùng giữa hai mic và giữ nguồn mạnh hơn.
 
-## 9. Dừng hệ thống
+## 9. Dừng hệ thống an toàn
 
-Tại terminal đang chạy `run_demo.sh`, nhấn:
+Thứ tự an toàn là:
+
+```text
+Người tham gia rời phòng
+    → dừng pipeline WSL
+    → dừng LiveKit/Nginx nếu bảo trì home server
+    → tắt máy vật lý
+```
+
+### 9.1. Kết thúc một buổi demo thông thường
+
+1. Yêu cầu các laptop rời phòng hoặc tắt microphone.
+2. Chờ tối thiểu 20 giây để segment cuối và LLM revision đang chờ được ghi
+   vào SQLite.
+3. Có thể kiểm tra lần cuối:
+
+```bash
+curl http://127.0.0.1:8000/api/transcripts
+```
+
+4. Tại terminal WSL đang chạy `run_demo.sh`, nhấn:
 
 ```text
 Ctrl+C
 ```
 
-Script sẽ dừng backend, AI server và LiveKit worker. Không đóng cưỡng bức WSL
-trong lúc Qdrant đang ghi speaker profile.
+5. Chờ terminal trả lại dấu nhắc. Script sẽ gửi tín hiệu dừng cho:
+
+   - Backend Uvicorn cổng `8000`.
+   - AI server cổng `8001`.
+   - LiveKit worker `agent.py`.
+
+6. Xác nhận không còn tiến trình của demo:
+
+```bash
+pgrep -af 'run_demo.sh|backend.api.main|ai_server.py|agent.py'
+ss -ltnp | grep -E ':(8000|8001)\b'
+```
+
+Hai lệnh trên không nên trả về process/cổng của pipeline. Nếu một process vẫn
+còn, lấy đúng PID từ `pgrep`, gửi `kill -TERM <PID>` và chờ process kết thúc.
+Chỉ dùng `kill -KILL` khi `TERM` không có tác dụng sau một khoảng chờ hợp lý.
+
+Không cần dừng Nginx, LiveKit, Headscale hoặc Tailscale trên home server khi
+chỉ kết thúc một buổi demo. Giữ các dịch vụ này chạy giúp lần demo sau khởi
+động nhanh hơn.
+
+### 9.2. Dừng hoàn toàn để bảo trì home server
+
+Thực hiện mục 9.1 để dừng WSL trước. Sau đó SSH vào server:
+
+```bash
+ssh ntdserver
+```
+
+Dừng LiveKit bằng đúng Docker Compose project:
+
+```bash
+cd /opt/livekit
+docker compose stop livekit
+docker compose ps
+```
+
+`docker compose ps` phải cho thấy LiveKit đã dừng. Không dùng
+`docker compose down -v`, vì tùy chọn `-v` có thể xóa volume/dữ liệu.
+
+Nếu cần bảo trì Nginx:
+
+```bash
+sudo nginx -t
+sudo systemctl stop nginx
+```
+
+Không dừng `headscale.service` hoặc `tailscaled.service` trong một phiên bảo
+trì thông thường. Chúng đang cung cấp đường kết nối giữa home server và WSL;
+dừng chúng có thể làm mất kết nối quản trị từ xa.
+
+### 9.3. Tắt nguồn home server
+
+Sau khi WSL, LiveKit và các tác vụ ghi dữ liệu đã dừng:
+
+```bash
+sudo shutdown -h now
+```
+
+Nếu bắt buộc phải dừng Headscale/Tailscale để bảo trì chính các dịch vụ này,
+thực hiện chúng cuối cùng và chỉ khi còn đường truy cập LAN/console:
+
+```bash
+sudo systemctl stop headscale
+sudo systemctl stop tailscaled
+```
+
+Không rút nguồn trực tiếp khi Docker, SQLite hoặc Qdrant đang ghi dữ liệu.
+
+### 9.4. Tắt hẳn WSL trên Windows
+
+Chỉ thực hiện sau khi `run_demo.sh` đã dừng và terminal WSL đã trả lại dấu
+nhắc. Trong PowerShell:
+
+```powershell
+wsl.exe --shutdown
+```
+
+Lệnh này dừng tất cả distro WSL đang chạy trên máy, không chỉ distro của
+project.
+
+### 9.5. Khởi động lại sau bảo trì
+
+Trên home server:
+
+```bash
+cd /opt/livekit
+docker compose up -d livekit
+sudo systemctl start nginx
+docker compose ps
+curl -I https://meet.simplething.id.vn
+```
+
+Headscale, Tailscale, Docker và Nginx thường tự khởi động cùng hệ điều hành,
+nhưng vẫn nên kiểm tra trạng thái:
+
+```bash
+systemctl is-active docker nginx headscale tailscaled
+```
+
+Sau đó chạy lại pipeline trong WSL:
+
+```bash
+cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
+bash scripts/run_demo.sh
+```
