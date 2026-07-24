@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Phòng họp không giấy</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">PAPERLESS MEETING · AUDIO DEMO</p>
+          <h1>Phòng họp không giấy</h1>
+        </div>
+        <div class="system-status">
+          <span id="api-dot" class="dot"></span>
+          <span id="api-status">Đang kiểm tra AI...</span>
+        </div>
+      </header>
+
+      <section id="join-view" class="join-card">
+        <div class="join-copy">
+          <p class="eyebrow">MỘT PHÒNG · NHIỀU MICRO</p>
+          <h2>Tham gia cuộc họp bằng giọng nói</h2>
+          <p>
+            Mỗi laptop là một nguồn micro độc lập. Transcript nháp xuất hiện
+            realtime và biên bản được chốt theo timeline.
+          </p>
+        </div>
+        <div class="join-form">
+          <label>
+            Tên hiển thị
+            <input id="display-name" autocomplete="name" placeholder="Nguyễn Văn A" />
+          </label>
+          <label>
+            Mã phòng
+            <input id="meeting-code" value="DEMO-001" />
+          </label>
+          <div class="join-actions">
+            <button id="create-button" class="button secondary">Tạo phòng</button>
+            <button id="join-button" class="button primary">Tham gia</button>
+          </div>
+          <button id="open-enrollment" class="enrollment-link">
+            Đăng ký giọng nói trước khi tham gia
+          </button>
+          <p id="join-error" class="error" role="alert"></p>
+        </div>
+      </section>
+
+      <section id="meeting-view" class="meeting hidden">
+        <div class="meeting-header">
+          <div>
+            <p class="eyebrow">PHÒNG ĐANG HOẠT ĐỘNG</p>
+            <h2 id="room-title">DEMO-001</h2>
+          </div>
+          <div class="meeting-meta">
+            <span id="connection-state" class="badge warning">Đang kết nối</span>
+            <span id="participant-count" class="badge">1 người</span>
+          </div>
+        </div>
+
+        <div class="workspace">
+          <aside class="participants-panel panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">THÀNH VIÊN</p>
+                <h3>Nguồn âm thanh</h3>
+              </div>
+            </div>
+            <div id="participant-list" class="participant-list"></div>
+          </aside>
+
+          <section class="transcript-panel panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">LIVE</p>
+                <h3>Transcript nháp</h3>
+              </div>
+              <span class="live-pill"><span></span> Realtime</span>
+            </div>
+            <div id="draft-list" class="draft-list">
+              <div class="empty-state">Đang chờ người đầu tiên phát biểu...</div>
+            </div>
+          </section>
+
+          <section class="minutes-panel panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">OFFICIAL</p>
+                <h3>Biên bản timeline</h3>
+              </div>
+              <button id="clear-button" class="text-button">Xóa</button>
+            </div>
+            <div id="minutes-list" class="minutes-list">
+              <div class="empty-state">Chưa có nội dung được chốt.</div>
+            </div>
+          </section>
+        </div>
+
+        <footer class="controls">
+          <button id="mic-button" class="control active">
+            <span class="control-icon">🎙️</span>
+            <span>Micro bật</span>
+          </button>
+          <button id="playback-button" class="control">
+            <span class="control-icon">🔇</span>
+            <span>Playback tắt</span>
+          </button>
+          <button id="leave-button" class="control danger">
+            <span class="control-icon">↗</span>
+            <span>Rời phòng</span>
+          </button>
+        </footer>
+      </section>
+    </main>
+
+    <div id="playback-modal" class="modal-backdrop hidden">
+      <div class="modal">
+        <div class="modal-icon">🎧</div>
+        <h3>Khuyến nghị sử dụng tai nghe</h3>
+        <p>
+          Phát âm thanh qua loa có thể gây tiếng vọng và làm giảm độ chính xác
+          của transcript cũng như nhận diện người nói.
+        </p>
+        <div class="modal-actions">
+          <button id="cancel-playback" class="button secondary">Hủy</button>
+          <button id="confirm-playback" class="button primary">Bật playback</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="enrollment-modal" class="modal-backdrop hidden">
+      <div class="modal enrollment-modal">
+        <p class="eyebrow">VOICE ENROLLMENT</p>
+        <h3>Đăng ký danh tính giọng nói</h3>
+        <p>
+          Đọc tự nhiên đoạn dưới đây trong 20–30 giây. Hãy giữ khoảng cách với
+          micro giống lúc họp và tránh để người khác nói xen vào.
+        </p>
+        <blockquote>
+          Trong cuộc họp hôm nay, tôi sẽ trình bày rõ ràng từng nội dung, lắng
+          nghe ý kiến của các thành viên và cùng thống nhất những việc cần thực
+          hiện. Mỗi quyết định quan trọng sẽ được ghi nhận đầy đủ trong biên bản,
+          bao gồm người phụ trách và thời hạn hoàn thành. Tôi xác nhận đây là
+          mẫu giọng nói của mình dùng cho hệ thống phòng họp không giấy.
+        </blockquote>
+        <div class="record-status">
+          <span id="record-dot" class="record-dot"></span>
+          <strong id="record-time">00:00</strong>
+          <span id="record-message">Sẵn sàng ghi âm</span>
+        </div>
+        <div class="modal-actions">
+          <button id="cancel-enrollment" class="button secondary">Đóng</button>
+          <button id="record-enrollment" class="button primary">Bắt đầu</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.18.8/dist/livekit-client.umd.min.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

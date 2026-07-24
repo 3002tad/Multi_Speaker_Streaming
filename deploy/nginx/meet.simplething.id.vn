@@ -1,0 +1,59 @@
+server {
+    server_name meet.simplething.id.vn;
+
+    root /var/www/meeting;
+    index index.html;
+
+    # A 30-second mono WAV recorded by the browser is usually 2-3 MB.
+    client_max_body_size 10m;
+
+    location /api/ {
+        proxy_pass http://100.64.0.4:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 180s;
+        proxy_read_timeout 180s;
+        proxy_buffering off;
+    }
+
+    location /ws/ {
+        proxy_pass http://100.64.0.4:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 3600s;
+        proxy_read_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    listen [::]:443 ssl ipv6only=on;
+    listen 443 ssl;
+    ssl_certificate /etc/letsencrypt/live/meet.simplething.id.vn/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/meet.simplething.id.vn/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+
+server {
+    if ($host = meet.simplething.id.vn) {
+        return 301 https://$host$request_uri;
+    }
+
+    listen 80;
+    listen [::]:80;
+    server_name meet.simplething.id.vn;
+    return 404;
+}
