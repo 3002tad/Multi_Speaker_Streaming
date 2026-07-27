@@ -29,6 +29,54 @@ class SpeakerDecision:
     reason: str
 
 
+def can_early_accept_speaker(
+    decision: SpeakerDecision,
+    *,
+    score_buffer: float,
+    margin_threshold: float,
+    margin_buffer: float,
+) -> bool:
+    """Allow a second runtime window to be skipped only for a clear match."""
+    if (
+        not decision.accepted
+        or decision.score is None
+        or decision.score
+        < decision.required_score + max(0.0, score_buffer)
+    ):
+        return False
+    if decision.runner_up_score is None:
+        return True
+    return (
+        decision.margin is not None
+        and decision.margin
+        >= margin_threshold + max(0.0, margin_buffer)
+    )
+
+
+def adaptive_absolute_threshold(
+    *,
+    base_floor: float,
+    single_profile_threshold: float,
+    profile_count: int,
+    max_profile_similarity: float | None,
+    margin_threshold: float,
+    maximum_threshold: float = 0.96,
+) -> float:
+    """Raise the absolute gate when enrolled voices form a close cohort.
+
+    The base floor protects against low-confidence matches.  It is not the
+    final threshold once several enrolled profiles exist: the closest pair of
+    enrolled centroids determines how high the gate must be raised.
+    """
+    if profile_count <= 1 or max_profile_similarity is None:
+        return max(base_floor, single_profile_threshold)
+    cohort_guard = max_profile_similarity + margin_threshold
+    return min(
+        maximum_threshold,
+        max(base_floor, single_profile_threshold * 0.96, cohort_guard),
+    )
+
+
 def normalize_embedding(embedding: np.ndarray) -> np.ndarray:
     vector = np.asarray(embedding, dtype=np.float32).reshape(-1)
     norm = float(np.linalg.norm(vector))
@@ -100,6 +148,7 @@ def decide_open_set_speaker(
     absolute_threshold: float,
     margin_threshold: float,
     consensus_threshold: float,
+    single_profile_threshold: float | None = None,
 ) -> SpeakerDecision:
     """Accept a known speaker only when several windows agree confidently."""
     clean_observations = [
@@ -160,7 +209,14 @@ def decide_open_set_speaker(
     if len(clean_observations) == 1:
         required_score += 0.03
     if len(labels) == 1:
-        required_score += 0.02
+        required_score = max(
+            required_score + 0.02,
+            (
+                single_profile_threshold
+                if single_profile_threshold is not None
+                else required_score + 0.02
+            ),
+        )
 
     if winner_score < required_score:
         reason = "score_below_threshold"

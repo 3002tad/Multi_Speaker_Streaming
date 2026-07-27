@@ -145,6 +145,32 @@ data/qdrant_speakers/
 
 Profile không mất khi restart AI process.
 
+### Xóa toàn bộ Qdrant speaker database
+
+Thao tác này xóa vĩnh viễn tất cả profile đã enrollment. Trước tiên dừng
+pipeline bằng `Ctrl+C`, sau đó xác nhận AI server không còn chạy:
+
+```bash
+pgrep -af '[a]i_server.py'
+ss -ltnp | grep -E ':8001\b'
+```
+
+Hai lệnh trên không được trả về process/cổng AI. Kiểm tra đúng thư mục sẽ xóa:
+
+```bash
+realpath /mnt/d/VNPT/Code/Multi_Speaker_Streaming/data/qdrant_speakers
+```
+
+Nếu đường dẫn trả về đúng như trên, xóa database:
+
+```bash
+rm -rf -- /mnt/d/VNPT/Code/Multi_Speaker_Streaming/data/qdrant_speakers
+```
+
+Lần khởi động `ai_server.py` tiếp theo sẽ tự tạo lại Qdrant collection rỗng.
+Sau đó phải enrollment lại từng người. Không chạy lệnh xóa khi AI server đang
+ghi hoặc đọc Qdrant.
+
 ### Enrollment bằng file mẫu
 
 ```bash
@@ -197,9 +223,100 @@ Test tạo hai participant LiveKit độc lập và publish đồng thời:
 Luồng kiểm thử:
 
 ```text
-WAV → LiveKit → agent → VAD/Zipformer → cross-mic arbiter
-    → WavLM → Qwen → WebSocket/SQLite
+Mic → LiveKit → agent (PCM + sequence/timestamp chung)
+    → AI server: VAD riêng từng mic
+    → coordinator timeline toàn phòng
+       ├─ Speaker ID: raw VAD segment → lọc cửa sổ/clipping → WavLM
+       └─ ASR: chọn mic theo SNR → high-pass/DC → noise suppression nhẹ
+                 → normalize → Zipformer
+    → Qwen refinement → WebSocket/SQLite
 ```
+
+VAD vẫn chạy một stream riêng cho mỗi mic để giữ trạng thái cục bộ, nhưng
+`CoordinatedVadTimeline` ghép các stream theo timestamp. Các mic đang thu cùng
+một turn sẽ được so sánh chất lượng theo frame; mic bị lọt tiếng sẽ không đưa
+frame vào Zipformer. Những mic có chất lượng tương đương vẫn được giữ lại để
+không làm mất trường hợp hai người nói chồng. Ở bước final, các transcript
+trùng trong cùng global turn tiếp tục được deduplicate theo nội dung và
+envelope âm thanh.
+
+Audio đưa vào WavLM không đi qua ASR preprocessing. Điều này giữ đặc trưng
+giọng ổn định khi ghi danh hoặc nhận dạng. DeepFilterNet chưa bật trong pipeline
+nền; sẽ được thêm sau dưới dạng enhancer tùy chọn và chỉ chạy trên nhánh ASR
+sau khi chọn mic.
+
+Speaker ID chia đoạn nói thành cửa sổ 4 giây, stride 2 giây. Sau khi loại
+silence/clipping/noise, ba cửa sổ dùng để nhận dạng được lấy trải đều từ đầu,
+giữa và cuối lượt nói thay vì chỉ lấy ba cửa sổ lớn tiếng nhất. Cách này giữ
+được biến thiên tone/cường độ mà không tăng số lần inference WavLM.
+
+Các tham số có thể điều chỉnh trong `.env`:
+
+```dotenv
+ENABLE_ASR_PREPROCESSING=true
+ASR_HIGH_PASS_HZ=70
+ASR_TARGET_RMS=0.065
+ASR_FINAL_PADDING_SECONDS=0.66
+TIMELINE_ASR_QUALITY_MARGIN=3.5
+TIMELINE_ASR_RMS_RATIO=0.48
+TIMELINE_FINAL_SETTLE_SECONDS=0.75
+SPEAKER_MATCH_THRESHOLD=0.86
+SPEAKER_OPEN_SET_FLOOR=0.86
+SPEAKER_SINGLE_PROFILE_THRESHOLD=0.90
+SPEAKER_ID_WINDOW_SECONDS=3.0
+SPEAKER_ID_MAX_WINDOWS=2
+SPEAKER_EARLY_EXIT_SCORE_BUFFER=0.025
+SPEAKER_EARLY_EXIT_MARGIN_BUFFER=0.015
+WAVLM_NUM_THREADS=2
+LLM_INLINE_WAIT_SECONDS=0.35
+```
+
+`SPEAKER_OPEN_SET_FLOOR` chỉ là ngưỡng sàn. Khi có từ hai profile, hệ thống
+tính độ tương đồng lớn nhất giữa các centroid đã enroll và tự nâng absolute
+gate lên `closest_profile_similarity + margin`. Đồng thời từng cửa sổ phải
+đồng thuận về winner và vượt margin top-1/top-2. Vì vậy hai giọng càng gần
+nhau thì càng khó bị gán nhầm; không dùng một threshold cố định cho mọi cohort.
+
+Để benchmark Zipformer với `audio/truth.csv` mà không cần khởi động toàn bộ
+backend:
+
+```bash
+venv_linux/bin/python -B scripts/evaluate_asr.py --mode both
+```
+
+Nếu một file chứa nhiều đoạn/giọng khác nhau, nên thêm hai cột
+`start_seconds,end_seconds` vào `truth.csv`; evaluator sẽ chỉ cắt đúng đoạn
+đó trước khi tính WER/CER.
+
+Test tự động toàn bộ streaming LiveKit:
+
+```bash
+venv_linux/bin/python -B scripts/streaming_regression.py
+```
+
+Runner sẽ xóa transcript cũ, chạy dual-mic probe qua LiveKit, chờ
+`transcript.final`, ghép kết quả theo mốc thời gian trong `truth.csv`, tính
+WER/CER và kiểm tra `global_turn_id`, SNR, clipping cùng dedup.
+
+Để runner tự khởi động và tự dừng WSL demo:
+
+```bash
+venv_linux/bin/python -B scripts/streaming_regression.py --start-demo
+```
+
+Thêm `--keep-demo` nếu muốn giữ pipeline chạy sau test. Khi tự khởi động, log
+nằm tại `output/streaming-regression-demo.log`. Exit code `0` chỉ được trả về
+khi transport probe, transcript, timeline metadata và overlap checks đều đạt.
+Có thể lưu báo cáo JSON:
+
+```bash
+venv_linux/bin/python -B scripts/streaming_regression.py \
+  --start-demo \
+  --output output/streaming-regression-report.json
+```
+
+Ngưỡng mặc định của streaming regression là `WER <= 0.65`, `CER <= 0.60`;
+có thể điều chỉnh bằng `--max-wer` và `--max-cer`.
 
 Kiểm tra transcript đã lưu:
 
@@ -222,8 +339,10 @@ curl -X DELETE http://127.0.0.1:8000/api/transcripts
 - WavLM gán đúng người đã enrollment dù đổi vị trí mic.
 - Chỉ nhận tên theo voice profile khi nhiều cửa sổ giọng nói cùng đạt ngưỡng
   điểm, margin và consensus.
-- Hai mic thu cùng một câu chỉ tạo một bản final; arbiter giữ nguồn có RMS
-  tốt hơn.
+- Voice chưa ghi danh hoặc score dưới open-set floor phải fallback về tên mic;
+  không được lấy profile gần nhất làm tên mặc định.
+- Hai mic thu cùng một câu chỉ tạo một bản final; timeline giữ nguồn có SNR,
+  RMS và clipping tốt hơn.
 - Nội dung không bị mất khi WavLM chưa đủ chắc chắn; khi đó dùng tên đăng
   nhập của mic với `identity_method=mic_fallback`.
 - Bản provisional xuất trong khoảng 5–7 giây.
@@ -246,6 +365,10 @@ Smoke tests kiểm tra:
 - Lưu transcript vào SQLite.
 - Cập nhật LLM revision trên cùng segment.
 - Loại final trùng giữa hai mic và giữ nguồn mạnh hơn.
+- Packet PCM có timestamp/sequence và fallback raw-PCM.
+- Coordinator giữ mic có chất lượng tốt hơn nhưng không loại overlap thật.
+- Tách audio raw cho WavLM khỏi DSP nhẹ cho Zipformer.
+- Đọc và tính WER/CER từ `audio/truth.csv`.
 
 ## 9. Dừng hệ thống an toàn
 

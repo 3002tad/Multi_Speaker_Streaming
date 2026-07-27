@@ -22,11 +22,24 @@ from openai import AsyncOpenAI
 from livekit import rtc
 from livekit.plugins import silero
 from livekit.agents.vad import VADEventType
+from backend.audio_pipeline import (
+    AudioQualityTracker,
+    CoordinatedVadTimeline,
+    FinalCandidate,
+    StreamingAsrPreprocessor,
+    select_speaker_windows,
+    speech_envelope,
+    summarize_quality,
+    unpack_audio_packet,
+)
 from backend.config import settings
 from backend.speaker_identity import (
+    adaptive_absolute_threshold,
     build_enrollment_profile,
+    can_early_accept_speaker,
     decide_open_set_speaker,
 )
+from backend.text_refinement import normalize_meeting_terms
 
 print("Bắt đầu khởi tạo các mô hình AI...")
 
@@ -41,7 +54,9 @@ recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
     decoder=f'{asr_dir}/decoder-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
     joiner=f'{asr_dir}/joiner-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
     num_threads=1, sample_rate=16000, feature_dim=80,
-    decoding_method='modified_beam_search', max_active_paths=4, provider='cpu'
+    decoding_method='modified_beam_search',
+    max_active_paths=4,
+    provider='cpu'
 )
 
 # ============================================================
@@ -51,7 +66,7 @@ print("2. Đang nạp mô hình WavLM...")
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if DEVICE.type == "cpu":
     # Leave CPU capacity for Zipformer and the Ollama process.
-    torch.set_num_threads(1)
+    torch.set_num_threads(max(1, settings.wavlm_num_threads))
 wavlm_extractor = Wav2Vec2FeatureExtractor.from_pretrained('microsoft/wavlm-base-sv')
 wavlm_model = WavLMForXVector.from_pretrained('microsoft/wavlm-base-sv').to(DEVICE)
 wavlm_model.eval()
@@ -141,23 +156,15 @@ def _query_speaker_scores(embedding: np.ndarray) -> dict[str, float]:
 
 
 def _speaker_identity_clips(audio: np.ndarray) -> list[np.ndarray]:
-    minimum = int(settings.speaker_min_id_seconds * 16000)
-    if len(audio) < minimum:
-        return []
-
-    window = 4 * 16000
-    step = 2 * 16000
-    if len(audio) <= window:
-        return [audio]
-
-    candidates = []
-    for start in range(0, len(audio) - window + 1, step):
-        clip = audio[start : start + window]
-        rms = float(np.sqrt(np.mean(clip**2)))
-        candidates.append((rms, start, clip))
-
-    selected = sorted(candidates, key=lambda item: item[0], reverse=True)[:3]
-    return [item[2] for item in sorted(selected, key=lambda item: item[1])]
+    return select_speaker_windows(
+        audio,
+        minimum_seconds=settings.speaker_min_id_seconds,
+        window_seconds=max(
+            settings.speaker_min_id_seconds,
+            settings.speaker_id_window_seconds,
+        ),
+        max_windows=max(1, settings.speaker_id_max_windows),
+    )
 
 
 def recognize_speaker_open_set(audio: np.ndarray):
@@ -165,20 +172,62 @@ def recognize_speaker_open_set(audio: np.ndarray):
     if not clips:
         return decide_open_set_speaker(
             [],
-            absolute_threshold=settings.speaker_match_threshold,
+            absolute_threshold=max(
+                settings.speaker_match_threshold,
+                settings.speaker_open_set_floor,
+            ),
             margin_threshold=settings.speaker_match_margin,
             consensus_threshold=settings.speaker_consensus_ratio,
+            single_profile_threshold=(
+                settings.speaker_single_profile_threshold
+            ),
         )
 
-    with gpu_lock:
-        embeddings = [extract_embedding(clip) for clip in clips]
-    observations = [_query_speaker_scores(embedding) for embedding in embeddings]
-    return decide_open_set_speaker(
-        observations,
-        absolute_threshold=calculate_dynamic_speaker_threshold(),
-        margin_threshold=settings.speaker_match_margin,
-        consensus_threshold=settings.speaker_consensus_ratio,
+    absolute_threshold = max(
+        calculate_dynamic_speaker_threshold(),
+        settings.speaker_open_set_floor,
     )
+    observations = []
+    decision = None
+    for index, clip in enumerate(clips):
+        with gpu_lock:
+            embedding = extract_embedding(clip)
+        observations.append(_query_speaker_scores(embedding))
+        decision = decide_open_set_speaker(
+            observations,
+            absolute_threshold=absolute_threshold,
+            margin_threshold=settings.speaker_match_margin,
+            consensus_threshold=settings.speaker_consensus_ratio,
+            single_profile_threshold=(
+                settings.speaker_single_profile_threshold
+            ),
+        )
+        if (
+            index == 0
+            and len(clips) > 1
+            and can_early_accept_speaker(
+                decision,
+                score_buffer=(
+                    settings.speaker_early_exit_score_buffer
+                ),
+                margin_threshold=settings.speaker_match_margin,
+                margin_buffer=(
+                    settings.speaker_early_exit_margin_buffer
+                ),
+            )
+        ):
+            margin_text = (
+                f"{decision.margin:.3f}"
+                if decision.margin is not None
+                else "n/a"
+            )
+            print(
+                "   [WavLM] Early accept sau một cửa sổ "
+                f"(score={decision.score:.3f}, "
+                f"margin={margin_text})"
+            )
+            return decision
+    return decision
 
 # ============================================================
 # DYNAMIC ADAPTIVE CONFIGURATION ENGINE
@@ -201,131 +250,38 @@ def calculate_dynamic_speaker_threshold() -> float:
         if norm > 1e-8:
             vecs[label] = centroid / norm
     labels = list(vecs)
-    if len(labels) < 2:
-        return settings.speaker_match_threshold
-
-    max_sim = 0.0
+    max_sim = None
     for i in range(len(labels)):
         for j in range(i + 1, len(labels)):
             sim = float(np.dot(vecs[labels[i]], vecs[labels[j]]))
-            if sim > max_sim:
+            if max_sim is None or sim > max_sim:
                 max_sim = sim
 
-    return max(
-        settings.speaker_match_threshold,
-        min(0.93, max_sim + settings.speaker_match_margin),
+    threshold = adaptive_absolute_threshold(
+        base_floor=max(
+            settings.speaker_match_threshold,
+            settings.speaker_open_set_floor,
+        ),
+        single_profile_threshold=settings.speaker_single_profile_threshold,
+        profile_count=len(labels),
+        max_profile_similarity=max_sim,
+        margin_threshold=settings.speaker_match_margin,
     )
-
-class AdaptiveNoiseFloor:
-    """Tự động thích ứng với độ ồn phông môi trường theo thời gian thực (Dynamic RMS Noise Gate)."""
-    def __init__(self):
-        self.buffer = collections.deque(maxlen=40)
-
-    def get_dynamic_gate(self, audio_np: np.ndarray, is_speaking: bool) -> float:
-        rms = float(np.sqrt(np.mean(audio_np**2)))
-        if not is_speaking:
-            self.buffer.append(rms)
-        avg_noise = float(np.mean(self.buffer)) if self.buffer else 0.005
-        return max(0.008, min(0.035, avg_noise * 2.5))
-
-class CrossMicVoiceFocus:
-    """
-    DYNAMIC VOICE FOCUS: So sánh độ lớn giọng nói (RMS) giữa tất cả các Micro trong thời gian thực.
-    - Mic có RMS vượt trội -> Giữ lại (Focus).
-    - Mic bị lọt âm từ Mic khác (RMS_this < RMS_max_other * 0.6) -> Chặn hoàn toàn không cho vào VAD.
-    - Cả 2 Mic đều to xấp xỉ nhau (Nói chồng) -> Cho phép cả 2 cùng xử lý.
-    """
-    def __init__(self):
-        self.mic_rms_state = {}
-
-    def update_and_check_focus(self, identity: str, audio_np: np.ndarray) -> bool:
-        now = time.time()
-        rms = float(np.sqrt(np.mean(audio_np**2)))
-        self.mic_rms_state[identity] = (rms, now)
-
-        max_other_rms = 0.0
-        for mic_id, (other_rms, ts) in list(self.mic_rms_state.items()):
-            if mic_id != identity and (now - ts) < 0.4:
-                if other_rms > max_other_rms:
-                    max_other_rms = other_rms
-
-        # Nếu Mic khác đang phát biểu to vượt trội (max_other > 0.020 và rms < max_other * 0.40): Chặn lọt âm!
-        if max_other_rms > 0.020 and rms < (max_other_rms * 0.40):
-            return False
-        return True
+    if max_sim is not None:
+        print(
+            f"   [WavLM AdaptiveGate] profiles={len(labels)} "
+            f"closest_similarity={max_sim:.3f} "
+            f"required_score={threshold:.3f}"
+        )
+    return threshold
 
 import base64
 
-voice_focus_engine = CrossMicVoiceFocus()
-
-
-class CrossMicFinalArbiter:
-    """Select the strongest mic before expensive WavLM/Qwen finalization."""
-
-    def __init__(self):
-        self.lock = asyncio.Lock()
-        self.candidates = {}
-
-    @staticmethod
-    def _similarity(left: str, right: str) -> float:
-        left_words = set(re.findall(r"\w+", left.lower(), flags=re.UNICODE))
-        right_words = set(re.findall(r"\w+", right.lower(), flags=re.UNICODE))
-        if not left_words or not right_words:
-            return 0.0
-        return len(left_words & right_words) / min(
-            len(left_words), len(right_words)
-        )
-
-    @staticmethod
-    def _overlaps(left: dict, right: dict) -> bool:
-        return (
-            min(left["end_time"], right["end_time"])
-            - max(left["start_time"], right["start_time"])
-            >= 1.0
-        )
-
-    async def should_process(self, candidate: dict) -> bool:
-        async with self.lock:
-            self.candidates[candidate["id"]] = candidate
-
-        # Parallel VAD streams normally close within a few hundred ms.
-        await asyncio.sleep(0.75)
-
-        async with self.lock:
-            current = self.candidates.get(candidate["id"])
-            if current is None:
-                return False
-            if current.get("winner_id") is not None:
-                return current["winner_id"] == candidate["id"]
-
-            group = [
-                item
-                for item in self.candidates.values()
-                if item.get("winner_id") is None
-                and self._overlaps(candidate, item)
-                and self._similarity(
-                    candidate["raw_text"], item["raw_text"]
-                )
-                >= 0.62
-            ]
-            if not group:
-                # Very short utterances may not satisfy the normal overlap
-                # window even when compared with themselves.
-                group = [candidate]
-            winner = max(group, key=lambda item: item["signal_rms"])
-            for item in group:
-                item["winner_id"] = winner["id"]
-
-            cutoff = time.time() - 10
-            self.candidates = {
-                key: item
-                for key, item in self.candidates.items()
-                if item["created_at"] >= cutoff
-            }
-            return winner["id"] == candidate["id"]
-
-
-final_arbiter = CrossMicFinalArbiter()
+room_timeline = CoordinatedVadTimeline(
+    asr_quality_margin=settings.timeline_asr_quality_margin,
+    asr_rms_ratio=settings.timeline_asr_rms_ratio,
+    final_settle_seconds=settings.timeline_final_settle_seconds,
+)
 
 
 class HeavyWorkCoordinator:
@@ -437,22 +393,31 @@ LLM_MIN_WORDS = 5  # Câu quá ngắn thì bỏ qua LLM, tránh hallucination
 
 async def refine_text(raw_text: str) -> str:
     """Hiệu đính văn bản ASR bằng LLM với few-shot instruction và Hallucination Guard."""
+    normalized_text = normalize_meeting_terms(raw_text)
     if not settings.enable_llm_refinement:
-        return raw_text.capitalize()
+        return normalized_text.capitalize()
 
-    if len(raw_text.split()) < LLM_MIN_WORDS:
-        return raw_text.capitalize()
+    if len(normalized_text.split()) < LLM_MIN_WORDS:
+        return normalized_text.capitalize()
 
     try:
         response = await llm_client.chat.completions.create(
             model=settings.ollama_model,
             messages=[
-                {"role": "system", "content": "Sửa lỗi chính tả tiếng Việt cuộc họp. Chuẩn hóa từ ASR nghe nhầm: 'lồng quét' -> 'làm web', 'aptoris' -> 'Architecture', 'hpase' -> 'HBase', 'hd' -> 'HD'. KHÔNG tóm tắt. CHỈ trả về đúng văn bản đã sửa."},
-                {"role": "user", "content": "Văn bản gốc: lồng quét này nọ làm hệ thống web lồng quét aptoris gồm hpase"},
-                {"role": "assistant", "content": "Làm Web này nọ làm hệ thống web, làm web Architecture gồm HBase."},
-                {"role": "user", "content": f"Văn bản gốc: {raw_text}"},
+                {
+                    "role": "system",
+                    "content": (
+                        "Sửa chính tả và dấu câu tiếng Việt cho transcript "
+                        "cuộc họp. Không tóm tắt, không thêm ý. Chỉ trả về "
+                        "văn bản đã sửa."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Văn bản gốc: {normalized_text}",
+                },
             ],
-            max_tokens=256,
+            max_tokens=160,
             temperature=0.0,
             stop=["\n", "\n\n", "Dưới đây", "Nếu bạn"],
             extra_body={
@@ -460,7 +425,8 @@ async def refine_text(raw_text: str) -> str:
                 "options": {
                     "num_thread": 2,
                     "num_predict": min(
-                        160, max(48, len(raw_text.split()) * 3)
+                        128,
+                        max(24, len(normalized_text.split()) * 2),
                     ),
                 },
             },
@@ -468,14 +434,14 @@ async def refine_text(raw_text: str) -> str:
         res_text = response.choices[0].message.content.strip()
 
         # --- HALLUCINATION GUARD ---
-        raw_words = len(raw_text.split())
+        raw_words = len(normalized_text.split())
         res_words = len(res_text.split())
         if res_words > raw_words * 2 + 3 or res_words < max(1, raw_words // 2):
             print(f"   [!] LLM Hallucination Guard bị kích hoạt ({res_words} từ vs {raw_words} từ gốc). Fallback về văn bản gốc.")
-            return raw_text.capitalize()
+            return normalized_text.capitalize()
 
         raw_tokens = set(
-            re.findall(r"\w+", raw_text.lower(), flags=re.UNICODE)
+            re.findall(r"\w+", normalized_text.lower(), flags=re.UNICODE)
         )
         refined_tokens = set(
             re.findall(r"\w+", res_text.lower(), flags=re.UNICODE)
@@ -485,16 +451,20 @@ async def refine_text(raw_text: str) -> str:
             if raw_tokens
             else 1.0
         )
-        if preserved < 0.58:
+        novel_tokens = refined_tokens - raw_tokens
+        novel_ratio = len(novel_tokens) / max(1, len(raw_tokens))
+        if preserved < 0.72 or novel_ratio > 0.22:
             print(
                 "   [!] LLM content-preservation guard bị kích hoạt "
-                f"({preserved:.0%}). Fallback về văn bản gốc."
+                f"(preserved={preserved:.0%}, "
+                f"novel={novel_ratio:.0%}). "
+                "Fallback về văn bản đã chuẩn hóa thuật ngữ."
             )
-            return raw_text.capitalize()
+            return normalized_text.capitalize()
 
         return res_text
     except Exception:
-        return raw_text
+        return normalized_text
 
 # ============================================================
 # 6. FastAPI Web & WebSocket Server
@@ -709,13 +679,42 @@ async def websocket_endpoint(
     pre_speech_buf = collections.deque(maxlen=PRE_BUFFER_CHUNKS)
 
     speech_audio_chunks: list[np.ndarray] = []
+    speech_quality_observations = []
     speech_sample_count = 0
     is_speaking = False
     speech_start_time = 0.0
+    current_turn_id = ""
+    last_audio_timestamp = time.monotonic()
     
     current_speaker = fallback_speaker
     audio_queue = asyncio.Queue()
-    adaptive_noise = AdaptiveNoiseFloor()
+    quality_tracker = AudioQualityTracker()
+    asr_preprocessor = StreamingAsrPreprocessor(
+        high_pass_hz=settings.asr_high_pass_hz,
+        target_rms=settings.asr_target_rms,
+    )
+
+    def prepare_asr_audio(audio, quality):
+        if not settings.enable_asr_preprocessing:
+            return audio
+        return asr_preprocessor.process(audio, quality=quality)
+
+    def finalize_asr_stream_text() -> str:
+        """Flush pending transducer tokens before reading a final result."""
+        padding = np.zeros(
+            int(settings.asr_final_padding_seconds * 16000),
+            dtype=np.float32,
+        )
+        if padding.size:
+            asr_stream.accept_waveform(16000, padding)
+        while recognizer.is_ready(asr_stream):
+            recognizer.decode_stream(asr_stream)
+        result = recognizer.get_result(asr_stream)
+        return (
+            result.text.strip()
+            if hasattr(result, "text")
+            else str(result).strip()
+        )
 
     last_sent_text = ""
     last_partial_sent_at = 0.0
@@ -736,12 +735,7 @@ async def websocket_endpoint(
                     _, future = command
                     try:
                         async with asr_lock:
-                            result = recognizer.get_result(asr_stream)
-                            final_text = (
-                                result.text.strip()
-                                if hasattr(result, "text")
-                                else str(result).strip()
-                            )
+                            final_text = finalize_asr_stream_text()
                             recognizer.reset(asr_stream)
                         if not future.done():
                             future.set_result(final_text)
@@ -819,7 +813,14 @@ async def websocket_endpoint(
         except Exception as exc:
             print(f"[!] Lỗi ASR worker [{identity}]: {exc}")
 
-    async def process_final_minute_bg(audio_snapshot: list[np.ndarray], raw_text: str, start_ts: float, end_ts: float):
+    async def process_final_minute_bg(
+        audio_snapshot: list[np.ndarray],
+        quality_snapshot: list,
+        raw_text: str,
+        start_ts: float,
+        end_ts: float,
+        turn_id: str,
+    ):
         if len(raw_text) < 4:
             return
 
@@ -830,8 +831,12 @@ async def websocket_endpoint(
         speaker_confidence = None
         speaker_margin = None
         speaker_consensus = None
+        speaker_id_ms = None
         signal_rms = 0.0
+        quality_summary = summarize_quality(quality_snapshot)
         if audio_snapshot:
+            # Speaker ID deliberately receives the original VAD-selected
+            # waveform. ASR enhancement must never alter WavLM embeddings.
             audio_for_id = np.concatenate(audio_snapshot)
             duration_s = len(audio_for_id) / 16000
             signal_rms = float(np.sqrt(np.mean(audio_for_id**2)))
@@ -841,19 +846,23 @@ async def websocket_endpoint(
             start_ts = end_ts - duration_s
 
             candidate_id = uuid.uuid4().hex
-            should_process = await final_arbiter.should_process({
-                "id": candidate_id,
-                "identity": identity,
-                "raw_text": raw_text,
-                "start_time": start_ts,
-                "end_time": end_ts,
-                "signal_rms": signal_rms,
-                "created_at": time.time(),
-            })
+            should_process = await room_timeline.select_final(
+                FinalCandidate(
+                    candidate_id=candidate_id,
+                    turn_id=turn_id,
+                    source_id=identity,
+                    raw_text=raw_text,
+                    start_time=start_ts,
+                    end_time=end_ts,
+                    quality=quality_summary,
+                    created_at=time.monotonic(),
+                    fingerprint=speech_envelope(audio_for_id),
+                )
+            )
             if not should_process:
                 print(
-                    f"   [VoiceFocus Final] Bỏ bản sao từ {identity}; "
-                    "một mic khác có tín hiệu rõ hơn."
+                    f"   [Timeline {turn_id}] Bỏ bản sao từ {identity}; "
+                    "mic khác có SNR/chất lượng tốt hơn."
                 )
                 return
             # Realtime speaker checks now yield until this final has passed
@@ -864,6 +873,11 @@ async def websocket_endpoint(
             enrolled_points = qdrant.count(
                 collection_name="speakers", exact=True
             ).count
+            # Ollama is a separate process and its HTTP call does not block
+            # the event loop. Start refinement while WavLM works instead of
+            # serializing both stages.
+            refinement_started = time.perf_counter()
+            refinement_task = asyncio.create_task(refine_text(raw_text))
 
             if enrolled_points == 0:
                 print(
@@ -874,7 +888,11 @@ async def websocket_endpoint(
                 def run_wavlm(audio=audio_for_id):
                     return recognize_speaker_open_set(audio)
 
+                speaker_id_started = time.perf_counter()
                 decision = await heavy_work.run_final_thread(run_wavlm)
+                speaker_id_ms = round(
+                    (time.perf_counter() - speaker_id_started) * 1000
+                )
                 score_text = (
                     f"{decision.score:.3f}"
                     if decision.score is not None
@@ -912,6 +930,9 @@ async def websocket_endpoint(
                     f"{settings.speaker_min_id_seconds:.1f}s; "
                     f"fallback về {fallback_speaker}"
                 )
+        else:
+            refinement_started = time.perf_counter()
+            refinement_task = asyncio.create_task(refine_text(raw_text))
 
         async def emit_payload(message: dict) -> None:
             try:
@@ -926,12 +947,9 @@ async def websocket_endpoint(
                 pass
 
         utterance_id = uuid.uuid4().hex
-        refinement_started = time.perf_counter()
-        refinement_task = asyncio.create_task(
-            heavy_work.run_final_async(lambda: refine_text(raw_text))
-        )
         done, _ = await asyncio.wait(
-            {refinement_task}, timeout=4.0
+            {refinement_task},
+            timeout=max(0.0, settings.llm_inline_wait_seconds),
         )
         refinement_pending = not done
         if refinement_pending:
@@ -951,6 +969,7 @@ async def websocket_endpoint(
             "speaker_confidence": speaker_confidence,
             "speaker_margin": speaker_margin,
             "speaker_consensus": speaker_consensus,
+            "speaker_id_ms": speaker_id_ms,
             "text":     refined,
             "raw_text": raw_text,
             "start_time": round(start_ts, 2),
@@ -960,6 +979,11 @@ async def websocket_endpoint(
                 (time.perf_counter() - final_pipeline_started) * 1000
             ),
             "signal_rms": round(signal_rms, 6),
+            "signal_snr_db": round(quality_summary.snr_db, 2),
+            "clipping_ratio": round(
+                quality_summary.clipping_ratio, 5
+            ),
+            "global_turn_id": turn_id,
             "refinement_pending": refinement_pending,
             "revision": 1,
         }
@@ -995,28 +1019,48 @@ async def websocket_endpoint(
 
     async def process_vad_events():
         nonlocal is_speaking, speech_start_time, speech_audio_chunks
-        nonlocal speech_sample_count
+        nonlocal speech_quality_observations, speech_sample_count
         nonlocal last_sent_text, last_speech_end_time, current_speaker
+        nonlocal current_turn_id
         try:
             async for evt in vad_stream:
                 if evt.type == VADEventType.START_OF_SPEECH:
                     is_speaking = True
                     speech_start_time = time.time()
+                    current_turn_id = room_timeline.speech_started(
+                        identity, timestamp=last_audio_timestamp
+                    )
                     last_sent_text = ""
                     current_speaker = fallback_speaker
-                    print(f"\n[🎙️ VAD] [{identity}] BẮT ĐẦU NÓI...")
+                    print(
+                        f"\n[🎙️ VAD] [{identity}] BẮT ĐẦU NÓI "
+                        f"({current_turn_id})..."
+                    )
 
                     async with asr_lock:
                         recognizer.reset(asr_stream)
+                        asr_preprocessor.reset()
                         # Preserve the same prefix that is fed to ASR so
                         # duration, speaker embedding and transcript all
                         # describe the same complete utterance.
-                        speech_audio_chunks = list(pre_speech_buf)
+                        buffered = list(pre_speech_buf)
+                        speech_audio_chunks = [
+                            item[0] for item in buffered
+                        ]
+                        speech_quality_observations = [
+                            item[1] for item in buffered
+                        ]
                         # Pre-roll belongs to the snapshot/ASR, but not to
                         # the 15-second live-turn counter.
                         speech_sample_count = 0
-                        for chunk in list(pre_speech_buf):
-                            asr_stream.accept_waveform(16000, chunk)
+                        for chunk, quality, timestamp in buffered:
+                            if room_timeline.should_route_asr(
+                                identity, timestamp=timestamp
+                            ):
+                                asr_stream.accept_waveform(
+                                    16000,
+                                    prepare_asr_audio(chunk, quality),
+                                )
 
                 elif (
                     evt.type == VADEventType.INFERENCE_DONE
@@ -1028,7 +1072,11 @@ async def websocket_endpoint(
                     # resets ASR before later frames are decoded.
                     speech_end_time = time.time()
                     audio_snapshot = list(speech_audio_chunks)
+                    quality_snapshot = list(
+                        speech_quality_observations
+                    )
                     speech_audio_chunks = []
+                    speech_quality_observations = []
                     speech_sample_count = 0
 
                     future = asyncio.get_running_loop().create_future()
@@ -1038,14 +1086,19 @@ async def websocket_endpoint(
                     t = asyncio.create_task(
                         process_final_minute_bg(
                             audio_snapshot,
+                            quality_snapshot,
                             raw_text,
                             speech_start_time,
                             speech_end_time,
+                            current_turn_id,
                         )
                     )
                     bg_tasks.add(t)
                     t.add_done_callback(bg_tasks.discard)
 
+                    current_turn_id = room_timeline.split_turn(
+                        identity, timestamp=last_audio_timestamp
+                    )
                     speech_start_time = speech_end_time
                     last_sent_text = ""
                     current_speaker = fallback_speaker
@@ -1053,24 +1106,42 @@ async def websocket_endpoint(
                 elif evt.type == VADEventType.END_OF_SPEECH:
                     is_speaking = False
                     speech_end_time = time.time()
+                    ended_turn_id = room_timeline.speech_ended(
+                        identity, timestamp=last_audio_timestamp
+                    )
                     last_speech_end_time = speech_end_time
                     last_sent_text = ""
                     pre_speech_buf.clear()
-                    print(f"\n[🛑 VAD] [{identity}] ĐÃ NGỪNG NÓI.")
+                    print(
+                        f"\n[🛑 VAD] [{identity}] ĐÃ NGỪNG NÓI "
+                        f"({ended_turn_id})."
+                    )
 
                     audio_snapshot = list(speech_audio_chunks)
+                    quality_snapshot = list(
+                        speech_quality_observations
+                    )
                     speech_audio_chunks = []
+                    speech_quality_observations = []
                     speech_sample_count = 0
 
                     # Do not read the final recognizer state until every
                     # accepted speech chunk has been decoded.
                     await audio_queue.join()
                     async with asr_lock:
-                        asr_res  = recognizer.get_result(asr_stream)
-                        raw_text = asr_res.text.strip() if hasattr(asr_res, 'text') else str(asr_res).strip()
+                        raw_text = finalize_asr_stream_text()
 
                     # Bật tác vụ ngầm chạy WavLM + LLM để luồng VAD không bao giờ bị nghẽn hay khựng!
-                    t = asyncio.create_task(process_final_minute_bg(audio_snapshot, raw_text, speech_start_time, speech_end_time))
+                    t = asyncio.create_task(
+                        process_final_minute_bg(
+                            audio_snapshot,
+                            quality_snapshot,
+                            raw_text,
+                            speech_start_time,
+                            speech_end_time,
+                            ended_turn_id,
+                        )
+                    )
                     bg_tasks.add(t)
                     t.add_done_callback(bg_tasks.discard)
 
@@ -1087,8 +1158,15 @@ async def websocket_endpoint(
 
     try:
         while True:
-            data = await websocket.receive_bytes()
-            now = time.time()
+            packet = await websocket.receive_bytes()
+            data, sequence, captured_at = unpack_audio_packet(packet)
+            last_audio_timestamp = captured_at
+            if not data or len(data) % 2:
+                print(
+                    f"[audio] Bỏ frame PCM không hợp lệ từ {identity}: "
+                    f"{len(data)} bytes"
+                )
+                continue
             
             # Gom đệm 50ms âm thanh (1600 bytes) rồi mới broadcast về Web UI để stream mượt mượt không giật
             audio_batch_buf.extend(data)
@@ -1098,22 +1176,24 @@ async def websocket_endpoint(
                 asyncio.create_task(dashboard_manager.broadcast_audio(identity, chunk_to_send))
 
             audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-
-            # Always refresh RMS, including while this channel is speaking.
-            # Otherwise its state expires after 0.4s and another mic can be
-            # falsely activated by leakage.
-            # Keep every channel through VAD. Per-frame arrival order is not
-            # synchronized across WebSockets, so dropping a channel here can
-            # discard the actual near-field mic. CrossMicFinalArbiter makes
-            # the reliable decision from complete, time-aligned utterances.
-            voice_focus_engine.update_and_check_focus(identity, audio_np)
+            frame_quality = quality_tracker.measure(
+                audio_np, speech_active=is_speaking
+            )
+            room_timeline.note_frame(
+                identity,
+                timestamp=captured_at,
+                quality=frame_quality,
+                sequence=sequence,
+            )
 
             # Feed continuous audio into Silero. A frame-level RMS gate and
             # four-second cooldown used to cut quiet syllables and the start
             # of the next speaker. Silero already performs the proper
             # temporal speech/noise decision.
             if not is_speaking:
-                pre_speech_buf.append(audio_np)
+                pre_speech_buf.append(
+                    (audio_np, frame_quality, captured_at)
+                )
 
             frame = rtc.AudioFrame(
                 data=data, sample_rate=16000, num_channels=1,
@@ -1122,9 +1202,21 @@ async def websocket_endpoint(
             vad_stream.push_frame(frame)
 
             if is_speaking:
+                # Branch 1 (Speaker ID): retain the original VAD-selected
+                # waveform. Only reject windows later for silence/clipping.
                 speech_audio_chunks.append(audio_np)
+                speech_quality_observations.append(frame_quality)
                 speech_sample_count += len(audio_np)
-                audio_queue.put_nowait(audio_np)
+
+                # Branch 2 (ASR): the room timeline suppresses weak leakage
+                # mics before Zipformer. Similar-quality near-field mics are
+                # both retained so genuine overlap is not discarded.
+                if room_timeline.should_route_asr(
+                    identity, timestamp=captured_at
+                ):
+                    audio_queue.put_nowait(
+                        prepare_asr_audio(audio_np, frame_quality)
+                    )
 
     except WebSocketDisconnect:
         print(f"\n[-] Client {identity} đã ngắt kết nối.")

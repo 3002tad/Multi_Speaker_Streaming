@@ -198,6 +198,58 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertEqual(len(items), 1)
             self.assertEqual(items[0]["segment_id"], "strong")
 
+    def test_global_turn_keeps_distinct_overlapping_speech(self) -> None:
+        test_settings = replace(
+            main.settings, internal_api_key="internal-test-key"
+        )
+        temporary_directory = TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        test_repository = TranscriptRepository(
+            Path(temporary_directory.name) / "meeting.db"
+        )
+        headers = {"X-Internal-Api-Key": "internal-test-key"}
+        with (
+            patch("backend.api.main.settings", test_settings),
+            patch("backend.api.main.repository", test_repository),
+            TestClient(app) as client,
+        ):
+            for segment_id, turn_id, source_id, text in (
+                (
+                    "turn-a",
+                    "global-a",
+                    "mic-a",
+                    "ngân sách dự án cần phê duyệt",
+                ),
+                (
+                    "turn-b",
+                    "global-b",
+                    "mic-b",
+                    "thời hạn triển khai cần thống nhất",
+                ),
+            ):
+                response = client.post(
+                    "/api/internal/events",
+                    headers=headers,
+                    json={
+                        "payload": {
+                            "type": "transcript.final",
+                            "segment_id": segment_id,
+                            "source_id": source_id,
+                            "global_turn_id": turn_id,
+                            "raw_text": text,
+                            "text": text,
+                            "start_time": 100.0,
+                            "end_time": 108.0,
+                            "signal_rms": 0.04,
+                        }
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                len(client.get("/api/transcripts").json()["items"]),
+                2,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

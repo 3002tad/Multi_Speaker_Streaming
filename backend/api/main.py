@@ -118,6 +118,16 @@ def _find_cross_mic_duplicate(
     ):
         if existing.get("source_id") == payload.get("source_id"):
             continue
+        payload_turn = payload.get("global_turn_id")
+        existing_turn = existing.get("global_turn_id")
+        if (
+            payload_turn
+            and existing_turn
+            and payload_turn != existing_turn
+        ):
+            # Coordinated VAD has already established that these are
+            # different room-wide turns; do not collapse overlapping speech.
+            continue
         if not _overlaps(existing, payload):
             continue
         existing_raw = existing.get("raw_text") or existing.get("text", "")

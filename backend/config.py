@@ -71,7 +71,13 @@ class Settings:
         )
     )
     speaker_match_threshold: float = float(
-        os.getenv("SPEAKER_MATCH_THRESHOLD", "0.82")
+        os.getenv("SPEAKER_MATCH_THRESHOLD", "0.86")
+    )
+    speaker_open_set_floor: float = float(
+        os.getenv("SPEAKER_OPEN_SET_FLOOR", "0.86")
+    )
+    speaker_single_profile_threshold: float = float(
+        os.getenv("SPEAKER_SINGLE_PROFILE_THRESHOLD", "0.90")
     )
     speaker_match_margin: float = float(
         os.getenv("SPEAKER_MATCH_MARGIN", "0.035")
@@ -81,6 +87,45 @@ class Settings:
     )
     speaker_min_id_seconds: float = float(
         os.getenv("SPEAKER_MIN_ID_SECONDS", "2.5")
+    )
+    speaker_id_window_seconds: float = float(
+        os.getenv("SPEAKER_ID_WINDOW_SECONDS", "3.0")
+    )
+    speaker_id_max_windows: int = int(
+        os.getenv("SPEAKER_ID_MAX_WINDOWS", "2")
+    )
+    enable_asr_preprocessing: bool = _env_bool(
+        "ENABLE_ASR_PREPROCESSING", True
+    )
+    asr_high_pass_hz: float = float(
+        os.getenv("ASR_HIGH_PASS_HZ", "70")
+    )
+    asr_target_rms: float = float(
+        os.getenv("ASR_TARGET_RMS", "0.065")
+    )
+    asr_final_padding_seconds: float = float(
+        os.getenv("ASR_FINAL_PADDING_SECONDS", "0.66")
+    )
+    timeline_asr_quality_margin: float = float(
+        os.getenv("TIMELINE_ASR_QUALITY_MARGIN", "3.5")
+    )
+    timeline_asr_rms_ratio: float = float(
+        os.getenv("TIMELINE_ASR_RMS_RATIO", "0.48")
+    )
+    timeline_final_settle_seconds: float = float(
+        os.getenv("TIMELINE_FINAL_SETTLE_SECONDS", "0.75")
+    )
+    llm_inline_wait_seconds: float = float(
+        os.getenv("LLM_INLINE_WAIT_SECONDS", "0.35")
+    )
+    wavlm_num_threads: int = int(
+        os.getenv("WAVLM_NUM_THREADS", "2")
+    )
+    speaker_early_exit_score_buffer: float = float(
+        os.getenv("SPEAKER_EARLY_EXIT_SCORE_BUFFER", "0.025")
+    )
+    speaker_early_exit_margin_buffer: float = float(
+        os.getenv("SPEAKER_EARLY_EXIT_MARGIN_BUFFER", "0.015")
     )
 
     @property

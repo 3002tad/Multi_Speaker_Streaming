@@ -14,6 +14,7 @@ import websockets
 from livekit import rtc
 from livekit.api import AccessToken, VideoGrants
 
+from backend.audio_pipeline import pack_audio_packet
 from backend.config import settings
 
 
@@ -36,6 +37,7 @@ async def process_track(
     segment_id: str | None = None
     utterance_segments: dict[str, str] = {}
     audio_stream = rtc.AudioStream(track, sample_rate=16000, num_channels=1)
+    audio_sequence = 0
     query = urlencode({"display_name": display_name})
     uri = f"{settings.ai_server_ws_url}/ws/{identity}?{query}"
 
@@ -106,6 +108,7 @@ async def process_track(
                             "speaker_consensus": result.get(
                                 "speaker_consensus"
                             ),
+                            "speaker_id_ms": result.get("speaker_id_ms"),
                             "raw_text": result.get(
                                 "raw_text", result.get("text", "")
                             ),
@@ -115,6 +118,15 @@ async def process_track(
                             "refinement_ms": result.get("refinement_ms"),
                             "pipeline_ms": result.get("pipeline_ms"),
                             "signal_rms": result.get("signal_rms", 0),
+                            "signal_snr_db": result.get(
+                                "signal_snr_db"
+                            ),
+                            "clipping_ratio": result.get(
+                                "clipping_ratio"
+                            ),
+                            "global_turn_id": result.get(
+                                "global_turn_id"
+                            ),
                             "refinement_pending": result.get(
                                 "refinement_pending", False
                             ),
@@ -136,7 +148,14 @@ async def process_track(
             result_task = asyncio.create_task(receive_results())
             try:
                 async for frame_event in audio_stream:
-                    await websocket.send(frame_event.frame.data.tobytes())
+                    pcm = frame_event.frame.data.tobytes()
+                    packet = pack_audio_packet(
+                        pcm,
+                        sequence=audio_sequence,
+                        captured_at=time.monotonic(),
+                    )
+                    audio_sequence += 1
+                    await websocket.send(packet)
             finally:
                 # The AI service can still be finalizing the last utterance
                 # when a participant mutes or leaves. Keep the result channel

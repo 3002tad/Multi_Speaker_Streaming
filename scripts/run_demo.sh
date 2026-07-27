@@ -37,7 +37,7 @@ OLLAMA_MODEL="$("$PYTHON_BIN" -c \
 if ! curl --silent --fail --max-time 120 \
   http://127.0.0.1:11434/api/chat \
   -H "Content-Type: application/json" \
-  -d "{\"model\":\"$OLLAMA_MODEL\",\"messages\":[{\"role\":\"system\",\"content\":\"Sửa lỗi chính tả tiếng Việt cuộc họp. Chuẩn hóa từ ASR nghe nhầm: 'lồng quét' -> 'làm web', 'aptoris' -> 'Architecture', 'hpase' -> 'HBase', 'hd' -> 'HD'. KHÔNG tóm tắt. CHỈ trả về đúng văn bản đã sửa.\"},{\"role\":\"user\",\"content\":\"Văn bản gốc: lồng quét này nọ làm hệ thống web lồng quét aptoris gồm hpase\"},{\"role\":\"assistant\",\"content\":\"Làm Web này nọ làm hệ thống web, làm web Architecture gồm HBase.\"},{\"role\":\"user\",\"content\":\"Văn bản gốc: hệ thống đang kiểm tra biên bản cuộc họp và độ trễ xử lý trong quá trình nhiều người cùng phát biểu tại phòng họp\"}],\"stream\":false,\"keep_alive\":\"30m\",\"options\":{\"temperature\":0,\"num_predict\":96,\"num_thread\":2}}" \
+  -d "{\"model\":\"$OLLAMA_MODEL\",\"messages\":[{\"role\":\"system\",\"content\":\"Sửa chính tả và dấu câu tiếng Việt cho transcript cuộc họp. Không tóm tắt, không thêm ý. Chỉ trả về văn bản đã sửa.\"},{\"role\":\"user\",\"content\":\"Văn bản gốc: hệ thống đang kiểm tra biên bản cuộc họp và độ trễ xử lý trong quá trình nhiều người cùng phát biểu tại phòng họp\"}],\"stream\":false,\"keep_alive\":\"30m\",\"options\":{\"temperature\":0,\"num_predict\":64,\"num_thread\":2}}" \
   >/dev/null; then
   echo "Ollama/Qwen không sẵn sàng; dừng để tránh biên bản không refinement."
   exit 1
@@ -133,7 +133,32 @@ if ! curl --silent --fail http://127.0.0.1:8001/ >/dev/null; then
   exit 1
 fi
 
-start_process "LiveKit worker" "$PYTHON_BIN" -u agent.py
+run_agent() {
+  local agent_pid=""
+  local stopping=0
+
+  forward_stop() {
+    stopping=1
+    if [[ -n "$agent_pid" ]] && kill -0 "$agent_pid" 2>/dev/null; then
+      kill -TERM "$agent_pid" 2>/dev/null || true
+    fi
+  }
+  trap forward_stop INT TERM
+
+  while (( ! stopping )); do
+    "$PYTHON_BIN" -u agent.py &
+    agent_pid="$!"
+    set +e
+    wait "$agent_pid"
+    agent_status="$?"
+    set -e
+    agent_pid=""
+    (( stopping )) && break
+    echo "LiveKit worker đã dừng (mã $agent_status); thử kết nối lại sau 2 giây..."
+    sleep 2
+  done
+}
+start_process "LiveKit worker" run_agent
 
 echo
 echo "Demo đã chạy:"
