@@ -3,14 +3,17 @@ from __future__ import annotations
 import asyncio
 import time
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 
 from backend.audio_pipeline import (
     AudioQualityTracker,
     CoordinatedVadTimeline,
+    DynamicEnhancementController,
     FinalCandidate,
     FrameQuality,
+    StreamingDpdfNetEnhancer,
     StreamingAsrPreprocessor,
     pack_audio_packet,
     select_speaker_windows,
@@ -20,13 +23,15 @@ from backend.audio_pipeline import (
 )
 
 
-def quality(*, rms: float, score: float) -> FrameQuality:
+def quality(
+    *, rms: float, score: float, snr: float = 20.0
+) -> FrameQuality:
     return FrameQuality(
         rms=rms,
         peak=min(0.9, rms * 4),
         clipping_ratio=0.0,
         noise_floor=0.003,
-        snr_db=20.0,
+        snr_db=snr,
         score=score,
     )
 
@@ -134,6 +139,80 @@ class AudioBranchTests(unittest.TestCase):
         ]
         summary = summarize_quality(observations)
         self.assertAlmostEqual(summary.rms, 0.06, places=4)
+
+    def test_dynamic_enhancement_preserves_clean_and_blends_noise(
+        self,
+    ) -> None:
+        class DelayedDenoiser:
+            sample_rate = 16_000
+
+            def __init__(self) -> None:
+                self.pending = np.empty(0, dtype=np.float32)
+
+            def run(self, samples, sample_rate):
+                self.assert_sample_rate(sample_rate)
+                combined = np.concatenate(
+                    (self.pending, np.asarray(samples, dtype=np.float32))
+                )
+                self.pending = combined[-2:].copy()
+                # A deliberately aggressive fake enhancement: it removes
+                # all emitted speech, so the blend is easy to verify.
+                return SimpleNamespace(
+                    samples=np.zeros(
+                        max(0, len(combined) - 2), dtype=np.float32
+                    )
+                )
+
+            def flush(self):
+                emitted = self.pending
+                self.pending = np.empty(0, dtype=np.float32)
+                return SimpleNamespace(samples=np.zeros_like(emitted))
+
+            def reset(self) -> None:
+                self.pending = np.empty(0, dtype=np.float32)
+
+            @staticmethod
+            def assert_sample_rate(sample_rate) -> None:
+                if sample_rate != 16_000:
+                    raise AssertionError("unexpected sample rate")
+
+        controller = DynamicEnhancementController(
+            bypass_snr_db=22,
+            full_snr_db=7,
+            maximum_mix=1.0,
+            attack=1.0,
+            release=1.0,
+        )
+        enhancer = StreamingDpdfNetEnhancer(
+            model_path="unused.onnx",
+            denoiser=DelayedDenoiser(),
+            controller=controller,
+        )
+        source = np.ones(4, dtype=np.float32)
+
+        clean = np.concatenate(
+            (
+                enhancer.process(
+                    source, quality=quality(rms=0.1, score=20, snr=30)
+                ),
+                enhancer.flush(),
+            )
+        )
+        self.assertTrue(np.allclose(clean, source))
+        self.assertAlmostEqual(enhancer.telemetry().average_mix, 0.0)
+
+        enhancer.reset()
+        noisy = np.concatenate(
+            (
+                enhancer.process(
+                    source, quality=quality(rms=0.02, score=4, snr=0)
+                ),
+                enhancer.flush(),
+            )
+        )
+        self.assertEqual(len(noisy), len(source))
+        self.assertTrue(np.allclose(noisy, 0.0))
+        self.assertAlmostEqual(enhancer.telemetry().peak_mix, 1.0)
 
 
 class CoordinatedTimelineTests(unittest.IsolatedAsyncioTestCase):

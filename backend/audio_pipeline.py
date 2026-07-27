@@ -1,10 +1,13 @@
-"""Pure audio front-end utilities shared by the LiveKit bridge and AI server.
+"""Audio front-end utilities shared by the LiveKit bridge and AI server.
 
-This module intentionally has no model dependencies.  It keeps the two audio
+This module intentionally has no eager model imports. It keeps the two audio
 branches separate:
 
 * speaker identity receives the VAD-selected, otherwise unmodified waveform;
 * ASR receives a lightly enhanced waveform after cross-microphone selection.
+
+Optional neural models are imported lazily so ordinary audio utilities and
+unit tests do not pay a model-loading cost.
 """
 
 from __future__ import annotations
@@ -294,6 +297,180 @@ class StreamingAsrPreprocessor:
         if peak > 0.97:
             enhanced *= 0.97 / peak
         return enhanced.astype(np.float32, copy=False)
+
+
+@dataclass(frozen=True)
+class EnhancementTelemetry:
+    """Per-turn observability for the ASR-only neural enhancement branch."""
+
+    processed_seconds: float
+    average_mix: float
+    peak_mix: float
+
+
+class DynamicEnhancementController:
+    """Convert quality estimates into a smoothed DPDFNet mix coefficient."""
+
+    def __init__(
+        self,
+        *,
+        bypass_snr_db: float = 15.0,
+        full_snr_db: float = 3.0,
+        maximum_mix: float = 0.65,
+        attack: float = 0.20,
+        release: float = 0.65,
+    ) -> None:
+        if full_snr_db >= bypass_snr_db:
+            raise ValueError(
+                "full_snr_db must be below bypass_snr_db"
+            )
+        self.bypass_snr_db = float(bypass_snr_db)
+        self.full_snr_db = float(full_snr_db)
+        self.maximum_mix = float(np.clip(maximum_mix, 0.0, 1.0))
+        self.attack = float(np.clip(attack, 0.0, 1.0))
+        self.release = float(np.clip(release, 0.0, 1.0))
+        self._mix = 0.0
+
+    def reset(self) -> None:
+        self._mix = 0.0
+
+    def next_mix(self, quality: FrameQuality) -> float:
+        # A squared ramp keeps clean/normal speech almost untouched and
+        # reserves strong enhancement for genuinely poor SNR.
+        normalized = float(
+            np.clip(
+                (self.bypass_snr_db - quality.snr_db)
+                / (self.bypass_snr_db - self.full_snr_db),
+                0.0,
+                1.0,
+            )
+        )
+        target = self.maximum_mix * normalized * normalized
+        rate = self.attack if target >= self._mix else self.release
+        self._mix += rate * (target - self._mix)
+        return float(np.clip(self._mix, 0.0, self.maximum_mix))
+
+
+class StreamingDpdfNetEnhancer:
+    """Stateful 16-kHz DPDFNet adapter with dynamic raw/enhanced blending.
+
+    The online sherpa-onnx model has a one-frame look-ahead. Raw audio and
+    dynamic mix values are delayed by exactly the same amount before blending,
+    so Zipformer receives a time-aligned stream. This object is intentionally
+    ASR-only: WavLM must continue to receive raw VAD-selected audio.
+    """
+
+    def __init__(
+        self,
+        *,
+        model_path: str,
+        num_threads: int = 1,
+        controller: DynamicEnhancementController | None = None,
+        denoiser: object | None = None,
+        sample_rate: int = SAMPLE_RATE,
+    ) -> None:
+        self.sample_rate = int(sample_rate)
+        self.controller = controller or DynamicEnhancementController()
+        self._raw_pending = np.empty(0, dtype=np.float32)
+        self._mix_pending = np.empty(0, dtype=np.float32)
+        self._processed_samples = 0
+        self._weighted_mix = 0.0
+        self._peak_mix = 0.0
+
+        if denoiser is None:
+            from pathlib import Path
+
+            import sherpa_onnx
+
+            if not Path(model_path).is_file():
+                raise FileNotFoundError(
+                    "Không tìm thấy DPDFNet model: "
+                    f"{model_path}"
+                )
+            config = sherpa_onnx.OnlineSpeechDenoiserConfig()
+            config.model.dpdfnet.model = str(model_path)
+            config.model.num_threads = max(1, int(num_threads))
+            config.model.provider = "cpu"
+            if not config.validate():
+                raise RuntimeError("DPDFNet configuration is invalid")
+            denoiser = sherpa_onnx.OnlineSpeechDenoiser(config)
+        self._denoiser = denoiser
+
+        model_rate = int(getattr(self._denoiser, "sample_rate"))
+        if model_rate != self.sample_rate:
+            raise ValueError(
+                "DPDFNet sample rate mismatch: "
+                f"expected {self.sample_rate}, got {model_rate}"
+            )
+
+    def reset(self) -> None:
+        self._denoiser.reset()
+        self.controller.reset()
+        self._raw_pending = np.empty(0, dtype=np.float32)
+        self._mix_pending = np.empty(0, dtype=np.float32)
+        self.reset_telemetry()
+
+    def reset_telemetry(self) -> None:
+        self._processed_samples = 0
+        self._weighted_mix = 0.0
+        self._peak_mix = 0.0
+
+    def telemetry(self) -> EnhancementTelemetry:
+        average = self._weighted_mix / max(1, self._processed_samples)
+        return EnhancementTelemetry(
+            processed_seconds=self._processed_samples / self.sample_rate,
+            average_mix=float(average),
+            peak_mix=float(self._peak_mix),
+        )
+
+    def process(
+        self,
+        audio: np.ndarray,
+        *,
+        quality: FrameQuality,
+    ) -> np.ndarray:
+        samples = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if samples.size == 0:
+            return samples.copy()
+        mix = self.controller.next_mix(quality)
+        self._append_pending(samples, mix)
+        result = self._denoiser.run(samples, self.sample_rate)
+        return self._blend_result(result)
+
+    def flush(self) -> np.ndarray:
+        result = self._denoiser.flush()
+        return self._blend_result(result)
+
+    def _append_pending(self, samples: np.ndarray, mix: float) -> None:
+        self._raw_pending = np.concatenate((self._raw_pending, samples))
+        self._mix_pending = np.concatenate(
+            (
+                self._mix_pending,
+                np.full(len(samples), mix, dtype=np.float32),
+            )
+        )
+
+    def _blend_result(self, result: object) -> np.ndarray:
+        denoised = np.asarray(
+            getattr(result, "samples", ()), dtype=np.float32
+        ).reshape(-1)
+        if denoised.size == 0:
+            return denoised
+        usable = min(
+            len(denoised), len(self._raw_pending), len(self._mix_pending)
+        )
+        if usable <= 0:
+            return np.empty(0, dtype=np.float32)
+        raw = self._raw_pending[:usable]
+        mix = self._mix_pending[:usable]
+        self._raw_pending = self._raw_pending[usable:]
+        self._mix_pending = self._mix_pending[usable:]
+        denoised = denoised[:usable]
+        blended = raw * (1.0 - mix) + denoised * mix
+        self._processed_samples += usable
+        self._weighted_mix += float(np.sum(mix, dtype=np.float64))
+        self._peak_mix = max(self._peak_mix, float(np.max(mix)))
+        return blended.astype(np.float32, copy=False)
 
 
 @dataclass

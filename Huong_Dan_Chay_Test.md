@@ -48,6 +48,24 @@ Nếu chưa có model:
 ollama pull qwen2.5:0.5b
 ```
 
+## 1.1 DPDFNet cho nhánh ASR
+
+DPDFNet chỉ xử lý nhánh ASR trước Zipformer. Audio gốc của mic vẫn đi thẳng
+vào WavLM để speaker ID không bị thay đổi đặc trưng giọng. Model được lưu ở
+`models/dpdfnet_baseline.onnx` (đã Git ignore); chỉ tải khi máy chưa có file:
+
+```bash
+cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
+mkdir -p models
+curl -fL \
+  -o models/dpdfnet_baseline.onnx \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/dpdfnet_baseline.onnx
+```
+
+Mặc định pipeline bật profile dynamic thận trọng: audio sạch được giữ nguyên;
+khi SNR giảm, output DPDFNet được hòa trộn dần vào raw audio. Có thể tắt tức
+thì để A/B hoặc xử lý sự cố bằng `ASR_ENHANCER=none` rồi restart backend.
+
 ## 2. Cấu hình home server
 
 Hai domain public:
@@ -240,10 +258,10 @@ không làm mất trường hợp hai người nói chồng. Ở bước final, 
 trùng trong cùng global turn tiếp tục được deduplicate theo nội dung và
 envelope âm thanh.
 
-Audio đưa vào WavLM không đi qua ASR preprocessing. Điều này giữ đặc trưng
-giọng ổn định khi ghi danh hoặc nhận dạng. DeepFilterNet chưa bật trong pipeline
-nền; sẽ được thêm sau dưới dạng enhancer tùy chọn và chỉ chạy trên nhánh ASR
-sau khi chọn mic.
+Audio đưa vào WavLM không đi qua ASR preprocessing hoặc DPDFNet. Điều này giữ
+đặc trưng giọng ổn định khi ghi danh hoặc nhận dạng. DPDFNet chạy stateful sau
+khâu chọn mic và high-pass/AGC của nhánh ASR, có look-ahead 10 ms được flush
+trước khi Zipformer chốt transcript.
 
 Speaker ID chia đoạn nói thành cửa sổ 4 giây, stride 2 giây. Sau khi loại
 silence/clipping/noise, ba cửa sổ dùng để nhận dạng được lấy trải đều từ đầu,
@@ -257,6 +275,17 @@ ENABLE_ASR_PREPROCESSING=true
 ASR_HIGH_PASS_HZ=70
 ASR_TARGET_RMS=0.065
 ASR_FINAL_PADDING_SECONDS=0.66
+# none | dpdfnet_baseline
+ASR_ENHANCER=dpdfnet_baseline
+ASR_ENHANCER_MODEL=/mnt/d/VNPT/Code/Multi_Speaker_Streaming/models/dpdfnet_baseline.onnx
+ASR_ENHANCER_THREADS=1
+# >= bypass: raw; <= full: DPDFNet mix tối đa; ở giữa: blend động.
+ASR_ENHANCER_BYPASS_SNR_DB=15
+ASR_ENHANCER_FULL_SNR_DB=3
+ASR_ENHANCER_MAX_MIX=0.65
+# attack vào DPDFNet chậm, release về raw nhanh khi audio sạch trở lại.
+ASR_ENHANCER_ATTACK=0.20
+ASR_ENHANCER_RELEASE=0.65
 TIMELINE_ASR_QUALITY_MARGIN=3.5
 TIMELINE_ASR_RMS_RATIO=0.48
 TIMELINE_FINAL_SETTLE_SECONDS=0.75
@@ -283,6 +312,18 @@ backend:
 ```bash
 venv_linux/bin/python -B scripts/evaluate_asr.py --mode both
 ```
+
+Benchmark A/B DPDFNet trên cùng tập chuẩn:
+
+```bash
+venv_linux/bin/python -B scripts/evaluate_asr.py \
+  --mode light --enhancer dpdfnet_baseline \
+  --output output/asr-dpdfnet-light.json
+```
+
+Report ghi cả `average_mix` và `peak_mix`. Nếu WER xấu hơn mốc `--enhancer
+none`, hạ `ASR_ENHANCER_MAX_MIX`, hạ `ASR_ENHANCER_BYPASS_SNR_DB`, hoặc tắt
+enhancer; không tăng cường mù quáng trên audio vốn đã sạch.
 
 Nếu một file chứa nhiều đoạn/giọng khác nhau, nên thêm hai cột
 `start_seconds,end_seconds` vào `truth.csv`; evaluator sẽ chỉ cắt đúng đoạn

@@ -22,6 +22,7 @@ output/
 # Local environments and models
 venv_linux/
 Zipformer-30M-RNNT-Streaming-6000h/
+models/
 
 # Private voice samples
 audio/

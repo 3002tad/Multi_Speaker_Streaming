@@ -106,6 +106,33 @@ class Settings:
     asr_final_padding_seconds: float = float(
         os.getenv("ASR_FINAL_PADDING_SECONDS", "0.66")
     )
+    asr_enhancer: str = os.getenv(
+        "ASR_ENHANCER", "dpdfnet_baseline"
+    ).strip().lower()
+    asr_enhancer_model: Path = Path(
+        os.getenv(
+            "ASR_ENHANCER_MODEL",
+            str(PROJECT_ROOT / "models" / "dpdfnet_baseline.onnx"),
+        )
+    )
+    asr_enhancer_threads: int = int(
+        os.getenv("ASR_ENHANCER_THREADS", "1")
+    )
+    asr_enhancer_bypass_snr_db: float = float(
+        os.getenv("ASR_ENHANCER_BYPASS_SNR_DB", "15")
+    )
+    asr_enhancer_full_snr_db: float = float(
+        os.getenv("ASR_ENHANCER_FULL_SNR_DB", "3")
+    )
+    asr_enhancer_max_mix: float = float(
+        os.getenv("ASR_ENHANCER_MAX_MIX", "0.65")
+    )
+    asr_enhancer_attack: float = float(
+        os.getenv("ASR_ENHANCER_ATTACK", "0.20")
+    )
+    asr_enhancer_release: float = float(
+        os.getenv("ASR_ENHANCER_RELEASE", "0.65")
+    )
     timeline_asr_quality_margin: float = float(
         os.getenv("TIMELINE_ASR_QUALITY_MARGIN", "3.5")
     )

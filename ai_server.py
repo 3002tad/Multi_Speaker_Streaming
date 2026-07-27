@@ -25,7 +25,9 @@ from livekit.agents.vad import VADEventType
 from backend.audio_pipeline import (
     AudioQualityTracker,
     CoordinatedVadTimeline,
+    DynamicEnhancementController,
     FinalCandidate,
+    StreamingDpdfNetEnhancer,
     StreamingAsrPreprocessor,
     select_speaker_windows,
     speech_envelope,
@@ -694,10 +696,51 @@ async def websocket_endpoint(
         target_rms=settings.asr_target_rms,
     )
 
+    # The neural enhancer is per microphone because DPDFNet is stateful.
+    # It is deliberately not shared with WavLM: speaker embeddings always
+    # receive the original VAD-selected waveform.
+    asr_enhancer = None
+    if settings.asr_enhancer not in {"", "none", "off"}:
+        if settings.asr_enhancer != "dpdfnet_baseline":
+            raise RuntimeError(
+                "ASR_ENHANCER không hỗ trợ: "
+                f"{settings.asr_enhancer}"
+            )
+        asr_enhancer = StreamingDpdfNetEnhancer(
+            model_path=str(settings.asr_enhancer_model),
+            num_threads=settings.asr_enhancer_threads,
+            controller=DynamicEnhancementController(
+                bypass_snr_db=settings.asr_enhancer_bypass_snr_db,
+                full_snr_db=settings.asr_enhancer_full_snr_db,
+                maximum_mix=settings.asr_enhancer_max_mix,
+                attack=settings.asr_enhancer_attack,
+                release=settings.asr_enhancer_release,
+            ),
+        )
+        print(
+            f"[DPDFNet] [{identity}] enabled "
+            f"(full <= {settings.asr_enhancer_full_snr_db:g} dB, "
+            f"bypass >= {settings.asr_enhancer_bypass_snr_db:g} dB, "
+            f"max mix {settings.asr_enhancer_max_mix:.2f})."
+        )
+
     def prepare_asr_audio(audio, quality):
-        if not settings.enable_asr_preprocessing:
-            return audio
-        return asr_preprocessor.process(audio, quality=quality)
+        prepared = audio
+        if settings.enable_asr_preprocessing:
+            prepared = asr_preprocessor.process(audio, quality=quality)
+        if asr_enhancer is not None:
+            prepared = asr_enhancer.process(prepared, quality=quality)
+        return prepared
+
+    def flush_asr_enhancer() -> None:
+        """Deliver DPDFNet's one-frame look-ahead before final Zipformer."""
+        if asr_enhancer is None:
+            return
+        tail = asr_enhancer.flush()
+        if tail.size:
+            asr_stream.accept_waveform(16000, tail)
+            while recognizer.is_ready(asr_stream):
+                recognizer.decode_stream(asr_stream)
 
     def finalize_asr_stream_text() -> str:
         """Flush pending transducer tokens before reading a final result."""
@@ -1040,6 +1083,8 @@ async def websocket_endpoint(
                     async with asr_lock:
                         recognizer.reset(asr_stream)
                         asr_preprocessor.reset()
+                        if asr_enhancer is not None:
+                            asr_enhancer.reset()
                         # Preserve the same prefix that is fed to ASR so
                         # duration, speaker embedding and transcript all
                         # describe the same complete utterance.
@@ -1057,10 +1102,13 @@ async def websocket_endpoint(
                             if room_timeline.should_route_asr(
                                 identity, timestamp=timestamp
                             ):
-                                asr_stream.accept_waveform(
-                                    16000,
-                                    prepare_asr_audio(chunk, quality),
+                                prepared = prepare_asr_audio(
+                                    chunk, quality
                                 )
+                                if prepared.size:
+                                    asr_stream.accept_waveform(
+                                        16000, prepared
+                                    )
 
                 elif (
                     evt.type == VADEventType.INFERENCE_DONE
@@ -1129,7 +1177,16 @@ async def websocket_endpoint(
                     # accepted speech chunk has been decoded.
                     await audio_queue.join()
                     async with asr_lock:
+                        flush_asr_enhancer()
                         raw_text = finalize_asr_stream_text()
+                        if asr_enhancer is not None:
+                            telemetry = asr_enhancer.telemetry()
+                            print(
+                                f"[DPDFNet] [{identity}] "
+                                f"{telemetry.processed_seconds:.1f}s, "
+                                f"mix avg={telemetry.average_mix:.2f}, "
+                                f"peak={telemetry.peak_mix:.2f}."
+                            )
 
                     # Bật tác vụ ngầm chạy WavLM + LLM để luồng VAD không bao giờ bị nghẽn hay khựng!
                     t = asyncio.create_task(
@@ -1214,9 +1271,11 @@ async def websocket_endpoint(
                 if room_timeline.should_route_asr(
                     identity, timestamp=captured_at
                 ):
-                    audio_queue.put_nowait(
-                        prepare_asr_audio(audio_np, frame_quality)
+                    prepared = prepare_asr_audio(
+                        audio_np, frame_quality
                     )
+                    if prepared.size:
+                        audio_queue.put_nowait(prepared)
 
     except WebSocketDisconnect:
         print(f"\n[-] Client {identity} đã ngắt kết nối.")
