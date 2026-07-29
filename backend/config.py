@@ -146,6 +146,44 @@ class Settings:
             str(RUNTIME_ROOT / "Zipformer-30M-RNNT-Streaming-6000h"),
         )
     )
+    # Adaptive glossary is shared by contextual Zipformer hotwords and the
+    # final-turn phonetic gate. Dynamic entries are evidence-backed and expire.
+    adaptive_dictionary_enabled: bool = _env_bool(
+        "ADAPTIVE_DICTIONARY_ENABLED", True
+    )
+    adaptive_dictionary_state_path: Path = Path(
+        os.getenv(
+            "ADAPTIVE_DICTIONARY_STATE_PATH",
+            str(RUNTIME_ROOT / "data" / "adaptive_dictionary.json"),
+        )
+    )
+    zipformer_hotwords_enabled: bool = _env_bool(
+        "ZIPFORMER_HOTWORDS_ENABLED", False
+    )
+    zipformer_hotwords_score: float = float(
+        os.getenv("ZIPFORMER_HOTWORDS_SCORE", "1.5")
+    )
+    zipformer_hotwords_min_confidence: float = float(
+        os.getenv("ZIPFORMER_HOTWORDS_MIN_CONFIDENCE", "0.9")
+    )
+    adaptive_dictionary_phonetic_min_confidence: float = float(
+        os.getenv("ADAPTIVE_DICTIONARY_PHONETIC_MIN_CONFIDENCE", "0.75")
+    )
+    adaptive_dictionary_title_ttl_hours: float = float(
+        os.getenv("ADAPTIVE_DICTIONARY_TITLE_TTL_HOURS", "12")
+    )
+    zipformer_hotwords_path: Path = Path(
+        os.getenv(
+            "ZIPFORMER_HOTWORDS_PATH",
+            str(RUNTIME_ROOT / "data" / "zipformer_hotwords.txt"),
+        )
+    )
+    zipformer_bpe_vocab_path: Path = Path(
+        os.getenv(
+            "ZIPFORMER_BPE_VOCAB_PATH",
+            str(RUNTIME_ROOT / "data" / "zipformer.bpe.vocab"),
+        )
+    )
     asr_enhancer_threads: int = int(
         os.getenv("ASR_ENHANCER_THREADS", "1")
     )
@@ -221,6 +259,18 @@ class Settings:
     # When enabled, even an exact dictionary alias must receive an IPA score
     # from G2P. This is the safe mode for Sailor candidate A/B testing.
     phonetic_g2p_force: bool = _env_bool("PHONETIC_G2P_FORCE", False)
+    # The triple gate is always prepared when the G2P backend is available.
+    # It executes only for final-turn dictionary candidates after the cheap
+    # grapheme prefilter, never for realtime partial transcript.
+    phonetic_triple_weight: float = float(
+        os.getenv("PHONETIC_TRIPLE_WEIGHT", "0.75")
+    )
+    phonetic_triple_min_consensus: int = int(
+        os.getenv("PHONETIC_TRIPLE_MIN_CONSENSUS", "2")
+    )
+    phonetic_triple_consensus_tolerance: float = float(
+        os.getenv("PHONETIC_TRIPLE_CONSENSUS_TOLERANCE", "0.18")
+    )
     wavlm_num_threads: int = int(
         os.getenv("WAVLM_NUM_THREADS", "2")
     )

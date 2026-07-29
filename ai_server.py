@@ -11,7 +11,18 @@ import re
 import soundfile as sf
 import uuid
 import subprocess
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Body
+import hmac
+from fastapi import (
+    FastAPI,
+    WebSocket,
+    WebSocketDisconnect,
+    UploadFile,
+    File,
+    Form,
+    Body,
+    Header,
+    HTTPException,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +46,11 @@ from backend.audio_pipeline import (
     unpack_audio_packet,
 )
 from backend.config import settings
+from backend.adaptive_dictionary import (
+    AdaptiveDictionary,
+    HotwordArtifacts,
+    build_hotword_artifacts,
+)
 from backend.speaker_identity import (
     adaptive_absolute_threshold,
     build_enrollment_profile,
@@ -42,9 +58,13 @@ from backend.speaker_identity import (
     decide_open_set_speaker,
 )
 from backend.text_refinement import (
+    EpitranVietnamesePhonemizer,
     G2POnnxPhonemizer,
+    PanphonFeatureScorer,
     PhoneticRecovery,
     PhoneticLexicon,
+    SeaG2PVietnamesePhonemizer,
+    TriplePhoneticScorer,
     normalize_meeting_terms,
 )
 
@@ -55,16 +75,64 @@ print("Bắt đầu khởi tạo các mô hình AI...")
 # ============================================================
 print("1. Đang nạp mô hình ASR (Zipformer)...")
 asr_dir = str(settings.zipformer_model_dir)
-recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
-    tokens=f'{asr_dir}/config.json',
-    encoder=f'{asr_dir}/encoder-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
-    decoder=f'{asr_dir}/decoder-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
-    joiner=f'{asr_dir}/joiner-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
-    num_threads=1, sample_rate=16000, feature_dim=80,
-    decoding_method='modified_beam_search',
-    max_active_paths=4,
-    provider='cpu'
-)
+if settings.adaptive_dictionary_enabled:
+    adaptive_dictionary = AdaptiveDictionary.from_paths(
+        seed_path=settings.phonetic_dictionary_path,
+        state_path=settings.adaptive_dictionary_state_path,
+    )
+else:
+    adaptive_dictionary = AdaptiveDictionary(
+        state_path=settings.adaptive_dictionary_state_path,
+    )
+
+hotword_artifacts: HotwordArtifacts | None = None
+if settings.zipformer_hotwords_enabled:
+    try:
+        hotword_artifacts = build_hotword_artifacts(
+            adaptive_dictionary,
+            model_dir=settings.zipformer_model_dir,
+            hotwords_path=settings.zipformer_hotwords_path,
+            bpe_vocab_path=settings.zipformer_bpe_vocab_path,
+            minimum_confidence=settings.zipformer_hotwords_min_confidence,
+        )
+        print(
+            "[Dictionary] Đã tạo "
+            f"{hotword_artifacts.phrase_count} hotword Zipformer."
+        )
+    except Exception as exc:
+        # The decoder must retain its known baseline rather than start with a
+        # malformed contextual vocabulary. The phonetic branch remains usable.
+        print(f"[Dictionary] Tắt hotword Zipformer: {exc}")
+
+
+def create_asr_recognizer(
+    artifacts: HotwordArtifacts | None = None,
+) -> sherpa_onnx.OnlineRecognizer:
+    """Create the baseline or the safe contextual Zipformer recognizer."""
+    kwargs = {}
+    if artifacts and artifacts.phrase_count:
+        kwargs = {
+            "modeling_unit": "bpe",
+            "bpe_vocab": str(artifacts.bpe_vocab_path),
+            "hotwords_file": str(artifacts.hotwords_path),
+            "hotwords_score": settings.zipformer_hotwords_score,
+        }
+    return sherpa_onnx.OnlineRecognizer.from_transducer(
+        tokens=f'{asr_dir}/config.json',
+        encoder=f'{asr_dir}/encoder-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
+        decoder=f'{asr_dir}/decoder-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
+        joiner=f'{asr_dir}/joiner-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
+        num_threads=1,
+        sample_rate=16000,
+        feature_dim=80,
+        decoding_method='modified_beam_search',
+        max_active_paths=4,
+        provider='cpu',
+        **kwargs,
+    )
+
+
+recognizer = create_asr_recognizer(hotword_artifacts)
 
 # ============================================================
 # 2. WavLM – Speaker Embedding
@@ -421,20 +489,123 @@ if settings.phonetic_recovery_enabled:
             "[G2P] PHONETIC_BACKEND không hỗ trợ: "
             f"{settings.phonetic_backend}; dùng grapheme."
         )
-phonetic_lexicon = PhoneticLexicon.from_file(
-    settings.phonetic_dictionary_path,
-    threshold=settings.phonetic_recovery_threshold,
-    margin=settings.phonetic_recovery_margin,
-    max_words=settings.phonetic_recovery_max_words,
-    phonemizer=g2p_phonemizer,
-    g2p_weight=settings.phonetic_g2p_weight,
-    g2p_prefilter=settings.phonetic_g2p_prefilter,
-    g2p_max_calls=settings.phonetic_g2p_max_calls,
-    g2p_force=settings.phonetic_g2p_force,
-    # In Sailor candidate mode this object produces proposals only.  Sailor
-    # decides which individual spans are actually written into the transcript.
-    auto_apply=settings.refinement_backend != "sailor_candidate",
-)
+triple_phonetic_scorer = None
+if g2p_phonemizer is not None:
+    try:
+        triple_phonetic_scorer = TriplePhoneticScorer(
+            EpitranVietnamesePhonemizer(),
+            g2p_phonemizer,
+            SeaG2PVietnamesePhonemizer(),
+            PanphonFeatureScorer(),
+            consensus_tolerance=settings.phonetic_triple_consensus_tolerance,
+        )
+        print("[Phonetic] Triple gate enabled: Epitran + ByT5 + SEA-G2P.")
+    except Exception as exc:
+        print(f"[Phonetic] Triple gate unavailable; using G2P only: {exc}")
+
+
+def create_phonetic_lexicon(
+    dictionary: AdaptiveDictionary,
+) -> PhoneticLexicon:
+    return PhoneticLexicon.from_file(
+        settings.phonetic_dictionary_path,
+        extra_entries=(
+            dictionary.dynamic_phonetic_entries(
+                minimum_confidence=settings.adaptive_dictionary_phonetic_min_confidence
+            )
+            if settings.adaptive_dictionary_enabled
+            else ()
+        ),
+        threshold=settings.phonetic_recovery_threshold,
+        margin=settings.phonetic_recovery_margin,
+        max_words=settings.phonetic_recovery_max_words,
+        phonemizer=g2p_phonemizer,
+        g2p_weight=settings.phonetic_g2p_weight,
+        g2p_prefilter=settings.phonetic_g2p_prefilter,
+        g2p_max_calls=settings.phonetic_g2p_max_calls,
+        g2p_force=settings.phonetic_g2p_force,
+        triple_scorer=triple_phonetic_scorer,
+        triple_weight=settings.phonetic_triple_weight,
+        triple_min_consensus=settings.phonetic_triple_min_consensus,
+        # In Sailor candidate mode this object produces proposals only.  Sailor
+        # decides which individual spans are actually written into the transcript.
+        auto_apply=settings.refinement_backend != "sailor_candidate",
+    )
+
+
+phonetic_lexicon = create_phonetic_lexicon(adaptive_dictionary)
+dictionary_runtime_lock = threading.RLock()
+
+
+def refresh_adaptive_dictionary_for_next_streams() -> dict[str, object]:
+    """Reload persisted glossary without invalidating active ASR streams.
+
+    Each WebSocket captures its recognizer at connect time. Swapping the global
+    recognizer here therefore affects only microphones that connect after this
+    function returns; an in-progress global turn continues with its original
+    decoder and timestamp alignment.
+    """
+    global adaptive_dictionary, hotword_artifacts, phonetic_lexicon, recognizer
+    with dictionary_runtime_lock:
+        if settings.adaptive_dictionary_enabled:
+            updated_dictionary = AdaptiveDictionary.from_paths(
+                seed_path=settings.phonetic_dictionary_path,
+                state_path=settings.adaptive_dictionary_state_path,
+            )
+        else:
+            updated_dictionary = AdaptiveDictionary(
+                state_path=settings.adaptive_dictionary_state_path,
+            )
+        updated_artifacts = None
+        updated_recognizer = recognizer
+        if settings.zipformer_hotwords_enabled:
+            updated_artifacts = build_hotword_artifacts(
+                updated_dictionary,
+                model_dir=settings.zipformer_model_dir,
+                hotwords_path=settings.zipformer_hotwords_path,
+                bpe_vocab_path=settings.zipformer_bpe_vocab_path,
+                minimum_confidence=settings.zipformer_hotwords_min_confidence,
+            )
+            updated_recognizer = create_asr_recognizer(updated_artifacts)
+
+        # All work above succeeds before the references are swapped, so a
+        # malformed dictionary cannot leave the live pipeline half-updated.
+        adaptive_dictionary = updated_dictionary
+        phonetic_lexicon = create_phonetic_lexicon(updated_dictionary)
+        hotword_artifacts = updated_artifacts
+        recognizer = updated_recognizer
+        return {
+            "active_entries": len(updated_dictionary.active_entries()),
+            "dynamic_entries": len(updated_dictionary.active_dynamic_entries()),
+            "hotword_enabled": bool(
+                updated_artifacts and updated_artifacts.phrase_count
+            ),
+            "hotword_count": (
+                updated_artifacts.phrase_count if updated_artifacts else 0
+            ),
+        }
+
+
+def prepare_adaptive_dictionary_for_meeting(title: str) -> dict[str, object]:
+    """Replace dynamic terms using explicit technical terms in a meeting title."""
+    if not settings.adaptive_dictionary_enabled:
+        return {"enabled": False, "entries": [], "hotword_count": 0}
+    title = " ".join(title.split()).strip()
+    if not title:
+        raise ValueError("meeting_title must not be empty")
+    entries = AdaptiveDictionary.entries_from_meeting_title(
+        title,
+        ttl_hours=settings.adaptive_dictionary_title_ttl_hours,
+    )
+    with dictionary_runtime_lock:
+        adaptive_dictionary.save_dynamic_entries(entries)
+        state = refresh_adaptive_dictionary_for_next_streams()
+    return {
+        "enabled": True,
+        "meeting_title": title,
+        "entries": [entry.to_json() for entry in entries],
+        **state,
+    }
 # Only finalized turns enter this buffer.  It is deliberately small: context
 # helps decide an ambiguous domain term, but must not turn realtime correction
 # into meeting summarization.
@@ -829,6 +1000,52 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 async def get_dashboard():
     return FileResponse("static/index.html")
 
+
+def _require_internal_key(x_internal_key: str | None) -> None:
+    if not x_internal_key or not hmac.compare_digest(
+        x_internal_key, settings.internal_api_key
+    ):
+        raise HTTPException(status_code=401, detail="Invalid internal API key")
+
+
+@app.get("/api/adaptive-dictionary")
+async def adaptive_dictionary_status(
+    x_internal_key: str | None = Header(default=None),
+):
+    _require_internal_key(x_internal_key)
+    with dictionary_runtime_lock:
+        entries = adaptive_dictionary.active_entries()
+        return {
+            "enabled": settings.adaptive_dictionary_enabled,
+            "hotword_enabled": bool(
+                hotword_artifacts and hotword_artifacts.phrase_count
+            ),
+            "hotword_count": (
+                hotword_artifacts.phrase_count if hotword_artifacts else 0
+            ),
+            "entries": [entry.to_json() for entry in entries],
+        }
+
+
+@app.post("/api/adaptive-dictionary/prepare")
+async def prepare_adaptive_dictionary_api(
+    payload: dict = Body(...),
+    x_internal_key: str | None = Header(default=None),
+):
+    """Prepare the next room's glossary from an explicit meeting title."""
+    _require_internal_key(x_internal_key)
+    title = str(payload.get("meeting_title", ""))
+    try:
+        return prepare_adaptive_dictionary_for_meeting(title)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Unable to prepare adaptive dictionary: {type(exc).__name__}",
+        ) from exc
+
+
 @app.websocket("/ws/web_dashboard")
 async def web_dashboard_websocket(websocket: WebSocket):
     await dashboard_manager.connect(websocket)
@@ -1022,7 +1239,10 @@ async def websocket_endpoint(
     fallback_speaker = (display_name or identity).strip() or identity
     print(f"\n[+] Đã cấp phát luồng AI cho Client: {identity}")
 
-    asr_stream = recognizer.create_stream()
+    # Keep a stable decoder for this microphone. Dictionary refresh may swap
+    # the global recognizer for later connections, never for this stream.
+    asr_recognizer = recognizer
+    asr_stream = asr_recognizer.create_stream()
     vad_stream  = vad_model.stream()
     asr_lock = asyncio.Lock()
 
@@ -1090,8 +1310,8 @@ async def websocket_endpoint(
         tail = asr_enhancer.flush()
         if tail.size:
             asr_stream.accept_waveform(16000, tail)
-            while recognizer.is_ready(asr_stream):
-                recognizer.decode_stream(asr_stream)
+            while asr_recognizer.is_ready(asr_stream):
+                asr_recognizer.decode_stream(asr_stream)
 
     def finalize_asr_stream_text() -> str:
         """Flush pending transducer tokens before reading a final result."""
@@ -1101,9 +1321,9 @@ async def websocket_endpoint(
         )
         if padding.size:
             asr_stream.accept_waveform(16000, padding)
-        while recognizer.is_ready(asr_stream):
-            recognizer.decode_stream(asr_stream)
-        result = recognizer.get_result(asr_stream)
+        while asr_recognizer.is_ready(asr_stream):
+            asr_recognizer.decode_stream(asr_stream)
+        result = asr_recognizer.get_result(asr_stream)
         return (
             result.text.strip()
             if hasattr(result, "text")
@@ -1130,7 +1350,7 @@ async def websocket_endpoint(
                     try:
                         async with asr_lock:
                             final_text = finalize_asr_stream_text()
-                            recognizer.reset(asr_stream)
+                            asr_recognizer.reset(asr_stream)
                         if not future.done():
                             future.set_result(final_text)
                     except Exception as exc:
@@ -1164,9 +1384,9 @@ async def websocket_endpoint(
 
                 def decode_step():
                     asr_stream.accept_waveform(16000, audio_np)
-                    while recognizer.is_ready(asr_stream):
-                        recognizer.decode_stream(asr_stream)
-                    res = recognizer.get_result(asr_stream)
+                    while asr_recognizer.is_ready(asr_stream):
+                        asr_recognizer.decode_stream(asr_stream)
+                    res = asr_recognizer.get_result(asr_stream)
                     return res.text.strip() if hasattr(res, 'text') else str(res).strip()
 
                 try:
@@ -1462,7 +1682,7 @@ async def websocket_endpoint(
                     )
 
                     async with asr_lock:
-                        recognizer.reset(asr_stream)
+                        asr_recognizer.reset(asr_stream)
                         asr_preprocessor.reset()
                         if asr_enhancer is not None:
                             asr_enhancer.reset()

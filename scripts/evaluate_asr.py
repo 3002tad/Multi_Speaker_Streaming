@@ -146,8 +146,12 @@ def decode(
     return text, enhancement
 
 
-def evaluate(mode: str, *, enhancer_name: str) -> dict:
-    truth_path = PROJECT_ROOT / "audio" / "truth.csv"
+def evaluate(
+    mode: str,
+    *,
+    enhancer_name: str,
+    truth_path: Path = PROJECT_ROOT / "audio" / "truth.csv",
+) -> dict:
     truth_rows = load_transcript_truth(truth_path)
     recognizer = create_recognizer()
     rows = []
@@ -224,11 +228,22 @@ def main() -> None:
         type=Path,
         help="Optional path for the JSON report",
     )
+    parser.add_argument(
+        "--truth",
+        type=Path,
+        default=PROJECT_ROOT / "audio" / "truth.csv",
+        help="CSV transcript truth file (default: audio/truth.csv).",
+    )
     args = parser.parse_args()
     modes = ("raw", "light") if args.mode == "both" else (args.mode,)
     report = {
         "results": [
-            evaluate(mode, enhancer_name=args.enhancer) for mode in modes
+            evaluate(
+                mode,
+                enhancer_name=args.enhancer,
+                truth_path=args.truth,
+            )
+            for mode in modes
         ]
     }
     rendered = json.dumps(report, ensure_ascii=False, indent=2)

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "canonical": "VNPT",
+      "aliases": ["v n p t", "vê en pê tê"],
+      "source": "retrieval",
+      "confidence": 0.95,
+      "last_seen": "2026-07-29T00:00:00+07:00",
+      "expires_at": "2026-08-05T00:00:00+07:00"
+    }
+  ]
+}

@@ -65,6 +65,18 @@ def _similarity(left: str, right: str) -> float:
     return SequenceMatcher(None, left, right).ratio()
 
 
+def _canonical_group_key(value: str) -> str:
+    """Collapse contextual variants of the same domain term for ranking.
+
+    The seed lexicon carries both ``Hadoop Storage`` and the safer contextual
+    form ``lớp Hadoop Storage``. They should not compete in the margin check:
+    an observed phrase beginning with ``lớp`` needs the contextual replacement
+    to consume the whole span instead of leaving a trailing ASR token.
+    """
+    value = re.sub(r"^\s*lớp\s+", "", value, flags=re.IGNORECASE)
+    return value.casefold().strip()
+
+
 class PronunciationBackend(Protocol):
     """Optional source of IPA-like phonetic strings for a phrase."""
 
@@ -157,6 +169,7 @@ class EpitranVietnamesePhonemizer:
         import epitran
 
         self._engine = epitran.Epitran(language_code)
+        self._lock = threading.Lock()
 
     @lru_cache(maxsize=2048)
     def phonemize(self, text: str) -> str:
@@ -164,7 +177,31 @@ class EpitranVietnamesePhonemizer:
         if not text:
             return ""
         try:
-            return re.sub(r"\s+", "", self._engine.transliterate(text.casefold()))
+            with self._lock:
+                ipa = self._engine.transliterate(text.casefold())
+            return re.sub(r"\s+", "", ipa)
+        except Exception:
+            return ""
+
+
+class SeaG2PVietnamesePhonemizer:
+    """SEA-G2P adapter providing a third, independent Vietnamese G2P view."""
+
+    def __init__(self, *, language_code: str = "vi") -> None:
+        from sea_g2p import G2P
+
+        self._engine = G2P(lang=language_code)
+        self._lock = threading.Lock()
+
+    @lru_cache(maxsize=2048)
+    def phonemize(self, text: str) -> str:
+        text = text.strip()
+        if not text:
+            return ""
+        try:
+            with self._lock:
+                ipa = self._engine.convert(text.casefold())
+            return re.sub(r"\s+", "", str(ipa))
         except Exception:
             return ""
 
@@ -298,6 +335,102 @@ class ParallelPhoneticScorer:
 
 
 @dataclass(frozen=True)
+class TriplePhoneticScore:
+    """Robust consensus from Epitran, ByT5 G2P and SEA-G2P."""
+
+    score: float
+    epitran_score: float | None
+    g2p_score: float | None
+    sea_g2p_score: float | None
+    consensus_count: int
+    disagreement: float | None
+
+
+class TriplePhoneticScorer:
+    """Use median phonetic similarity to reject a single-engine surprise.
+
+    The scorer is used only after a cheap grapheme prefilter on finalized ASR
+    turns. Candidate pronunciations are cached by all three adapters, so the
+    second occurrence of a meeting term avoids model inference.
+    """
+
+    def __init__(
+        self,
+        epitran_phonemizer: PronunciationBackend,
+        g2p_phonemizer: PronunciationBackend,
+        sea_g2p_phonemizer: PronunciationBackend,
+        feature_scorer: PanphonFeatureScorer,
+        *,
+        consensus_tolerance: float = 0.18,
+    ) -> None:
+        self.epitran_phonemizer = epitran_phonemizer
+        self.g2p_phonemizer = g2p_phonemizer
+        self.sea_g2p_phonemizer = sea_g2p_phonemizer
+        self.feature_scorer = feature_scorer
+        self.consensus_tolerance = max(0.0, consensus_tolerance)
+
+    def score(self, observed: str, candidate: str) -> TriplePhoneticScore:
+        observed = observed.casefold()
+        candidate = candidate.casefold()
+
+        def phonemize_pair(phonemizer: PronunciationBackend) -> tuple[str, str]:
+            return phonemizer.phonemize(observed), phonemizer.phonemize(candidate)
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            epitran_future = executor.submit(
+                phonemize_pair, self.epitran_phonemizer
+            )
+            g2p_future = executor.submit(phonemize_pair, self.g2p_phonemizer)
+            sea_future = executor.submit(
+                phonemize_pair, self.sea_g2p_phonemizer
+            )
+            observed_epitran, candidate_epitran = epitran_future.result()
+            observed_g2p, candidate_g2p = g2p_future.result()
+            observed_sea, candidate_sea = sea_future.result()
+
+        epitran_score = (
+            self.feature_scorer.similarity(observed_epitran, candidate_epitran)
+            if observed_epitran and candidate_epitran
+            else None
+        )
+        g2p_score = (
+            self.feature_scorer.similarity(observed_g2p, candidate_g2p)
+            if observed_g2p and candidate_g2p
+            else None
+        )
+        sea_score = (
+            self.feature_scorer.similarity(observed_sea, candidate_sea)
+            if observed_sea and candidate_sea
+            else None
+        )
+        available = sorted(
+            score
+            for score in (epitran_score, g2p_score, sea_score)
+            if score is not None
+        )
+        if not available:
+            total = 0.0
+            consensus_count = 0
+            disagreement = None
+        else:
+            middle = len(available) // 2
+            total = available[middle]
+            consensus_count = sum(
+                abs(score - total) <= self.consensus_tolerance
+                for score in available
+            )
+            disagreement = available[-1] - available[0]
+        return TriplePhoneticScore(
+            score=total,
+            epitran_score=epitran_score,
+            g2p_score=g2p_score,
+            sea_g2p_score=sea_score,
+            consensus_count=consensus_count,
+            disagreement=disagreement,
+        )
+
+
+@dataclass(frozen=True)
 class PhoneticRecovery:
     text: str
     replacements: tuple[dict[str, object], ...]
@@ -326,6 +459,9 @@ class PhoneticLexicon:
         g2p_prefilter: float = 0.80,
         g2p_max_calls: int = 8,
         g2p_force: bool = False,
+        triple_scorer: TriplePhoneticScorer | None = None,
+        triple_weight: float = 0.75,
+        triple_min_consensus: int = 2,
         auto_apply: bool = True,
     ) -> None:
         self.threshold = threshold
@@ -336,6 +472,9 @@ class PhoneticLexicon:
         self.g2p_prefilter = min(1.0, max(0.0, g2p_prefilter))
         self.g2p_max_calls = max(0, g2p_max_calls)
         self.g2p_force = g2p_force
+        self.triple_scorer = triple_scorer
+        self.triple_weight = min(1.0, max(0.0, triple_weight))
+        self.triple_min_consensus = max(1, triple_min_consensus)
         self.auto_apply = auto_apply
         self.entries: list[_LexiconEntry] = []
         for canonical, aliases in entries:
@@ -364,6 +503,7 @@ class PhoneticLexicon:
         cls,
         path: Path | None,
         *,
+        extra_entries: Iterable[tuple[str, Iterable[str]]] = (),
         threshold: float = 0.86,
         margin: float = 0.06,
         max_words: int = 4,
@@ -372,6 +512,9 @@ class PhoneticLexicon:
         g2p_prefilter: float = 0.80,
         g2p_max_calls: int = 8,
         g2p_force: bool = False,
+        triple_scorer: TriplePhoneticScorer | None = None,
+        triple_weight: float = 0.75,
+        triple_min_consensus: int = 2,
         auto_apply: bool = True,
     ) -> "PhoneticLexicon":
         entries: list[tuple[str, tuple[str, ...]]] = list(
@@ -387,6 +530,7 @@ class PhoneticLexicon:
                 aliases = tuple(item.strip() for item in fields[1:] if item.strip())
                 if canonical:
                     entries.append((canonical, aliases))
+        entries.extend(extra_entries)
         return cls(
             entries,
             threshold=threshold,
@@ -397,8 +541,58 @@ class PhoneticLexicon:
             g2p_prefilter=g2p_prefilter,
             g2p_max_calls=g2p_max_calls,
             g2p_force=g2p_force,
+            triple_scorer=triple_scorer,
+            triple_weight=triple_weight,
+            triple_min_consensus=triple_min_consensus,
             auto_apply=auto_apply,
         )
+
+    def _has_unresolved_longer_alias(
+        self,
+        entry: _LexiconEntry,
+        observed: str,
+        following_word: str | None,
+    ) -> bool:
+        """Block a safe-looking replacement that would split a longer alias.
+
+        Example: ``lớp adolf sorris`` may be a noisy form of the known alias
+        ``lớp adolf sorus``. If the complete candidate is too ambiguous for
+        the margin gate, replacing only ``lớp adolf`` would create a corrupted
+        hybrid transcript. Keep the raw span instead; a future turn or a
+        stronger dictionary alias can resolve it safely.
+        """
+        if not following_word:
+            return False
+        observed_words = re.findall(r"[\wÀ-ỹĐđ]+", observed, flags=re.UNICODE)
+        if not observed_words:
+            return False
+        observed_keys = [_phonetic_key(word) for word in observed_words]
+        next_key = _phonetic_key(following_word)
+        if not next_key:
+            return False
+        group = _canonical_group_key(entry.canonical)
+        for sibling in self.entries:
+            if _canonical_group_key(sibling.canonical) != group:
+                continue
+            alias_words = re.findall(
+                r"[\wÀ-ỹĐđ]+", sibling.alias, flags=re.UNICODE
+            )
+            if len(alias_words) <= len(observed_words):
+                continue
+            alias_keys = [_phonetic_key(word) for word in alias_words]
+            prefix_matches = all(
+                _similarity(left, right) >= 0.88
+                for left, right in zip(
+                    observed_keys,
+                    alias_keys[:len(observed_keys)],
+                    strict=True,
+                )
+            )
+            if not prefix_matches:
+                continue
+            if _similarity(next_key, alias_keys[len(observed_words)]) >= 0.60:
+                return True
+        return False
 
     def recover(self, text: str) -> PhoneticRecovery:
         if not text or not self.entries:
@@ -413,7 +607,14 @@ class PhoneticLexicon:
         i = 0
         while i < len(word_matches):
             best: tuple[
-                float, float, float, float, _LexiconEntry, int, str
+                float,
+                float,
+                float,
+                float,
+                _LexiconEntry,
+                int,
+                str,
+                TriplePhoneticScore | None,
             ] | None = None
             max_end = min(len(word_matches), i + self.max_words)
             for end in range(max_end, i, -1):
@@ -437,60 +638,101 @@ class PhoneticLexicon:
                     observed_key == entry.key for entry in candidates
                 )
                 by_canonical: dict[
-                    str, tuple[float, float, float, _LexiconEntry]
+                    str,
+                    tuple[
+                        float,
+                        float,
+                        float,
+                        _LexiconEntry,
+                        TriplePhoneticScore | None,
+                    ],
                 ] = {}
                 observed_ipa: str | None = None
-                g2p_attempted = False
+                phonetic_attempted = False
                 for entry in candidates:
                     key_score = _similarity(observed_key, entry.key)
                     ipa_score = 0.0
                     score = key_score
+                    triple_result: TriplePhoneticScore | None = None
                     if (
-                        self.phonemizer
+                        self.triple_scorer
+                        and (self.g2p_force or key_score >= self.g2p_prefilter)
+                        and g2p_calls < self.g2p_max_calls
+                    ):
+                        if not phonetic_attempted:
+                            g2p_calls += 1
+                            phonetic_attempted = True
+                        triple_result = self.triple_scorer.score(
+                            observed, entry.alias
+                        )
+                        ipa_score = triple_result.score
+                        score = (
+                            (1.0 - self.triple_weight) * key_score
+                            + self.triple_weight * ipa_score
+                        )
+                    elif (
+                        self.triple_scorer is None
+                        and self.phonemizer
                         and entry.ipa
                         and (self.g2p_force or not has_exact_alias)
                         and (self.g2p_force or key_score >= self.g2p_prefilter)
                         and g2p_calls < self.g2p_max_calls
                     ):
-                        if not g2p_attempted:
+                        if not phonetic_attempted:
                             observed_ipa = self.phonemizer.phonemize(
                                 observed.casefold()
                             )
                             g2p_calls += 1
-                            g2p_attempted = True
+                            phonetic_attempted = True
                         if observed_ipa:
                             ipa_score = _similarity(observed_ipa, entry.ipa)
                             score = (
                                 (1.0 - self.g2p_weight) * key_score
                                 + self.g2p_weight * ipa_score
                             )
-                    existing = by_canonical.get(entry.canonical)
+                    canonical_group = _canonical_group_key(entry.canonical)
+                    existing = by_canonical.get(canonical_group)
                     if existing is None or score > existing[0]:
-                        by_canonical[entry.canonical] = (
+                        by_canonical[canonical_group] = (
                             score,
                             key_score,
                             ipa_score,
                             entry,
+                            triple_result,
                         )
                 if not by_canonical:
                     continue
                 ranked = sorted(
                     by_canonical.values(), key=lambda item: item[0], reverse=True
                 )
-                score, key_score, ipa_score, entry = ranked[0]
+                score, key_score, ipa_score, entry, triple_result = ranked[0]
                 candidate_second = ranked[1][0] if len(ranked) > 1 else 0.0
                 # Prefer exact alias matches and longer phrases.  Fuzzy
                 # matching requires a margin so similar technical terms do
                 # not replace each other accidentally.
                 exact = observed_key == entry.key
                 g2p_verified = not self.g2p_force or ipa_score > 0.0
-                accepted = (exact and g2p_verified) or (
+                triple_verified = (
+                    triple_result is None
+                    or triple_result.consensus_count >= self.triple_min_consensus
+                )
+                accepted = (exact and g2p_verified and triple_verified) or (
                     score >= self.threshold
                     and score - candidate_second >= self.margin
                     and len(observed_key) >= 5
                     and g2p_verified
+                    and triple_verified
                 )
                 if not accepted:
+                    continue
+                following_word = (
+                    word_matches[end].group()
+                    if end < len(word_matches)
+                    else None
+                )
+                if self._has_unresolved_longer_alias(
+                    entry, observed, following_word
+                ):
                     continue
                 rank = score + (0.02 * (end - i))
                 if best is None or rank > best[0]:
@@ -502,12 +744,22 @@ class PhoneticLexicon:
                         entry,
                         end,
                         observed,
+                        triple_result,
                     )
             if best is None:
                 i += 1
                 continue
 
-            _, score, key_score, ipa_score, entry, end, observed = best
+            (
+                _,
+                score,
+                key_score,
+                ipa_score,
+                entry,
+                end,
+                observed,
+                triple_result,
+            ) = best
             if observed == entry.canonical:
                 # The dictionary always indexes the canonical spelling too;
                 # do not report a no-op replacement for already-correct text.
@@ -521,9 +773,29 @@ class PhoneticLexicon:
                 "score": round(score, 4),
                 "key_score": round(key_score, 4),
                 "g2p_score": round(ipa_score, 4) if ipa_score else None,
-                "backend": "g2p_onnx" if ipa_score else "grapheme",
+                "backend": (
+                    "triple_phonetic"
+                    if triple_result is not None
+                    else "g2p_onnx" if ipa_score else "grapheme"
+                ),
                 "alias": entry.alias,
             }
+            if triple_result is not None:
+                metadata["triple_phonetic"] = {
+                    "epitran_score": round(
+                        triple_result.epitran_score, 4
+                    ) if triple_result.epitran_score is not None else None,
+                    "g2p_score": round(
+                        triple_result.g2p_score, 4
+                    ) if triple_result.g2p_score is not None else None,
+                    "sea_g2p_score": round(
+                        triple_result.sea_g2p_score, 4
+                    ) if triple_result.sea_g2p_score is not None else None,
+                    "consensus_count": triple_result.consensus_count,
+                    "disagreement": round(
+                        triple_result.disagreement, 4
+                    ) if triple_result.disagreement is not None else None,
+                }
             replacements.append(
                 (
                     word_matches[i].start(),

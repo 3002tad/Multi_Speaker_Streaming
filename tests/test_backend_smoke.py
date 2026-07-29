@@ -2,7 +2,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from backend.api import main
@@ -72,6 +72,33 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertEqual(joined.status_code, 200)
             self.assertEqual(joined.json()["role"], "participant")
             self.assertTrue(joined.json()["token"])
+
+    def test_host_title_prepares_dictionary_without_blocking_room(self) -> None:
+        test_settings = replace(
+            main.settings,
+            livekit_api_key="demo-key",
+            livekit_api_secret="demo-secret",
+        )
+        prepared = AsyncMock(
+            return_value={"status": "ready", "hotword_count": 2}
+        )
+        with (
+            patch("backend.api.main.settings", test_settings),
+            patch("backend.api.main._prepare_adaptive_dictionary", prepared),
+            TestClient(app) as client,
+        ):
+            created = client.post(
+                "/api/meeting/create",
+                json={
+                    "host_name": "Chủ trì",
+                    "meeting_title": "Triển khai VNPT SmartCA",
+                },
+            )
+
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json()["meeting_title"], "Triển khai VNPT SmartCA")
+        self.assertEqual(created.json()["adaptive_dictionary"]["status"], "ready")
+        prepared.assert_awaited_once_with("Triển khai VNPT SmartCA")
 
     def test_internal_transcript_event_requires_key(self) -> None:
         test_settings = replace(

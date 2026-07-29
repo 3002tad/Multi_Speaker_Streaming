@@ -139,6 +139,7 @@ function setPlayback(enabled) {
 async function joinRoom(mode) {
   const displayName = $("display-name").value.trim();
   const meetingCode = $("meeting-code").value.trim();
+  const meetingTitle = $("meeting-title").value.trim();
   $("join-error").textContent = "";
   if (!displayName) {
     $("join-error").textContent = "Vui lòng nhập tên hiển thị.";
@@ -148,7 +149,7 @@ async function joinRoom(mode) {
   const endpoint = mode === "create" ? "/api/meeting/create" : "/api/meeting/join";
   const body =
     mode === "create"
-      ? { host_name: displayName }
+      ? { host_name: displayName, meeting_title: meetingTitle || null }
       : { display_name: displayName, meeting_code: meetingCode };
 
   try {
@@ -177,7 +178,8 @@ async function joinRoom(mode) {
 
     $("join-view").classList.add("hidden");
     $("meeting-view").classList.remove("hidden");
-    $("room-title").textContent = `${data.meeting_code} · ${displayName}`;
+    const title = data.meeting_title || data.meeting_code;
+    $("room-title").textContent = `${title} · ${displayName}`;
     $("connection-state").textContent = "Đã kết nối";
     $("connection-state").className = "badge online";
     renderParticipants();

@@ -91,6 +91,40 @@ Mặc định pipeline bật profile dynamic thận trọng: audio sạch đư�
 khi SNR giảm, output DPDFNet được hòa trộn dần vào raw audio. Có thể tắt tức
 thì để A/B hoặc xử lý sự cố bằng `ASR_ENHANCER=none` rồi restart backend.
 
+## 1.3 Adaptive dictionary và Zipformer hotword
+
+`AdaptiveDictionary` là nguồn term chung cho hai nhánh: canonical term được
+đưa vào Zipformer hotword; canonical + alias được dùng bởi phonetic recovery
+sau khi global turn kết thúc. Không thêm transcript ASR thô vào dictionary.
+Mỗi entry động phải có `source`, `confidence`, `last_seen` và `expires_at`;
+xem mẫu tại `config/adaptive_dictionary.example.json`.
+
+`phonetic_dictionary.txt` là seed rộng và chỉ dùng cho phonetic recovery;
+không tự trở thành hotword cho mọi cuộc họp. Hotword chỉ lấy term động của
+phiên hiện tại để tránh bias các chủ đề không liên quan.
+
+Mặc định contextual hotword tắt để giữ baseline. Chỉ bật sau A/B với bộ term
+của cuộc họp và dùng điểm thấp:
+
+```dotenv
+ADAPTIVE_DICTIONARY_ENABLED=true
+ADAPTIVE_DICTIONARY_STATE_PATH=/home/ntd/meeting_runtime/data/adaptive_dictionary.json
+ZIPFORMER_HOTWORDS_ENABLED=true
+ZIPFORMER_HOTWORDS_SCORE=1.5
+ZIPFORMER_HOTWORDS_MIN_CONFIDENCE=0.9
+ADAPTIVE_DICTIONARY_PHONETIC_MIN_CONFIDENCE=0.75
+ADAPTIVE_DICTIONARY_TITLE_TTL_HOURS=12
+```
+
+Khi bật lần đầu, cài `sentencepiece` trong `venv_linux`; backend tự sinh
+`zipformer_hotwords.txt` và BPE vocabulary trong runtime. Thay đổi dictionary
+được áp dụng an toàn khi khởi động phiên/pipeline mới, không thay recognizer
+của microphone đang nói.
+
+```bash
+/home/ntd/meeting_runtime/venv_linux/bin/python -m pip install sentencepiece
+```
+
 ## 2. Cấu hình home server
 
 Hai domain public:
@@ -389,6 +423,11 @@ PHONETIC_G2P_WEIGHT=0.65
 PHONETIC_G2P_PREFILTER=0.80
 PHONETIC_G2P_MAX_CALLS=8
 PHONETIC_G2P_FORCE=false
+# Always-ready triple gate only evaluates dictionary candidates on a finalized
+# global turn. It uses Epitran + ByT5 ONNX + SEA-G2P and requires 2/3 consensus.
+PHONETIC_TRIPLE_WEIGHT=0.75
+PHONETIC_TRIPLE_MIN_CONSENSUS=2
+PHONETIC_TRIPLE_CONSENSUS_TOLERANCE=0.18
 # A/B Sailor: only accepts/rejects the closed dictionary/G2P candidate.
 # Qwen direct cleanup remains the default baseline.
 REFINEMENT_BACKEND=sailor_candidate
@@ -397,6 +436,19 @@ SAILOR_KEEP_ALIVE=5m
 SAILOR_NUM_THREADS=2
 SAILOR_LANGUAGE=vi-VN
 SAILOR_CONTEXT_TURNS=2
+```
+
+Nếu runtime chưa có ba dependency của triple gate:
+
+```bash
+/home/ntd/meeting_runtime/venv_linux/bin/python -m pip install epitran panphon sea-g2p
+```
+
+Chạy benchmark final-turn riêng (không khởi động LiveKit):
+
+```bash
+venv_linux/bin/python -B scripts/evaluate_triple_phonetics.py \
+  --output tmp/triple_phonetic_report.json
 ```
 
 `SPEAKER_OPEN_SET_FLOOR` chỉ là ngưỡng sàn. Khi có từ hai profile, hệ thống

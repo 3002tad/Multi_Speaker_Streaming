@@ -72,6 +72,7 @@ class WebSocketHub:
 hub = WebSocketHub()
 final_event_lock = asyncio.Lock()
 meeting_reset_lock = asyncio.Lock()
+current_meeting_title = ""
 
 
 async def _reset_meeting_transcripts(reason: str) -> float:
@@ -138,6 +139,7 @@ def _find_cross_mic_duplicate(
 
 class CreateMeetingRequest(BaseModel):
     host_name: str = Field(min_length=1, max_length=80)
+    meeting_title: str | None = Field(default=None, max_length=180)
 
 
 class JoinMeetingRequest(BaseModel):
@@ -147,6 +149,34 @@ class JoinMeetingRequest(BaseModel):
 
 class InternalEventRequest(BaseModel):
     payload: dict[str, Any]
+
+
+async def _prepare_adaptive_dictionary(
+    meeting_title: str | None,
+) -> dict[str, Any]:
+    """Ask the private AI service to prepare the next room's glossary.
+
+    Creating/joining a meeting must remain available if the optional AI
+    preparation endpoint is temporarily restarting. The result is returned to
+    the host UI for diagnostics rather than blocking access to the room.
+    """
+    title = " ".join((meeting_title or "").split())
+    if not title:
+        return {"status": "skipped", "reason": "no_meeting_title"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                f"{settings.ai_server_http_url}/api/adaptive-dictionary/prepare",
+                json={"meeting_title": title},
+                headers={"X-Internal-Key": settings.internal_api_key},
+            )
+            response.raise_for_status()
+            return {"status": "ready", **response.json()}
+    except (httpx.HTTPError, ValueError) as exc:
+        return {
+            "status": "unavailable",
+            "reason": type(exc).__name__,
+        }
 
 
 def _issue_token(display_name: str, role: str) -> tuple[str, str]:
@@ -191,13 +221,17 @@ async def meeting_info() -> dict[str, Any]:
     return {
         "room": settings.meeting_room,
         "code": settings.meeting_code,
+        "title": current_meeting_title,
         "livekit_url": settings.livekit_url,
     }
 
 
 @app.post("/api/meeting/create")
 async def create_meeting(request: CreateMeetingRequest) -> dict[str, Any]:
+    global current_meeting_title
     identity, token = _issue_token(request.host_name, "host")
+    current_meeting_title = " ".join((request.meeting_title or "").split())
+    dictionary = await _prepare_adaptive_dictionary(current_meeting_title)
     reset_at = await _reset_meeting_transcripts("new_meeting")
     return {
         "status": "success",
@@ -209,6 +243,8 @@ async def create_meeting(request: CreateMeetingRequest) -> dict[str, Any]:
         "role": "host",
         "token": token,
         "reset_at": reset_at,
+        "meeting_title": current_meeting_title,
+        "adaptive_dictionary": dictionary,
     }
 
 
@@ -226,6 +262,7 @@ async def join_meeting(request: JoinMeetingRequest) -> dict[str, Any]:
         "display_name": request.display_name,
         "role": "participant",
         "token": token,
+        "meeting_title": current_meeting_title,
     }
 
 

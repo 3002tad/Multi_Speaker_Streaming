@@ -6,6 +6,8 @@ from backend.text_refinement import (
     PanphonFeatureScorer,
     ParallelPhoneticScorer,
     PhoneticLexicon,
+    TriplePhoneticScore,
+    TriplePhoneticScorer,
     normalize_meeting_terms,
 )
 
@@ -86,6 +88,24 @@ class PhoneticRecoveryTests(unittest.TestCase):
         self.assertIn("lớp Hadoop Storage", contextual.text)
         self.assertEqual(standalone.text, "SOS đang được kích hoạt")
 
+    def test_blocks_partial_alias_when_next_token_belongs_to_longer_alias(self) -> None:
+        lexicon = PhoneticLexicon(
+            (
+                (
+                    "lớp Hadoop Storage",
+                    ("lớp adols", "lớp adolf sorus"),
+                ),
+            )
+        )
+        partial_entry = next(
+            entry for entry in lexicon.entries if entry.alias == "lớp adols"
+        )
+        self.assertTrue(
+            lexicon._has_unresolved_longer_alias(
+                partial_entry, "lớp adolf", "sorris"
+            )
+        )
+
     def test_g2p_score_can_promote_a_near_phonetic_candidate(self) -> None:
         class StubG2P:
             def phonemize(self, text: str) -> str:
@@ -151,6 +171,62 @@ class ParallelPhoneticTests(unittest.TestCase):
         self.assertEqual(result.epitran_score, 0.90)
         self.assertEqual(result.g2p_score, 0.70)
         self.assertAlmostEqual(result.disagreement or 0.0, 0.20)
+
+
+class TriplePhoneticTests(unittest.TestCase):
+    def test_uses_median_and_requires_two_engine_consensus(self) -> None:
+        class StubPhonemizer:
+            def __init__(self, prefix: str) -> None:
+                self.prefix = prefix
+
+            def phonemize(self, text: str) -> str:
+                return f"{self.prefix}-{text}"
+
+        class StubFeatureScorer:
+            def similarity(self, left: str, right: str) -> float:
+                return {
+                    ("e-raw", "e-alias"): 0.95,
+                    ("g-raw", "g-alias"): 0.78,
+                    ("s-raw", "s-alias"): 0.82,
+                }[(left, right)]
+
+        scorer = TriplePhoneticScorer(
+            StubPhonemizer("e"),
+            StubPhonemizer("g"),
+            StubPhonemizer("s"),
+            StubFeatureScorer(),  # type: ignore[arg-type]
+            consensus_tolerance=0.18,
+        )
+        result = scorer.score("raw", "alias")
+        self.assertEqual(result.score, 0.82)
+        self.assertEqual(result.consensus_count, 3)
+        self.assertAlmostEqual(result.disagreement or 0.0, 0.17)
+
+    def test_lexicon_records_triple_evidence_for_final_candidate(self) -> None:
+        class StubTripleScorer:
+            def score(self, observed: str, candidate: str) -> TriplePhoneticScore:
+                return TriplePhoneticScore(
+                    score=0.94,
+                    epitran_score=0.96,
+                    g2p_score=0.94,
+                    sea_g2p_score=0.89,
+                    consensus_count=3,
+                    disagreement=0.07,
+                )
+
+        lexicon = PhoneticLexicon(
+            (("HBase", ("h pase",)),),
+            triple_scorer=StubTripleScorer(),  # type: ignore[arg-type]
+            triple_weight=0.75,
+            triple_min_consensus=2,
+        )
+        result = lexicon.recover("h pase")
+        self.assertEqual(result.text, "HBase")
+        self.assertEqual(result.replacements[0]["backend"], "triple_phonetic")
+        self.assertEqual(
+            result.replacements[0]["triple_phonetic"]["consensus_count"],
+            3,
+        )
 
 
 if __name__ == "__main__":
