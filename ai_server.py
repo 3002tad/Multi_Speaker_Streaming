@@ -49,7 +49,7 @@ print("Bắt đầu khởi tạo các mô hình AI...")
 # 1. ASR – Zipformer
 # ============================================================
 print("1. Đang nạp mô hình ASR (Zipformer)...")
-asr_dir = 'Zipformer-30M-RNNT-Streaming-6000h'
+asr_dir = str(settings.zipformer_model_dir)
 recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
     tokens=f'{asr_dir}/config.json',
     encoder=f'{asr_dir}/encoder-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',

@@ -6,23 +6,35 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_project_env_path = PROJECT_ROOT / ".env"
+_default_runtime_root = (
+    PROJECT_ROOT
+    if _project_env_path.exists()
+    else Path.home() / "meeting_runtime"
+)
+RUNTIME_ROOT = Path(
+    os.getenv("MEETING_RUNTIME_DIR", str(_default_runtime_root))
+).expanduser()
 
 
 def _load_env_file() -> None:
-    """Load the project's .env without overriding exported environment values."""
-    env_path = PROJECT_ROOT / ".env"
-    if not env_path.exists():
-        return
+    """Load local settings, falling back to the Linux runtime environment."""
+    env_paths = [PROJECT_ROOT / ".env"]
+    if RUNTIME_ROOT != PROJECT_ROOT:
+        env_paths.append(RUNTIME_ROOT / ".env")
 
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    for env_path in env_paths:
+        if not env_path.exists():
             continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip("\"'")
-        if key:
-            os.environ.setdefault(key, value)
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            if key:
+                os.environ.setdefault(key, value)
 
 
 _load_env_file()
@@ -62,12 +74,12 @@ class Settings:
         os.getenv("LLM_TIMEOUT_SECONDS", "5")
     )
     database_path: Path = Path(
-        os.getenv("DATABASE_PATH", str(PROJECT_ROOT / "data" / "meeting.db"))
+        os.getenv("DATABASE_PATH", str(RUNTIME_ROOT / "data" / "meeting.db"))
     )
     speaker_database_path: Path = Path(
         os.getenv(
             "SPEAKER_DATABASE_PATH",
-            str(PROJECT_ROOT / "data" / "qdrant_speakers"),
+            str(RUNTIME_ROOT / "data" / "qdrant_speakers"),
         )
     )
     speaker_match_threshold: float = float(
@@ -112,7 +124,13 @@ class Settings:
     asr_enhancer_model: Path = Path(
         os.getenv(
             "ASR_ENHANCER_MODEL",
-            str(PROJECT_ROOT / "models" / "dpdfnet_baseline.onnx"),
+            str(RUNTIME_ROOT / "models" / "dpdfnet_baseline.onnx"),
+        )
+    )
+    zipformer_model_dir: Path = Path(
+        os.getenv(
+            "ZIPFORMER_MODEL_DIR",
+            str(RUNTIME_ROOT / "Zipformer-30M-RNNT-Streaming-6000h"),
         )
     )
     asr_enhancer_threads: int = int(

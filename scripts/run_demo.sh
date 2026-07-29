@@ -2,8 +2,12 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="$PROJECT_DIR/venv_linux/bin/python"
-SITE_PACKAGES="$PROJECT_DIR/venv_linux/lib/python3.12/site-packages"
+RUNTIME_DIR="${MEETING_RUNTIME_DIR:-/home/ntd/meeting_runtime}"
+export MEETING_RUNTIME_DIR="$RUNTIME_DIR"
+export HF_HOME="${HF_HOME:-$RUNTIME_DIR/huggingface}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME}"
+PYTHON_BIN="$RUNTIME_DIR/venv_linux/bin/python"
+SITE_PACKAGES="$RUNTIME_DIR/venv_linux/lib/python3.12/site-packages"
 PYTHON_CACHE="/tmp/paperless-python-cache"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
@@ -11,7 +15,7 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$PROJECT_DIR/.env" ]]; then
+if [[ ! -f "$PROJECT_DIR/.env" && ! -f "$RUNTIME_DIR/.env" ]]; then
   echo "Thiếu .env. Hãy sao chép .env.example thành .env và điền LiveKit key."
   exit 1
 fi

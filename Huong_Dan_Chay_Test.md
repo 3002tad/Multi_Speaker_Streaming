@@ -10,7 +10,19 @@ Laptop người dùng
     → Web/API và AI pipeline trong Ubuntu WSL
 ```
 
-Tất cả lệnh Python của project phải sử dụng `venv_linux`.
+Source code vẫn nằm trên ổ Windows, còn virtualenv, model và dữ liệu runtime
+được đặt trong filesystem WSL để giảm độ trễ I/O:
+
+```text
+/mnt/d/VNPT/Code/Multi_Speaker_Streaming     # source code
+/home/ntd/meeting_runtime/venv_linux         # Python environment
+/home/ntd/meeting_runtime/models             # DPDFNet và model phụ trợ
+/home/ntd/meeting_runtime/data               # SQLite và Qdrant
+/home/ntd/meeting_runtime/Zipformer-...       # model ASR
+```
+
+Tất cả lệnh Python của project phải sử dụng
+`/home/ntd/meeting_runtime/venv_linux/bin/python`.
 
 ## 1. Chuẩn bị `.env`
 
@@ -48,17 +60,30 @@ Nếu chưa có model:
 ollama pull qwen2.5:0.5b
 ```
 
-## 1.1 DPDFNet cho nhánh ASR
+## 1.1 Runtime trong filesystem WSL
+
+`scripts/run_demo.sh` mặc định dùng `/home/ntd/meeting_runtime`. Có thể đổi
+runtime root cho một phiên chạy bằng biến môi trường:
+
+```bash
+export MEETING_RUNTIME_DIR=/home/ntd/meeting_runtime
+```
+
+Script chấp nhận `.env` ở thư mục project hoặc
+`/home/ntd/meeting_runtime/.env`. Không tạo thêm virtualenv hay sao chép model
+trở lại ổ `/mnt/d`.
+
+## 1.2 DPDFNet cho nhánh ASR
 
 DPDFNet chỉ xử lý nhánh ASR trước Zipformer. Audio gốc của mic vẫn đi thẳng
 vào WavLM để speaker ID không bị thay đổi đặc trưng giọng. Model được lưu ở
-`models/dpdfnet_baseline.onnx` (đã Git ignore); chỉ tải khi máy chưa có file:
+`/home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx`; chỉ tải khi máy chưa
+có file:
 
 ```bash
-cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
-mkdir -p models
+mkdir -p /home/ntd/meeting_runtime/models
 curl -fL \
-  -o models/dpdfnet_baseline.onnx \
+  -o /home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/dpdfnet_baseline.onnx
 ```
 

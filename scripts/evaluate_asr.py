@@ -41,7 +41,7 @@ FRAME_SAMPLES = 1_600
 
 
 def create_recognizer() -> sherpa_onnx.OnlineRecognizer:
-    model_dir = PROJECT_ROOT / "Zipformer-30M-RNNT-Streaming-6000h"
+    model_dir = settings.zipformer_model_dir
     return sherpa_onnx.OnlineRecognizer.from_transducer(
         tokens=str(model_dir / "config.json"),
         encoder=str(
