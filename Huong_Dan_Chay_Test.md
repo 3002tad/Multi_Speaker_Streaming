@@ -272,7 +272,7 @@ Mic → LiveKit → agent (PCM + sequence/timestamp chung)
        ├─ Speaker ID: raw VAD segment → lọc cửa sổ/clipping → WavLM
        └─ ASR: chọn mic theo SNR → high-pass/DC → noise suppression nhẹ
                  → normalize → Zipformer
-    → Qwen refinement → WebSocket/SQLite
+    → phonetic recovery theo dictionary → Qwen refinement → WebSocket/SQLite
 ```
 
 VAD vẫn chạy một stream riêng cho mỗi mic để giữ trạng thái cục bộ, nhưng
@@ -293,6 +293,59 @@ silence/clipping/noise, ba cửa sổ dùng để nhận dạng được lấy t
 giữa và cuối lượt nói thay vì chỉ lấy ba cửa sổ lớn tiếng nhất. Cách này giữ
 được biến thiên tone/cường độ mà không tăng số lần inference WavLM.
 
+Phonetic recovery chỉ áp dụng cho `transcript.final` sau khi global turn đã
+chọn được đoạn ASR tốt nhất. Module này so khớp transcript với dictionary
+thuật ngữ nội bộ bằng khóa không dấu/phonetic gần đúng. Khi cấu hình
+`PHONETIC_BACKEND=g2p_onnx`, nó dùng `g2p_multilingual_byT5_tiny_onnx` để so
+sánh IPA, rồi kết hợp với similarity grapheme, ngưỡng và margin an toàn trước
+khi thay thế. Nếu model G2P không nạp được, nó tự fallback về grapheme để
+transcript không bị gián đoạn.
+Transcript nháp realtime vẫn giữ nguyên raw text. Kết quả final lưu cả
+`raw_text`, `phonetic_recovered_text` và danh sách `phonetic_replacements`
+để kiểm tra trước/sau.
+
+Dictionary mẫu nằm tại
+`config/phonetic_dictionary.example.txt`. Khi chạy thật, sao chép thành:
+
+```bash
+mkdir -p /home/ntd/meeting_runtime/data
+cp config/phonetic_dictionary.example.txt \
+  /home/ntd/meeting_runtime/data/phonetic_dictionary.txt
+```
+
+G2P model được đặt ở runtime WSL, không đưa vào Git:
+
+```bash
+/home/ntd/meeting_runtime/venv_linux/bin/python -m pip install optimum-onnx
+/home/ntd/meeting_runtime/venv_linux/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('klebster/g2p_multilingual_byT5_tiny_onnx', local_dir='/home/ntd/meeting_runtime/models/g2p_multilingual_byT5_tiny_onnx')"
+```
+
+### Token Hugging Face khi tải model lớn
+
+Nếu tài khoản có quyền/tốc độ tải tốt hơn, đặt token vào session WSL trước khi
+tải; không ghi token vào source code, `.env` project hoặc chat:
+
+```bash
+read -rsp 'Hugging Face token: ' HF_TOKEN; echo
+export HF_TOKEN
+```
+
+Các lệnh `curl` dùng header an toàn sau (token không xuất hiện trong history
+nếu biến đã được export từ session):
+
+```bash
+curl -fL --continue-at - \
+  -H "Authorization: Bearer $HF_TOKEN" \
+  -o /home/ntd/meeting_runtime/models/<model>.gguf \
+  https://huggingface.co/<org>/<repo>/resolve/main/<file>.gguf
+```
+
+Có thể tắt recovery để A/B:
+
+```dotenv
+PHONETIC_RECOVERY_ENABLED=false
+```
+
 Các tham số có thể điều chỉnh trong `.env`:
 
 ```dotenv
@@ -302,7 +355,7 @@ ASR_TARGET_RMS=0.065
 ASR_FINAL_PADDING_SECONDS=0.66
 # none | dpdfnet_baseline
 ASR_ENHANCER=dpdfnet_baseline
-ASR_ENHANCER_MODEL=/mnt/d/VNPT/Code/Multi_Speaker_Streaming/models/dpdfnet_baseline.onnx
+ASR_ENHANCER_MODEL=/home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx
 ASR_ENHANCER_THREADS=1
 # >= bypass: raw; <= full: DPDFNet mix tối đa; ở giữa: blend động.
 ASR_ENHANCER_BYPASS_SNR_DB=15
@@ -323,6 +376,27 @@ SPEAKER_EARLY_EXIT_SCORE_BUFFER=0.025
 SPEAKER_EARLY_EXIT_MARGIN_BUFFER=0.015
 WAVLM_NUM_THREADS=2
 LLM_INLINE_WAIT_SECONDS=0.35
+PHONETIC_RECOVERY_ENABLED=true
+PHONETIC_DICTIONARY_PATH=/home/ntd/meeting_runtime/data/phonetic_dictionary.txt
+PHONETIC_RECOVERY_THRESHOLD=0.86
+PHONETIC_RECOVERY_MARGIN=0.06
+PHONETIC_RECOVERY_MAX_WORDS=4
+PHONETIC_BACKEND=g2p_onnx
+PHONETIC_G2P_MODEL_PATH=/home/ntd/meeting_runtime/models/g2p_multilingual_byT5_tiny_onnx
+PHONETIC_G2P_LANGUAGE=vie-c
+PHONETIC_G2P_THREADS=4
+PHONETIC_G2P_WEIGHT=0.65
+PHONETIC_G2P_PREFILTER=0.80
+PHONETIC_G2P_MAX_CALLS=8
+PHONETIC_G2P_FORCE=false
+# A/B Sailor: only accepts/rejects the closed dictionary/G2P candidate.
+# Qwen direct cleanup remains the default baseline.
+REFINEMENT_BACKEND=sailor_candidate
+SAILOR_MODEL=sailor2:1b
+SAILOR_KEEP_ALIVE=5m
+SAILOR_NUM_THREADS=2
+SAILOR_LANGUAGE=vi-VN
+SAILOR_CONTEXT_TURNS=2
 ```
 
 `SPEAKER_OPEN_SET_FLOOR` chỉ là ngưỡng sàn. Khi có từ hai profile, hệ thống
@@ -359,6 +433,25 @@ Test tự động toàn bộ streaming LiveKit:
 ```bash
 venv_linux/bin/python -B scripts/streaming_regression.py
 ```
+
+Test nhánh `Zipformer → G2P ONNX → Sailor candidate gate` (không thay đổi
+Qwen baseline trong `.env`):
+
+```bash
+ollama pull sailor2:1b
+PHONETIC_BACKEND=g2p_onnx \
+PHONETIC_G2P_FORCE=true \
+REFINEMENT_BACKEND=sailor_candidate \
+SAILOR_MODEL=sailor2:1b \
+venv_linux/bin/python -B scripts/streaming_regression.py \
+  --start-demo \
+  --output output/streaming-sailor-g2p.json
+```
+
+Report giữ `raw_text`, candidate/replacements từ G2P và trường `refinement`.
+Sailor chỉ có hai quyết định `ACCEPT`/`REJECT`; timeout, JSON lỗi hoặc từ chối
+đều trả lại raw ASR. Đánh giá cả WER/CER và số quyết định Sailor trước khi bật
+nhánh này cho demo.
 
 Runner sẽ xóa transcript cũ, chạy dual-mic probe qua LiveKit, chờ
 `transcript.final`, ghép kết quả theo mốc thời gian trong `truth.csv`, tính

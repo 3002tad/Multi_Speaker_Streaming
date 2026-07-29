@@ -41,7 +41,12 @@ from backend.speaker_identity import (
     can_early_accept_speaker,
     decide_open_set_speaker,
 )
-from backend.text_refinement import normalize_meeting_terms
+from backend.text_refinement import (
+    G2POnnxPhonemizer,
+    PhoneticRecovery,
+    PhoneticLexicon,
+    normalize_meeting_terms,
+)
 
 print("Bắt đầu khởi tạo các mô hình AI...")
 
@@ -392,10 +397,65 @@ llm_client = AsyncOpenAI(
     max_retries=0,
 )
 LLM_MIN_WORDS = 5  # Câu quá ngắn thì bỏ qua LLM, tránh hallucination
+g2p_phonemizer = None
+if settings.phonetic_recovery_enabled:
+    if settings.phonetic_backend == "g2p_onnx":
+        try:
+            g2p_phonemizer = G2POnnxPhonemizer(
+                settings.phonetic_g2p_model_path,
+                language_code=settings.phonetic_g2p_language,
+                threads=settings.phonetic_g2p_threads,
+            )
+            print(
+                "[G2P] Đã nạp ByT5 ONNX "
+                f"({settings.phonetic_g2p_language}, "
+                f"{settings.phonetic_g2p_threads} threads)."
+            )
+        except Exception as exc:
+            print(
+                "[G2P] Không thể nạp ONNX, fallback grapheme: "
+                f"{exc}"
+            )
+    elif settings.phonetic_backend not in {"grapheme", ""}:
+        print(
+            "[G2P] PHONETIC_BACKEND không hỗ trợ: "
+            f"{settings.phonetic_backend}; dùng grapheme."
+        )
+phonetic_lexicon = PhoneticLexicon.from_file(
+    settings.phonetic_dictionary_path,
+    threshold=settings.phonetic_recovery_threshold,
+    margin=settings.phonetic_recovery_margin,
+    max_words=settings.phonetic_recovery_max_words,
+    phonemizer=g2p_phonemizer,
+    g2p_weight=settings.phonetic_g2p_weight,
+    g2p_prefilter=settings.phonetic_g2p_prefilter,
+    g2p_max_calls=settings.phonetic_g2p_max_calls,
+    g2p_force=settings.phonetic_g2p_force,
+    # In Sailor candidate mode this object produces proposals only.  Sailor
+    # decides which individual spans are actually written into the transcript.
+    auto_apply=settings.refinement_backend != "sailor_candidate",
+)
+# Only finalized turns enter this buffer.  It is deliberately small: context
+# helps decide an ambiguous domain term, but must not turn realtime correction
+# into meeting summarization.
+recent_refinement_context: collections.deque[str] = collections.deque(
+    maxlen=max(0, settings.sailor_context_turns)
+)
 
-async def refine_text(raw_text: str) -> str:
-    """Hiệu đính văn bản ASR bằng LLM với few-shot instruction và Hallucination Guard."""
-    normalized_text = normalize_meeting_terms(raw_text)
+
+def recover_phonetics(raw_text: str) -> PhoneticRecovery:
+    if not settings.phonetic_recovery_enabled:
+        return PhoneticRecovery(text=raw_text, replacements=())
+    return phonetic_lexicon.recover(raw_text)
+
+async def _refine_text_direct(
+    raw_text: str,
+    *,
+    recovered_text: str | None = None,
+) -> str:
+    """Existing free-form cleanup path, retained for baseline A/B tests."""
+    phonetic_text = recovered_text or recover_phonetics(raw_text).text
+    normalized_text = normalize_meeting_terms(phonetic_text)
     if not settings.enable_llm_refinement:
         return normalized_text.capitalize()
 
@@ -467,6 +527,297 @@ async def refine_text(raw_text: str) -> str:
         return res_text
     except Exception:
         return normalized_text
+
+
+def _parse_sailor_decisions(
+    value: str, candidate_ids: set[int]
+) -> dict[int, str]:
+    """Parse closed per-candidate decisions; any invalid value is rejected."""
+    parsed = {candidate_id: "REJECT" for candidate_id in candidate_ids}
+    try:
+        match = re.search(r"\{.*\}", value, flags=re.DOTALL)
+        payload = json.loads(match.group(0) if match else value)
+        seen_ids: set[int] = set()
+        for item in payload.get("decisions", []):
+            candidate_id = item.get("id")
+            decision = str(item.get("decision", "REJECT")).upper()
+            if candidate_id in seen_ids:
+                # A duplicate id is ambiguous; retain the fail-closed rule.
+                if candidate_id in candidate_ids:
+                    parsed[candidate_id] = "REJECT"
+                continue
+            if candidate_id in candidate_ids:
+                seen_ids.add(candidate_id)
+            if candidate_id in candidate_ids and decision in {"ACCEPT", "REJECT"}:
+                parsed[candidate_id] = decision
+    except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
+        pass
+    return parsed
+
+
+async def _refine_text_sailor_candidate(
+    raw_text: str,
+    *,
+    recovered_text: str | None,
+    replacements: tuple[dict[str, object], ...],
+    context: tuple[str, ...],
+) -> tuple[str, dict[str, object]]:
+    """Let Sailor accept/reject a closed G2P/dictionary correction only.
+
+    The model never returns transcript text.  A malformed response, timeout,
+    or rejection always retains the raw ASR result.  This is intentionally a
+    safety gate, not another unconstrained ASR decoder.
+    """
+    candidate_text = normalize_meeting_terms(recovered_text or raw_text)
+    # str.capitalize() lowercases the rest of the text and would corrupt
+    # canonical terms such as HDFS/HBase after a successful gate.
+    raw_display = raw_text[:1].upper() + raw_text[1:]
+    metadata: dict[str, object] = {
+        "backend": "sailor_candidate",
+        "candidate_text": candidate_text,
+        "candidate_terms": [item.get("to") for item in replacements],
+        "context_turn_count": len(context),
+    }
+    if candidate_text.casefold() == raw_text.casefold():
+        metadata["decision"] = "SKIPPED_NO_CANDIDATE"
+        return raw_display, metadata
+
+    context_text = "\n".join(f"- {item}" for item in context) or "(không có)"
+    try:
+        response = await llm_client.chat.completions.create(
+            model=settings.sailor_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"Ngôn ngữ bắt buộc: {settings.sailor_language} (tiếng Việt). "
+                        "Bạn là bộ kiểm tra candidate cho transcript họp tiếng Việt. "
+                        "Bạn KHÔNG được viết lại transcript và KHÔNG được thêm từ. "
+                        "Không dùng tiếng Anh hay bất kỳ ngôn ngữ nào khác. "
+                        "Chỉ trả JSON hợp lệ: {\"decision\":\"ACCEPT\"|\"REJECT\","
+                        "\"confidence\": số từ 0 đến 1}. ACCEPT chỉ khi candidate "
+                        "phù hợp âm thanh ASR và ngữ cảnh; nếu không chắc chắn, REJECT."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"<context_truoc>\n{context_text}\n</context_truoc>\n"
+                        f"<raw_asr>{raw_text}</raw_asr>\n"
+                        f"<candidate>{candidate_text}</candidate>\n"
+                        "Chỉ chọn ACCEPT hoặc REJECT cho đúng candidate trên."
+                    ),
+                },
+            ],
+            max_tokens=32,
+            temperature=0.0,
+            extra_body={
+                "keep_alive": settings.sailor_keep_alive,
+                "options": {
+                    "num_thread": max(1, settings.sailor_num_threads),
+                    "num_predict": 32,
+                    "temperature": 0,
+                },
+            },
+        )
+        decision, confidence = _parse_sailor_decision(
+            response.choices[0].message.content or ""
+        )
+        metadata.update({"decision": decision, "confidence": confidence})
+        if decision == "ACCEPT":
+            return candidate_text, metadata
+        return raw_display, metadata
+    except Exception as exc:
+        metadata.update({"decision": "ERROR_REJECT", "error": type(exc).__name__})
+        return raw_display, metadata
+
+
+async def _refine_text_sailor_candidate_batch(
+    raw_text: str,
+    *,
+    replacements: tuple[dict[str, object], ...],
+    context: tuple[str, ...],
+) -> tuple[str, dict[str, object]]:
+    """Ask Sailor for a decision per G2P-verified replacement.
+
+    All candidates are sent in one closed JSON request to avoid serial LLM
+    calls.  They are nevertheless applied independently and only after an
+    explicit ACCEPT for the candidate's id.
+    """
+    raw_display = raw_text[:1].upper() + raw_text[1:]
+    proposals: list[dict[str, object]] = []
+    for index, item in enumerate(replacements):
+        start, end = item.get("start"), item.get("end")
+        observed, replacement = item.get("from"), item.get("to")
+        if not isinstance(start, int) or not isinstance(end, int):
+            continue
+        if not isinstance(observed, str) or not isinstance(replacement, str):
+            continue
+        if start < 0 or end <= start or raw_text[start:end] != observed:
+            continue
+        # Casing is presentation, not a semantic ASR correction. Do not burn
+        # an LLM call merely to turn `LÀM WEB` into `làm web`.
+        if observed.casefold() == replacement.casefold():
+            continue
+        proposals.append({
+            "id": index,
+            "start": start,
+            "end": end,
+            "from": observed,
+            "to": replacement,
+            "g2p_score": item.get("g2p_score"),
+            "score": item.get("score"),
+        })
+
+    metadata: dict[str, object] = {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": len(context),
+        "candidates": proposals,
+    }
+    if not proposals:
+        metadata["decision"] = "SKIPPED_NO_CANDIDATE"
+        return raw_display, metadata
+
+    context_text = "\n".join(
+        f"- {item[-240:]}" for item in context
+    ) or "(no prior context)"
+    request_candidates = [
+        {"id": item["id"], "from": item["from"], "to": item["to"]}
+        for item in proposals
+    ]
+    max_output_tokens = min(96, 16 + (8 * len(proposals)))
+    try:
+        response = await llm_client.chat.completions.create(
+            model=settings.sailor_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"Required language: {settings.sailor_language} (Vietnamese). "
+                        "You verify Vietnamese meeting-ASR correction candidates. "
+                        "Never rewrite text, never add terms, and never use another language. "
+                        "Return JSON only in this exact shape: "
+                        "{\"decisions\":[{\"id\":0,\"decision\":\"ACCEPT\"|\"REJECT\"}]}. "
+                        "Return one independent decision for every candidate id. "
+                        "Accept only if the individual replacement is justified by raw ASR and context; otherwise reject. "
+                        "Example ACCEPT: raw 'H PASE đang lỗi', candidate {\"id\":0,\"from\":\"H PASE\",\"to\":\"HBase\"} "
+                        "returns {\"decisions\":[{\"id\":0,\"decision\":\"ACCEPT\"}]}. "
+                        "Example REJECT: raw 'họp lúc chín giờ', candidate {\"id\":0,\"from\":\"chín\",\"to\":\"HBase\"} "
+                        "returns {\"decisions\":[{\"id\":0,\"decision\":\"REJECT\"}]}."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"<previous_context>\n{context_text}\n</previous_context>\n"
+                        f"<raw_asr>{raw_text}</raw_asr>\n"
+                        f"<candidates>{json.dumps(request_candidates, ensure_ascii=False)}</candidates>"
+                    ),
+                },
+            ],
+            max_tokens=max_output_tokens,
+            temperature=0.0,
+            # Ollama's OpenAI-compatible endpoint maps this schema to a
+            # grammar.  Generic JSON mode alone allowed Sailor 1B to invent
+            # a different object shape, which the fail-closed parser rejects.
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "candidate_decisions",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "decisions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {
+                                            "type": "integer",
+                                            "enum": [
+                                                int(item["id"])
+                                                for item in proposals
+                                            ],
+                                        },
+                                        "decision": {
+                                            "type": "string",
+                                            "enum": ["ACCEPT", "REJECT"],
+                                        },
+                                    },
+                                    "required": ["id", "decision"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                        },
+                        "required": ["decisions"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            extra_body={
+                "keep_alive": settings.sailor_keep_alive,
+                "options": {
+                    "num_thread": max(1, settings.sailor_num_threads),
+                    "num_predict": max_output_tokens,
+                    "temperature": 0,
+                },
+            },
+        )
+        model_response = response.choices[0].message.content or ""
+        # Persist a bounded response for A/B diagnostics only.  It explains
+        # whether a reject came from Sailor's judgement or an invalid schema.
+        metadata["model_response"] = model_response[:600]
+        decisions = _parse_sailor_decisions(
+            model_response,
+            {int(item["id"]) for item in proposals},
+        )
+        accepted: list[dict[str, object]] = []
+        for proposal in proposals:
+            proposal["decision"] = decisions[int(proposal["id"])]
+            if proposal["decision"] == "ACCEPT":
+                accepted.append(proposal)
+        final_text = raw_text
+        for proposal in reversed(accepted):
+            final_text = (
+                final_text[:int(proposal["start"])]
+                + str(proposal["to"])
+                + final_text[int(proposal["end"]):]
+            )
+        metadata.update({
+            "decision": "BATCHED",
+            "accepted_count": len(accepted),
+            "candidate_text": final_text,
+        })
+        return final_text, metadata
+    except Exception as exc:
+        metadata.update({"decision": "ERROR_REJECT", "error": type(exc).__name__})
+        return raw_display, metadata
+
+
+async def refine_text(
+    raw_text: str,
+    *,
+    recovered_text: str | None = None,
+    replacements: tuple[dict[str, object], ...] = (),
+    context: tuple[str, ...] = (),
+) -> tuple[str, dict[str, object]]:
+    """Dispatch either the baseline refiner or the closed Sailor gate."""
+    if not settings.enable_llm_refinement:
+        return normalize_meeting_terms(recovered_text or raw_text).capitalize(), {
+            "backend": "disabled",
+            "decision": "SKIPPED_DISABLED",
+        }
+    if settings.refinement_backend == "sailor_candidate":
+        return await _refine_text_sailor_candidate_batch(
+            raw_text,
+            replacements=replacements,
+            context=context,
+        )
+    return await _refine_text_direct(raw_text, recovered_text=recovered_text), {
+        "backend": "direct",
+        "decision": "FREEFORM_GUARDED",
+    }
 
 # ============================================================
 # 6. FastAPI Web & WebSocket Server
@@ -868,6 +1219,8 @@ async def websocket_endpoint(
             return
 
         final_pipeline_started = time.perf_counter()
+        phonetic_result = recover_phonetics(raw_text)
+        context_snapshot = tuple(recent_refinement_context)
 
         speaker_name = fallback_speaker
         identity_method = "mic_fallback"
@@ -920,7 +1273,14 @@ async def websocket_endpoint(
             # the event loop. Start refinement while WavLM works instead of
             # serializing both stages.
             refinement_started = time.perf_counter()
-            refinement_task = asyncio.create_task(refine_text(raw_text))
+            refinement_task = asyncio.create_task(
+                refine_text(
+                    raw_text,
+                    recovered_text=phonetic_result.text,
+                    replacements=phonetic_result.replacements,
+                    context=context_snapshot,
+                )
+            )
 
             if enrolled_points == 0:
                 print(
@@ -975,7 +1335,14 @@ async def websocket_endpoint(
                 )
         else:
             refinement_started = time.perf_counter()
-            refinement_task = asyncio.create_task(refine_text(raw_text))
+            refinement_task = asyncio.create_task(
+                refine_text(
+                    raw_text,
+                    recovered_text=phonetic_result.text,
+                    replacements=phonetic_result.replacements,
+                    context=context_snapshot,
+                )
+            )
 
         async def emit_payload(message: dict) -> None:
             try:
@@ -998,8 +1365,13 @@ async def websocket_endpoint(
         if refinement_pending:
             refined = raw_text.capitalize()
             refinement_ms = None
+            refinement_metadata: dict[str, object] = {
+                "backend": settings.refinement_backend,
+                "decision": "PENDING",
+                "context_turn_count": len(context_snapshot),
+            }
         else:
-            refined = refinement_task.result()
+            refined, refinement_metadata = refinement_task.result()
             refinement_ms = round(
                 (time.perf_counter() - refinement_started) * 1000
             )
@@ -1015,6 +1387,10 @@ async def websocket_endpoint(
             "speaker_id_ms": speaker_id_ms,
             "text":     refined,
             "raw_text": raw_text,
+            "phonetic_recovered_text": phonetic_result.text,
+            "phonetic_recovery_applied": bool(phonetic_result.replacements),
+            "phonetic_replacements": list(phonetic_result.replacements),
+            "refinement": refinement_metadata,
             "start_time": round(start_ts, 2),
             "end_time":   round(end_ts, 2),
             "refinement_ms": refinement_ms,
@@ -1031,16 +1407,19 @@ async def websocket_endpoint(
             "revision": 1,
         }
         await emit_payload(payload)
+        if not refinement_pending and settings.sailor_context_turns > 0:
+            recent_refinement_context.append(refined)
 
         print(f"[✅ Đã xuất Biên Bản cho {identity}]")
 
         if refinement_pending:
             async def publish_late_refinement() -> None:
                 try:
-                    final_text = await refinement_task
+                    final_text, final_refinement_metadata = await refinement_task
                     update = dict(payload)
                     update.update({
                         "text": final_text,
+                        "refinement": final_refinement_metadata,
                         "refinement_ms": round(
                             (
                                 time.perf_counter()
@@ -1053,6 +1432,8 @@ async def websocket_endpoint(
                         "revision": 2,
                     })
                     await emit_payload(update)
+                    if settings.sailor_context_turns > 0:
+                        recent_refinement_context.append(final_text)
                 except Exception as exc:
                     print(f"[!] Lỗi cập nhật LLM muộn: {exc}")
 

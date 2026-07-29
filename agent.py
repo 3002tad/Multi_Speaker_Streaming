@@ -112,6 +112,18 @@ async def process_track(
                             "raw_text": result.get(
                                 "raw_text", result.get("text", "")
                             ),
+                            "phonetic_recovered_text": result.get(
+                                "phonetic_recovered_text"
+                            ),
+                            "phonetic_recovery_applied": result.get(
+                                "phonetic_recovery_applied", False
+                            ),
+                            "phonetic_replacements": result.get(
+                                "phonetic_replacements", []
+                            ),
+                            # Closed Sailor decision (or Qwen baseline
+                            # metadata) is persisted for A/B evaluation.
+                            "refinement": result.get("refinement"),
                             "text": result.get("text", ""),
                             "start_time": result.get("start_time", now),
                             "end_time": result.get("end_time", now),

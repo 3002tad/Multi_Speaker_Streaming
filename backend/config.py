@@ -70,6 +70,19 @@ class Settings:
         "ENABLE_LLM_REFINEMENT", True
     )
     ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
+    # `direct` keeps the existing free-form cleanup model.  In
+    # `sailor_candidate` mode the LLM can only accept or reject the exact
+    # dictionary/G2P candidate; it never generates replacement text.
+    refinement_backend: str = os.getenv(
+        "REFINEMENT_BACKEND", "direct"
+    ).strip().lower()
+    sailor_model: str = os.getenv("SAILOR_MODEL", "sailor2:1b")
+    sailor_keep_alive: str = os.getenv("SAILOR_KEEP_ALIVE", "5m")
+    sailor_num_threads: int = int(os.getenv("SAILOR_NUM_THREADS", "2"))
+    sailor_language: str = os.getenv("SAILOR_LANGUAGE", "vi-VN")
+    sailor_context_turns: int = int(
+        os.getenv("SAILOR_CONTEXT_TURNS", "2")
+    )
     llm_timeout_seconds: float = float(
         os.getenv("LLM_TIMEOUT_SECONDS", "5")
     )
@@ -163,6 +176,51 @@ class Settings:
     llm_inline_wait_seconds: float = float(
         os.getenv("LLM_INLINE_WAIT_SECONDS", "0.35")
     )
+    phonetic_recovery_enabled: bool = _env_bool(
+        "PHONETIC_RECOVERY_ENABLED", True
+    )
+    phonetic_dictionary_path: Path = Path(
+        os.getenv(
+            "PHONETIC_DICTIONARY_PATH",
+            str(RUNTIME_ROOT / "data" / "phonetic_dictionary.txt"),
+        )
+    )
+    phonetic_recovery_threshold: float = float(
+        os.getenv("PHONETIC_RECOVERY_THRESHOLD", "0.86")
+    )
+    phonetic_recovery_margin: float = float(
+        os.getenv("PHONETIC_RECOVERY_MARGIN", "0.06")
+    )
+    phonetic_recovery_max_words: int = int(
+        os.getenv("PHONETIC_RECOVERY_MAX_WORDS", "4")
+    )
+    phonetic_backend: str = os.getenv(
+        "PHONETIC_BACKEND", "grapheme"
+    ).strip().lower()
+    phonetic_g2p_model_path: Path = Path(
+        os.getenv(
+            "PHONETIC_G2P_MODEL_PATH",
+            str(RUNTIME_ROOT / "models" / "g2p_multilingual_byT5_tiny_onnx"),
+        )
+    )
+    phonetic_g2p_language: str = os.getenv(
+        "PHONETIC_G2P_LANGUAGE", "vie-c"
+    )
+    phonetic_g2p_threads: int = int(
+        os.getenv("PHONETIC_G2P_THREADS", "4")
+    )
+    phonetic_g2p_weight: float = float(
+        os.getenv("PHONETIC_G2P_WEIGHT", "0.65")
+    )
+    phonetic_g2p_prefilter: float = float(
+        os.getenv("PHONETIC_G2P_PREFILTER", "0.80")
+    )
+    phonetic_g2p_max_calls: int = int(
+        os.getenv("PHONETIC_G2P_MAX_CALLS", "8")
+    )
+    # When enabled, even an exact dictionary alias must receive an IPA score
+    # from G2P. This is the safe mode for Sailor candidate A/B testing.
+    phonetic_g2p_force: bool = _env_bool("PHONETIC_G2P_FORCE", False)
     wavlm_num_threads: int = int(
         os.getenv("WAVLM_NUM_THREADS", "2")
     )

@@ -380,6 +380,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "speaker_id_ms": primary.get("speaker_id_ms"),
                 "pipeline_ms": primary.get("pipeline_ms"),
                 "refinement_ms": primary.get("refinement_ms"),
+                "refinement": primary.get("refinement"),
+                "phonetic_replacements": primary.get(
+                    "phonetic_replacements", []
+                ),
             }
         )
 

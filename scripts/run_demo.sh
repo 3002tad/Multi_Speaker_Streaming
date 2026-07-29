@@ -9,6 +9,7 @@ export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME}"
 PYTHON_BIN="$RUNTIME_DIR/venv_linux/bin/python"
 SITE_PACKAGES="$RUNTIME_DIR/venv_linux/lib/python3.12/site-packages"
 PYTHON_CACHE="/tmp/paperless-python-cache"
+TRANSFORMERS_CACHE_VERSION_FILE="$PYTHON_CACHE/.transformers-version"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "Không tìm thấy venv_linux tại: $PYTHON_BIN"
@@ -27,23 +28,31 @@ cd "$PROJECT_DIR"
 
 # Importing Transformers directly from /mnt/d is very slow on WSL DrvFS.
 # Keep using venv_linux, but mirror this pure-Python package onto Linux tmpfs.
-if [[ ! -f "$PYTHON_CACHE/transformers/__init__.py" ]]; then
-  echo "Tạo cache Transformers trên filesystem Linux (chỉ lần đầu)..."
+# Rebuild when pip changes the installed Transformers version; otherwise a
+# stale cache can be incompatible with Optimum/ONNX extensions.
+TRANSFORMERS_VERSION="$("$PYTHON_BIN" -c \
+  "import transformers; print(transformers.__version__)")"
+if [[ ! -f "$PYTHON_CACHE/transformers/__init__.py" ]] \
+  || [[ ! -f "$TRANSFORMERS_CACHE_VERSION_FILE" ]] \
+  || [[ "$(<"$TRANSFORMERS_CACHE_VERSION_FILE")" != "$TRANSFORMERS_VERSION" ]]; then
+  echo "Làm mới cache Transformers $TRANSFORMERS_VERSION trên filesystem Linux..."
+  rm -rf -- "$PYTHON_CACHE/transformers"
   mkdir -p "$PYTHON_CACHE"
   tar -C "$SITE_PACKAGES" -cf /tmp/paperless-transformers.tar transformers
   tar -C "$PYTHON_CACHE" -xf /tmp/paperless-transformers.tar
+  printf '%s\n' "$TRANSFORMERS_VERSION" > "$TRANSFORMERS_CACHE_VERSION_FILE"
 fi
 export PYTHONPATH="$PYTHON_CACHE${PYTHONPATH:+:$PYTHONPATH}"
 
-echo "Warm-up Qwen để loại bỏ độ trễ cold-start..."
+echo "Warm-up mô hình refinement để loại bỏ độ trễ cold-start..."
 OLLAMA_MODEL="$("$PYTHON_BIN" -c \
-  "from backend.config import settings; print(settings.ollama_model)")"
+  "from backend.config import settings; print(settings.sailor_model if settings.refinement_backend == 'sailor_candidate' else settings.ollama_model)")"
 if ! curl --silent --fail --max-time 120 \
   http://127.0.0.1:11434/api/chat \
   -H "Content-Type: application/json" \
   -d "{\"model\":\"$OLLAMA_MODEL\",\"messages\":[{\"role\":\"system\",\"content\":\"Sửa chính tả và dấu câu tiếng Việt cho transcript cuộc họp. Không tóm tắt, không thêm ý. Chỉ trả về văn bản đã sửa.\"},{\"role\":\"user\",\"content\":\"Văn bản gốc: hệ thống đang kiểm tra biên bản cuộc họp và độ trễ xử lý trong quá trình nhiều người cùng phát biểu tại phòng họp\"}],\"stream\":false,\"keep_alive\":\"30m\",\"options\":{\"temperature\":0,\"num_predict\":64,\"num_thread\":2}}" \
   >/dev/null; then
-  echo "Ollama/Qwen không sẵn sàng; dừng để tránh biên bản không refinement."
+  echo "Ollama/refinement model không sẵn sàng; dừng để tránh biên bản không refinement."
   exit 1
 fi
 

@@ -1,0 +1,21 @@
+# Canonical term | ASR aliases
+# Chỉ thêm alias khi có đủ bằng chứng từ audio/truth.csv.
+
+# Hadoop/HDFS/HBase: dùng cụm "lớp ..." để tránh sửa nhầm SOS độc lập.
+lớp Hadoop Storage | lớp sos | lớp apolis | lớp adolf sorus | lớp adolf storage | lớp adolf stores | lớp adolfores | lớp adols
+Hadoop Storage | adolf sorus | adolf storage | hadoop store | adolf stores | adolfores
+HDFS | h d f s | h d s | hdx | hai d s
+HBase | hpase | h pase | h base | hpat
+
+# Các thuật ngữ của pipeline hiện tại.
+Zipformer | zip former | chip former
+WavLM | wave lm | wav elm
+Qdrant | q durant | kiu durant
+LiveKit | live kit | lai v kit
+DPDFNet | dpdf net | đi pi đi ép net
+Qwen | kiu en
+
+# Các lỗi tiếng Việt đã gặp trong tập test.
+làm web | làm quét
+mục 5.2 | một năm chấm hai
+hệ thống tập tin | hệ thống tự tin

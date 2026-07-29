@@ -1,0 +1,13 @@
+# Canonical term | aliases nghe/ASR thường gặp
+# Có thể sao chép file này thành:
+# /home/ntd/meeting_runtime/data/phonetic_dictionary.txt
+lớp Hadoop Storage | lớp sos | lớp apolis | lớp adolf sorus
+HDFS | h d f s | h d s | hdx
+HBase | h base | hpase | h pase
+Hadoop Storage | adolf storage | adolf sorus
+Zipformer | zip former | chip former
+WavLM | wave lm | wav elm
+Qdrant | q durant | kiu durant
+LiveKit | live kit | lai v kit
+DPDFNet | dpdf net | đi pi đi ép net
+Qwen | kiu en
