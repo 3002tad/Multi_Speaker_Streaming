@@ -208,6 +208,10 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(53, 106, 230
   flex-direction: column;
   gap: 10px;
 }
+.minutes-actions-bar { display: flex; align-items: center; gap: 8px; }
+.minutes-status.queued { color: var(--yellow); background: #fff8e8; }
+.minutes-status.ready, .minutes-status.manual { color: var(--green); background: #eaf8f2; }
+.minutes-status.error { color: var(--red); background: #fff1f3; }
 .draft-list, .minutes-list {
   max-height: clamp(340px, 58vh, 620px);
   min-height: 0;
@@ -233,6 +237,29 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(53, 106, 230
 }
 .draft { border-left: 3px solid rgba(8, 127, 140, 0.42); }
 .minute { border-left: 3px solid rgba(53, 106, 230, 0.52); }
+.minutes-overview, .minute-topic {
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #f8fafc;
+  box-shadow: 0 4px 12px rgba(38, 55, 85, 0.035);
+}
+.minutes-overview { border-left: 3px solid rgba(8, 127, 140, 0.56); }
+.minute-topic { border-left: 3px solid rgba(53, 106, 230, 0.52); }
+.minutes-title { margin: 0 0 12px; color: var(--text); font-size: 15px; font-weight: 800; }
+.minutes-overview h4, .minute-topic h4, .minute-topic h5 { margin: 12px 0 7px; }
+.minute-topic h4 { color: var(--blue); font-size: 15px; }
+.minute-topic h5 { color: #475467; font-size: 12px; letter-spacing: 0.02em; }
+.minutes-bullets { margin: 0; padding-left: 20px; color: #344054; line-height: 1.55; }
+.minutes-bullets li { margin: 7px 0; }
+.minutes-actions { color: #174f3c; }
+.source-ref { display: inline-block; margin: 4px 0 0 4px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.source-transcript { margin-top: 4px; border-top: 1px dashed var(--line); color: var(--muted); }
+.source-transcript summary { padding: 12px 2px 4px; cursor: pointer; font-size: 12px; font-weight: 700; }
+.source-transcript-list { display: grid; gap: 8px; margin-top: 8px; }
+.source-transcript-list article { padding: 10px; border-radius: 10px; background: #f8fafc; font-size: 12px; }
+.source-transcript-list article span { margin-left: 7px; color: var(--muted); font-size: 11px; }
+.source-transcript-list article p { margin: 5px 0 0; color: #475467; line-height: 1.5; }
 .participant { display: flex; align-items: center; gap: 11px; }
 .avatar {
   display: grid;

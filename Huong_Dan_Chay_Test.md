@@ -42,8 +42,14 @@ LIVEKIT_API_SECRET=<API secret>
 MEETING_ROOM=paperless-demo
 MEETING_CODE=DEMO-001
 INTERNAL_API_KEY=<chuỗi ngẫu nhiên dài tối thiểu 24 ký tự>
-OLLAMA_MODEL=qwen2.5:0.5b
-ENABLE_LLM_REFINEMENT=true
+# Không dùng Qwen để sửa từng câu transcript realtime.
+ENABLE_LLM_REFINEMENT=false
+# Biên bản chính thức chạy nền sau transcript.final; không sửa transcript realtime.
+MINUTES_COMPOSER_ENABLED=true
+MINUTES_COMPOSER_MODEL=qwen2.5:3b
+MINUTES_COMPOSER_NUM_THREADS=12
+MINUTES_COMPOSER_TIMEOUT_SECONDS=45
+MINUTES_COMPOSER_KEEP_ALIVE=-1
 ```
 
 Không lưu mật khẩu `sudo` trong `.env`. File `.env` đã được Git ignore.
@@ -57,7 +63,7 @@ ollama list
 Nếu chưa có model:
 
 ```bash
-ollama pull qwen2.5:0.5b
+ollama pull qwen2.5:3b
 ```
 
 ## 1.1 Runtime trong filesystem WSL
@@ -173,7 +179,7 @@ bash scripts/run_demo.sh
 Script thực hiện:
 
 1. Kiểm tra `.env`.
-2. Warm-up Qwen theo đúng prompt refinement.
+2. Khởi động API; Qwen2.5:3B được warm-up trước, rồi chỉ cập nhật biên bản sau global turn cuối.
 3. Chạy Web/API tại `0.0.0.0:8000`.
 4. Chạy AI pipeline tại `127.0.0.1:8001`.
 5. Chạy LiveKit worker và tự reconnect khi kết nối bị gián đoạn.
@@ -270,15 +276,16 @@ Nếu trình duyệt báo máy chủ trả HTML thay vì JSON hoặc HTTP 413, k
 3. Hai thành viên nhập mã `DEMO-001` và bấm **Tham gia**.
 4. Playback mặc định tắt. Khi bật playback phải đeo tai nghe để tránh vọng.
 5. Mỗi người nói khoảng 15 giây.
-6. Theo dõi transcript nháp realtime và biên bản theo timeline.
+6. Theo dõi transcript nháp realtime và biên bản có cấu trúc.
 7. Đổi vị trí laptop/micro để xác nhận hệ thống định danh theo giọng nói,
    không cố định người nói theo vị trí mic.
 
-Biên bản được phát theo hai bước:
-
-1. Bản provisional xuất trong ngân sách realtime.
-2. Qwen hoàn tất refinement và cập nhật revision mới trên cùng
-   `segment_id`, không tạo dòng biên bản trùng.
+Transcript nháp luôn là ASR raw (có thể đã qua phonetic recovery cho thuật
+ngữ) và không gọi LLM. Sau khi `transcript.final` đã qua lọc mic trùng,
+backend xếp nó vào một hàng đợi Qwen2.5:3B đơn. Qwen cập nhật biên bản JSON theo
+chủ đề, tóm tắt, đề xuất, quyết định và việc cần làm. Mỗi mục luôn giữ
+`source_segment_ids` để mở lại transcript nguồn; request Ollama luôn gửi
+`think:false`.
 
 ## 6. Test hai micro có lọt âm
 
@@ -306,7 +313,8 @@ Mic → LiveKit → agent (PCM + sequence/timestamp chung)
        ├─ Speaker ID: raw VAD segment → lọc cửa sổ/clipping → WavLM
        └─ ASR: chọn mic theo SNR → high-pass/DC → noise suppression nhẹ
                  → normalize → Zipformer
-    → phonetic recovery theo dictionary → Qwen refinement → WebSocket/SQLite
+    → phonetic recovery theo dictionary → WebSocket/SQLite (transcript nguồn)
+    → backend queue → Qwen2.5:3B Minutes Composer (`think:false`) → biên bản JSON
 ```
 
 VAD vẫn chạy một stream riêng cho mỗi mic để giữ trạng thái cục bộ, nhưng
@@ -556,9 +564,10 @@ curl -X DELETE http://127.0.0.1:8000/api/transcripts
   RMS và clipping tốt hơn.
 - Nội dung không bị mất khi WavLM chưa đủ chắc chắn; khi đó dùng tên đăng
   nhập của mic với `identity_method=mic_fallback`.
-- Bản provisional xuất trong khoảng 5–7 giây.
-- LLM refinement cập nhật cùng `segment_id` với `revision=2`.
-- Hallucination guard loại kết quả Qwen làm thay đổi quá nhiều nội dung gốc.
+- Transcript nguồn không bị Qwen viết lại theo từng segment.
+- Qwen chỉ chạy sau final turn, lần lượt trong một queue để tránh tranh CPU
+  với Zipformer/WavLM; UI cập nhật trạng thái **Đang cập nhật**.
+- Mọi bullet biên bản không có `source_segment_id` hợp lệ bị backend loại bỏ.
 - Speaker profile vẫn tồn tại sau khi restart.
 
 ## 8. Chạy test backend
@@ -574,7 +583,7 @@ Smoke tests kiểm tra:
 - Tạo/join phòng và LiveKit token.
 - Bảo vệ internal API.
 - Lưu transcript vào SQLite.
-- Cập nhật LLM revision trên cùng segment.
+- Lưu/đọc biên bản JSON có version và chỉ nhận dẫn chứng từ transcript đã lưu.
 - Loại final trùng giữa hai mic và giữ nguồn mạnh hơn.
 - Packet PCM có timestamp/sequence và fallback raw-PCM.
 - Coordinator giữ mic có chất lượng tốt hơn nhưng không loại overlap thật.
@@ -595,12 +604,13 @@ Người tham gia rời phòng
 ### 9.1. Kết thúc một buổi demo thông thường
 
 1. Yêu cầu các laptop rời phòng hoặc tắt microphone.
-2. Chờ tối thiểu 20 giây để segment cuối và LLM revision đang chờ được ghi
-   vào SQLite.
+2. Chờ đến khi trạng thái biên bản là **Đã cập nhật** (hoặc tối đa 30 giây)
+   để worker Qwen ghi biên bản cuối vào SQLite.
 3. Có thể kiểm tra lần cuối:
 
 ```bash
 curl http://127.0.0.1:8000/api/transcripts
+curl http://127.0.0.1:8000/api/minutes
 ```
 
 4. Tại terminal WSL đang chạy `run_demo.sh`, nhấn:

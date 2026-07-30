@@ -65,6 +65,7 @@ from backend.text_refinement import (
     PhoneticLexicon,
     SeaG2PVietnamesePhonemizer,
     TriplePhoneticScorer,
+    format_transcript_sentence,
     normalize_meeting_terms,
 )
 
@@ -619,6 +620,28 @@ def recover_phonetics(raw_text: str) -> PhoneticRecovery:
         return PhoneticRecovery(text=raw_text, replacements=())
     return phonetic_lexicon.recover(raw_text)
 
+
+def format_final_transcript(text: str) -> str:
+    """Format evidence for people while retaining raw ASR separately."""
+    with dictionary_runtime_lock:
+        protected_terms = tuple(
+            entry.canonical for entry in adaptive_dictionary.active_entries()
+        )
+    return format_transcript_sentence(text, protected_terms=protected_terms)
+
+
+def format_realtime_draft(text: str) -> str:
+    """Apply presentation-only casing to an unfinished ASR hypothesis."""
+    with dictionary_runtime_lock:
+        protected_terms = tuple(
+            entry.canonical for entry in adaptive_dictionary.active_entries()
+        )
+    return format_transcript_sentence(
+        text,
+        protected_terms=protected_terms,
+        add_terminal_punctuation=False,
+    )
+
 async def _refine_text_direct(
     raw_text: str,
     *,
@@ -628,10 +651,10 @@ async def _refine_text_direct(
     phonetic_text = recovered_text or recover_phonetics(raw_text).text
     normalized_text = normalize_meeting_terms(phonetic_text)
     if not settings.enable_llm_refinement:
-        return normalized_text.capitalize()
+        return format_final_transcript(normalized_text)
 
     if len(normalized_text.split()) < LLM_MIN_WORDS:
-        return normalized_text.capitalize()
+        return format_final_transcript(normalized_text)
 
     try:
         response = await llm_client.chat.completions.create(
@@ -671,7 +694,7 @@ async def _refine_text_direct(
         res_words = len(res_text.split())
         if res_words > raw_words * 2 + 3 or res_words < max(1, raw_words // 2):
             print(f"   [!] LLM Hallucination Guard bị kích hoạt ({res_words} từ vs {raw_words} từ gốc). Fallback về văn bản gốc.")
-            return normalized_text.capitalize()
+            return format_final_transcript(normalized_text)
 
         raw_tokens = set(
             re.findall(r"\w+", normalized_text.lower(), flags=re.UNICODE)
@@ -693,11 +716,11 @@ async def _refine_text_direct(
                 f"novel={novel_ratio:.0%}). "
                 "Fallback về văn bản đã chuẩn hóa thuật ngữ."
             )
-            return normalized_text.capitalize()
+            return format_final_transcript(normalized_text)
 
         return res_text
     except Exception:
-        return normalized_text
+        return format_final_transcript(normalized_text)
 
 
 def _parse_sailor_decisions(
@@ -740,9 +763,7 @@ async def _refine_text_sailor_candidate(
     safety gate, not another unconstrained ASR decoder.
     """
     candidate_text = normalize_meeting_terms(recovered_text or raw_text)
-    # str.capitalize() lowercases the rest of the text and would corrupt
-    # canonical terms such as HDFS/HBase after a successful gate.
-    raw_display = raw_text[:1].upper() + raw_text[1:]
+    raw_display = format_final_transcript(raw_text)
     metadata: dict[str, object] = {
         "backend": "sailor_candidate",
         "candidate_text": candidate_text,
@@ -796,7 +817,7 @@ async def _refine_text_sailor_candidate(
         )
         metadata.update({"decision": decision, "confidence": confidence})
         if decision == "ACCEPT":
-            return candidate_text, metadata
+            return format_final_transcript(candidate_text), metadata
         return raw_display, metadata
     except Exception as exc:
         metadata.update({"decision": "ERROR_REJECT", "error": type(exc).__name__})
@@ -815,7 +836,7 @@ async def _refine_text_sailor_candidate_batch(
     calls.  They are nevertheless applied independently and only after an
     explicit ACCEPT for the candidate's id.
     """
-    raw_display = raw_text[:1].upper() + raw_text[1:]
+    raw_display = format_final_transcript(raw_text)
     proposals: list[dict[str, object]] = []
     for index, item in enumerate(replacements):
         start, end = item.get("start"), item.get("end")
@@ -960,7 +981,7 @@ async def _refine_text_sailor_candidate_batch(
             "accepted_count": len(accepted),
             "candidate_text": final_text,
         })
-        return final_text, metadata
+        return format_final_transcript(final_text), metadata
     except Exception as exc:
         metadata.update({"decision": "ERROR_REJECT", "error": type(exc).__name__})
         return raw_display, metadata
@@ -975,7 +996,7 @@ async def refine_text(
 ) -> tuple[str, dict[str, object]]:
     """Dispatch either the baseline refiner or the closed Sailor gate."""
     if not settings.enable_llm_refinement:
-        return normalize_meeting_terms(recovered_text or raw_text).capitalize(), {
+        return format_final_transcript(recovered_text or raw_text), {
             "backend": "disabled",
             "decision": "SKIPPED_DISABLED",
         }
@@ -1406,7 +1427,7 @@ async def websocket_endpoint(
                     last_sent_text = text
                     last_partial_sent_at = now
                     partial_msg = {
-                        "partial": text,
+                        "partial": format_realtime_draft(text),
                         "identity": identity,
                         "speaker": current_speaker,
                         "identity_method": "mic_fallback",
@@ -1440,7 +1461,15 @@ async def websocket_endpoint(
 
         final_pipeline_started = time.perf_counter()
         phonetic_result = recover_phonetics(raw_text)
-        context_snapshot = tuple(recent_refinement_context)
+        # Final transcript remains evidence.  Qwen is reserved for the
+        # backend Minutes Composer, never for per-segment ASR rewriting.
+        transcript_text = format_final_transcript(
+            phonetic_result.text or raw_text
+        )
+        refinement_metadata: dict[str, object] = {
+            "backend": "disabled_for_minutes_composer",
+            "decision": "SOURCE_TRANSCRIPT_ONLY",
+        }
 
         speaker_name = fallback_speaker
         identity_method = "mic_fallback"
@@ -1481,27 +1510,14 @@ async def websocket_endpoint(
                     "mic khác có SNR/chất lượng tốt hơn."
                 )
                 return
-            # Realtime speaker checks now yield until this final has passed
-            # both WavLM identification and Qwen refinement.
+            # Realtime speaker checks yield only for final WavLM identity.
+            # Qwen is intentionally deferred to the backend minutes queue.
             heavy_work.mark_final()
             print(f"   [WavLM] Đoạn audio nhận diện: {duration_s:.2f}s")
 
             enrolled_points = qdrant.count(
                 collection_name="speakers", exact=True
             ).count
-            # Ollama is a separate process and its HTTP call does not block
-            # the event loop. Start refinement while WavLM works instead of
-            # serializing both stages.
-            refinement_started = time.perf_counter()
-            refinement_task = asyncio.create_task(
-                refine_text(
-                    raw_text,
-                    recovered_text=phonetic_result.text,
-                    replacements=phonetic_result.replacements,
-                    context=context_snapshot,
-                )
-            )
-
             if enrolled_points == 0:
                 print(
                     f"   [WavLM] Chưa có profile; dùng tên mic "
@@ -1553,17 +1569,6 @@ async def websocket_endpoint(
                     f"{settings.speaker_min_id_seconds:.1f}s; "
                     f"fallback về {fallback_speaker}"
                 )
-        else:
-            refinement_started = time.perf_counter()
-            refinement_task = asyncio.create_task(
-                refine_text(
-                    raw_text,
-                    recovered_text=phonetic_result.text,
-                    replacements=phonetic_result.replacements,
-                    context=context_snapshot,
-                )
-            )
-
         async def emit_payload(message: dict) -> None:
             try:
                 await dashboard_manager.broadcast(message)
@@ -1577,24 +1582,8 @@ async def websocket_endpoint(
                 pass
 
         utterance_id = uuid.uuid4().hex
-        done, _ = await asyncio.wait(
-            {refinement_task},
-            timeout=max(0.0, settings.llm_inline_wait_seconds),
-        )
-        refinement_pending = not done
-        if refinement_pending:
-            refined = raw_text.capitalize()
-            refinement_ms = None
-            refinement_metadata: dict[str, object] = {
-                "backend": settings.refinement_backend,
-                "decision": "PENDING",
-                "context_turn_count": len(context_snapshot),
-            }
-        else:
-            refined, refinement_metadata = refinement_task.result()
-            refinement_ms = round(
-                (time.perf_counter() - refinement_started) * 1000
-            )
+        refinement_pending = False
+        refinement_ms = 0
 
         payload = {
             "utterance_id": utterance_id,
@@ -1605,7 +1594,7 @@ async def websocket_endpoint(
             "speaker_margin": speaker_margin,
             "speaker_consensus": speaker_consensus,
             "speaker_id_ms": speaker_id_ms,
-            "text":     refined,
+            "text":     transcript_text,
             "raw_text": raw_text,
             "phonetic_recovered_text": phonetic_result.text,
             "phonetic_recovery_applied": bool(phonetic_result.replacements),
@@ -1627,39 +1616,8 @@ async def websocket_endpoint(
             "revision": 1,
         }
         await emit_payload(payload)
-        if not refinement_pending and settings.sailor_context_turns > 0:
-            recent_refinement_context.append(refined)
 
         print(f"[✅ Đã xuất Biên Bản cho {identity}]")
-
-        if refinement_pending:
-            async def publish_late_refinement() -> None:
-                try:
-                    final_text, final_refinement_metadata = await refinement_task
-                    update = dict(payload)
-                    update.update({
-                        "text": final_text,
-                        "refinement": final_refinement_metadata,
-                        "refinement_ms": round(
-                            (
-                                time.perf_counter()
-                                - refinement_started
-                            )
-                            * 1000
-                        ),
-                        "refinement_pending": False,
-                        "is_refinement_update": True,
-                        "revision": 2,
-                    })
-                    await emit_payload(update)
-                    if settings.sailor_context_turns > 0:
-                        recent_refinement_context.append(final_text)
-                except Exception as exc:
-                    print(f"[!] Lỗi cập nhật LLM muộn: {exc}")
-
-            late_task = asyncio.create_task(publish_late_refinement())
-            bg_tasks.add(late_task)
-            late_task.add_done_callback(bg_tasks.discard)
 
     async def process_vad_events():
         nonlocal is_speaking, speech_start_time, speech_audio_chunks

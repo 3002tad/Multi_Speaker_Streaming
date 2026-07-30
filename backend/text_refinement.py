@@ -43,6 +43,21 @@ _BUILTIN_PHONETIC_ENTRIES = (
     ("phonetic recovery", ("phonetic recovery", "fonetic recovery")),
 )
 
+# Zipformer commonly returns its final text in uppercase.  The ASR output does
+# not carry enough information to recover every proper noun, so this list is
+# deliberately limited to terms whose casing is deterministic.  Meeting-title
+# terms are supplied separately by the caller after they have passed the
+# adaptive-dictionary gate.
+_DISPLAY_CASE_TERMS = tuple(entry[0] for entry in _BUILTIN_PHONETIC_ENTRIES) + (
+    "AI",
+    "ASR",
+    "LLM",
+    "VNPT",
+    "WSL",
+    "CPU",
+    "GPU",
+)
+
 
 def _phonetic_key(value: str) -> str:
     """Build a language-agnostic key for common Vietnamese ASR confusions."""
@@ -844,3 +859,60 @@ def normalize_meeting_terms(text: str) -> str:
         flags=re.IGNORECASE,
     )
     return normalized
+
+
+def format_transcript_sentence(
+    text: str,
+    *,
+    protected_terms: Iterable[str] = (),
+    add_terminal_punctuation: bool = True,
+) -> str:
+    """Make final ASR evidence readable without changing its words.
+
+    This is intentionally *not* a language-model rewrite.  It only collapses
+    whitespace, runs the existing deterministic technical-term normaliser and
+    converts an all-caps decoder result to Vietnamese sentence case.  Known
+    acronyms/product names and trusted meeting glossary entries keep their
+    canonical spelling.  The source ``raw_text`` is still stored unchanged for
+    diagnostics and evaluation.
+    """
+    normalized = normalize_meeting_terms(" ".join(str(text or "").split()))
+    if not normalized:
+        return ""
+
+    # Protect canonical forms before lowering the rest.  Longest first avoids
+    # replacing ``Qwen`` inside a longer user-supplied title term.
+    protected = tuple(
+        dict.fromkeys(
+            term.strip()
+            for term in (*_DISPLAY_CASE_TERMS, *protected_terms)
+            if isinstance(term, str) and term.strip()
+        )
+    )
+    placeholders: dict[str, str] = {}
+    display = normalized
+    for index, term in enumerate(sorted(protected, key=len, reverse=True)):
+        placeholder = f"\ue000{index}\ue001"
+        pattern = re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)", re.IGNORECASE)
+        display, count = pattern.subn(placeholder, display)
+        if count:
+            placeholders[placeholder] = term
+
+    display = display.lower()
+    for index, character in enumerate(display):
+        if character.isalpha():
+            display = display[:index] + character.upper() + display[index + 1 :]
+            break
+    for placeholder, term in placeholders.items():
+        display = display.replace(placeholder, term)
+
+    # Final segments represent a completed turn.  A full stop makes the
+    # timeline legible but is not added to a one/two-token acknowledgement.
+    word_count = len(re.findall(r"\w+", display, flags=re.UNICODE))
+    if (
+        add_terminal_punctuation
+        and word_count >= 3
+        and display[-1] not in ".?!…:;"
+    ):
+        display += "."
+    return display

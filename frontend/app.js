@@ -1,12 +1,21 @@
 const { Room, RoomEvent } = LivekitClient;
 
+// Browser audio elements top out at volume=1.  The chain below adds a small
+// fixed pre-gain and a compressor so quiet remote speech is clearer without
+// letting a suddenly loud participant clip the selected system output.
+const PLAYBACK_PRE_GAIN = 2.2;
+
 const state = {
   room: null,
   playbackEnabled: false,
+  playbackAudioContext: null,
   remoteAudio: new Map(),
   eventSocket: null,
   drafts: new Map(),
-  minutes: new Map(),
+  transcripts: new Map(),
+  minutesDocument: null,
+  minutesStatus: "idle",
+  minutesVersion: 0,
   recorder: null,
 };
 
@@ -14,7 +23,10 @@ const $ = (id) => document.getElementById(id);
 
 function resetTranscriptState() {
   state.drafts.clear();
-  state.minutes.clear();
+  state.transcripts.clear();
+  state.minutesDocument = null;
+  state.minutesStatus = "idle";
+  state.minutesVersion = 0;
   renderDrafts();
   renderMinutes();
 }
@@ -101,21 +113,73 @@ function escapeHtml(value) {
   return element.innerHTML;
 }
 
+function playbackAudioContext() {
+  if (state.playbackAudioContext) return state.playbackAudioContext;
+  const Context = window.AudioContext || window.webkitAudioContext;
+  if (!Context) return null;
+  state.playbackAudioContext = new Context();
+  return state.playbackAudioContext;
+}
+
+function createPlaybackBoost(element) {
+  const context = playbackAudioContext();
+  if (!context || !context.createMediaElementSource) return null;
+
+  const source = context.createMediaElementSource(element);
+  const gain = context.createGain();
+  const compressor = context.createDynamicsCompressor();
+  gain.gain.setValueAtTime(PLAYBACK_PRE_GAIN, context.currentTime);
+  compressor.threshold.setValueAtTime(-18, context.currentTime);
+  compressor.knee.setValueAtTime(18, context.currentTime);
+  compressor.ratio.setValueAtTime(4, context.currentTime);
+  compressor.attack.setValueAtTime(0.006, context.currentTime);
+  compressor.release.setValueAtTime(0.22, context.currentTime);
+
+  source.connect(gain);
+  gain.connect(compressor);
+  compressor.connect(context.destination);
+  return { source, gain, compressor };
+}
+
+function resumePlaybackAudio() {
+  if (state.playbackAudioContext?.state === "suspended") {
+    state.playbackAudioContext.resume().catch(() => {});
+  }
+}
+
 function attachRemoteAudio(track, participant) {
   const key = `${participant.identity}:${track.sid || Math.random()}`;
   const element = track.attach();
   element.autoplay = true;
-  element.volume = 0.3;
+  element.volume = 1;
   element.muted = !state.playbackEnabled;
   element.dataset.remoteAudio = key;
   document.body.appendChild(element);
-  state.remoteAudio.set(key, { track, element });
+  let processing = null;
+  try {
+    processing = createPlaybackBoost(element);
+  } catch {
+    // Web Audio can be unavailable on older browsers. The direct element is
+    // still audible at full native volume as a graceful fallback.
+  }
+  state.remoteAudio.set(key, { track, element, processing });
+  if (state.playbackEnabled) {
+    resumePlaybackAudio();
+    element.play().catch(() => {});
+  }
 }
 
 function detachRemoteAudio(track) {
   for (const [key, item] of state.remoteAudio) {
     if (item.track === track) {
       item.track.detach(item.element);
+      for (const node of Object.values(item.processing || {})) {
+        try {
+          node.disconnect();
+        } catch {
+          // A disconnected Web Audio node is safe to ignore.
+        }
+      }
       item.element.remove();
       state.remoteAudio.delete(key);
     }
@@ -124,9 +188,10 @@ function detachRemoteAudio(track) {
 
 function setPlayback(enabled) {
   state.playbackEnabled = enabled;
+  if (enabled) resumePlaybackAudio();
   for (const { element } of state.remoteAudio.values()) {
     element.muted = !enabled;
-    element.volume = 0.3;
+    element.volume = 1;
     if (enabled) element.play().catch(() => {});
   }
   $("playback-button").classList.toggle("active", enabled);
@@ -239,13 +304,28 @@ function handleMeetingEvent(payload) {
     }
   } else if (payload.type === "transcript.final") {
     state.drafts.delete(payload.segment_id);
-    state.minutes.set(payload.segment_id, payload);
+    state.transcripts.set(payload.segment_id, payload);
     renderDrafts();
     renderMinutes();
   } else if (payload.type === "transcript.retracted") {
     state.drafts.delete(payload.segment_id);
-    state.minutes.delete(payload.segment_id);
+    state.transcripts.delete(payload.segment_id);
     renderDrafts();
+    renderMinutes();
+  } else if (payload.type === "minutes.status") {
+    state.minutesStatus = payload.status || "queued";
+    renderMinutes();
+  } else if (payload.type === "minutes.updated") {
+    if ((payload.version || 0) >= state.minutesVersion) {
+      state.minutesVersion = payload.version || 0;
+      state.minutesDocument = payload.document || null;
+      state.minutesStatus = payload.status || "ready";
+      renderMinutes();
+    }
+  } else if (payload.type === "minutes.cleared") {
+    state.minutesDocument = null;
+    state.minutesStatus = "idle";
+    state.minutesVersion = 0;
     renderMinutes();
   } else if (payload.type === "transcript.cleared") {
     resetTranscriptState();
@@ -278,40 +358,136 @@ function formatTime(timestamp) {
   return new Date(timestamp * 1000).toLocaleTimeString("vi-VN");
 }
 
+function sourceLabel(sourceIds = []) {
+  if (!sourceIds.length) return "";
+  const labels = sourceIds.map((id) =>
+    escapeHtml(String(id).replace(/^seg-/, "").slice(0, 8)),
+  );
+  return `<span class="source-ref">Nguồn: ${labels.join(", ")}</span>`;
+}
+
+function evidenceList(items = [], className = "") {
+  if (!items.length) return "";
+  return `
+    <ul class="minutes-bullets ${className}">
+      ${items
+        .map(
+          (item) => `
+            <li>
+              ${item.speaker ? `<strong>${escapeHtml(item.speaker)}:</strong> ` : ""}
+              ${escapeHtml(item.content || "")}
+              ${sourceLabel(item.source_segment_ids)}
+            </li>
+          `,
+        )
+        .join("")}
+    </ul>`;
+}
+
+function actionList(actions = []) {
+  if (!actions.length) return "";
+  return `
+    <ul class="minutes-bullets minutes-actions">
+      ${actions
+        .map(
+          (action) => `
+            <li>
+              <strong>${escapeHtml(action.task || "")}</strong>
+              ${action.owner ? ` · Phụ trách: ${escapeHtml(action.owner)}` : ""}
+              ${action.deadline ? ` · Hạn: ${escapeHtml(action.deadline)}` : ""}
+              ${sourceLabel(action.source_segment_ids)}
+            </li>
+          `,
+        )
+        .join("")}
+    </ul>`;
+}
+
+function renderTranscriptSource() {
+  const items = Array.from(state.transcripts.values()).sort(
+    (a, b) => (a.start_time || 0) - (b.start_time || 0),
+  );
+  if (!items.length) return "";
+  return `
+    <details class="source-transcript">
+      <summary>Xem transcript nguồn (${items.length})</summary>
+      <div class="source-transcript-list">
+        ${items
+          .map(
+            (item) => `
+              <article>
+                <strong>${escapeHtml(item.speaker || "Chưa xác định")}</strong>
+                <span>${formatTime(item.start_time)}</span>
+                <p>${escapeHtml(item.text || item.raw_text || "")}</p>
+              </article>
+            `,
+          )
+          .join("")}
+      </div>
+    </details>`;
+}
+
 function renderMinutes() {
   const container = $("minutes-list");
   const scrollState = captureScrollState(container);
-  const items = Array.from(state.minutes.values()).sort(
-    (a, b) => (a.start_time || 0) - (b.start_time || 0),
-  );
-  if (!items.length) {
-    container.innerHTML = '<div class="empty-state">Chưa có nội dung được chốt.</div>';
+  const status = $("minutes-status");
+  const statusText = {
+    idle: "Chờ nội dung",
+    queued: "Đang cập nhật",
+    ready: "Đã cập nhật",
+    manual: "Đã chỉnh sửa",
+    error: "Cần thử lại",
+  }[state.minutesStatus] || "Đang cập nhật";
+  status.textContent = statusText;
+  status.className = `badge minutes-status ${state.minutesStatus}`;
+
+  const document = state.minutesDocument;
+  if (!document || (!document.summary?.length && !document.topics?.length)) {
+    const waiting = state.transcripts.size
+      ? "Đã nhận transcript. Đang cập nhật biên bản theo timeline..."
+      : "Chưa có nội dung được chốt.";
+    container.innerHTML = `<div class="empty-state">${waiting}</div>${renderTranscriptSource()}`;
     restoreScrollState(container, scrollState);
     return;
   }
-  container.innerHTML = items
+  const topics = (document.topics || [])
     .map(
-      (item) => `
-        <article class="minute">
-          <div class="minute-speaker">${escapeHtml(item.speaker || "Chưa xác định")}</div>
-          <div class="minute-text">${escapeHtml(item.text || "")}</div>
-          <div class="minute-meta">
-            ${formatTime(item.start_time)} – ${formatTime(item.end_time)}
-            · ${Math.max(0, (item.end_time || 0) - (item.start_time || 0)).toFixed(1)}s
-          </div>
-        </article>
-      `,
+      (topic) => `
+        <article class="minute-topic">
+          <h4>${escapeHtml(topic.title || "Nội dung trao đổi")}</h4>
+          ${evidenceList(topic.details, "topic-details")}
+          ${topic.proposals?.length ? `<h5>Đề xuất</h5>${evidenceList(topic.proposals, "topic-proposals")}` : ""}
+          ${topic.decisions?.length ? `<h5>Quyết định / thống nhất</h5>${evidenceList(topic.decisions, "topic-decisions")}` : ""}
+          ${topic.actions?.length ? `<h5>Việc cần làm</h5>${actionList(topic.actions)}` : ""}
+        </article>`,
     )
     .join("");
+  container.innerHTML = `
+    <section class="minutes-overview">
+      <p class="minutes-title">${escapeHtml(document.meeting?.title || "Biên bản cuộc họp")}</p>
+      ${document.summary?.length ? `<h4>Tóm tắt</h4>${evidenceList(document.summary, "minutes-summary")}` : ""}
+    </section>
+    ${topics}
+    ${renderTranscriptSource()}`;
   restoreScrollState(container, scrollState);
 }
 
 async function loadMinutes() {
-  const response = await fetch("/api/transcripts");
-  if (!response.ok) return;
-  const data = await response.json();
-  state.minutes.clear();
-  for (const item of data.items) state.minutes.set(item.segment_id, item);
+  const [minutesResponse, transcriptsResponse] = await Promise.all([
+    fetch("/api/minutes"),
+    fetch("/api/transcripts"),
+  ]);
+  if (minutesResponse.ok) {
+    const data = await minutesResponse.json();
+    state.minutesDocument = data.document || null;
+    state.minutesStatus = data.status || "idle";
+    state.minutesVersion = data.version || 0;
+  }
+  if (transcriptsResponse.ok) {
+    const data = await transcriptsResponse.json();
+    state.transcripts.clear();
+    for (const item of data.items) state.transcripts.set(item.segment_id, item);
+  }
   renderMinutes();
 }
 

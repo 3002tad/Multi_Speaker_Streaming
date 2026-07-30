@@ -47,6 +47,12 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_keep_alive(name: str, default: str) -> str | int:
+    """Parse Ollama's numeric ``-1`` sentinel without breaking durations."""
+    value = os.getenv(name, default).strip()
+    return -1 if value == "-1" else value
+
+
 @dataclass(frozen=True)
 class Settings:
     livekit_url: str = os.getenv(
@@ -67,8 +73,11 @@ class Settings:
         "AI_SERVER_HTTP_URL", "http://127.0.0.1:8001"
     )
     enable_llm_refinement: bool = _env_bool(
-        "ENABLE_LLM_REFINEMENT", True
+        "ENABLE_LLM_REFINEMENT", False
     )
+    # Legacy per-segment transcript cleanup.  It remains disabled by default:
+    # Qwen is reserved for the evidence-backed Minutes Composer below.
+    ollama_url: str = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
     # `direct` keeps the existing free-form cleanup model.  In
     # `sailor_candidate` mode the LLM can only accept or reject the exact
@@ -85,6 +94,47 @@ class Settings:
     )
     llm_timeout_seconds: float = float(
         os.getenv("LLM_TIMEOUT_SECONDS", "5")
+    )
+    # Minutes Composer runs after a final global turn reaches the backend.
+    # It must not be used in the realtime ASR path.
+    # The demo baseline composes official minutes asynchronously with
+    # Qwen2.5:3B.  This remains outside the realtime ASR path.
+    minutes_composer_enabled: bool = _env_bool(
+        "MINUTES_COMPOSER_ENABLED", True
+    )
+    minutes_composer_model: str = os.getenv(
+        "MINUTES_COMPOSER_MODEL", "qwen2.5:3b"
+    )
+    # ``timeline`` is the safe demo default: show the final, formatted
+    # transcript as a reviewable meeting timeline.  Use ``llm`` only after a
+    # model has passed a meeting-specific quality test; small local models can
+    # otherwise turn noisy ASR fragments into invented proposals/decisions.
+    minutes_composer_mode: str = os.getenv(
+        "MINUTES_COMPOSER_MODE", "timeline"
+    ).strip().lower()
+    minutes_composer_timeout_seconds: float = float(
+        os.getenv("MINUTES_COMPOSER_TIMEOUT_SECONDS", "45")
+    )
+    minutes_composer_debounce_seconds: float = float(
+        os.getenv("MINUTES_COMPOSER_DEBOUNCE_SECONDS", "0.4")
+    )
+    minutes_composer_num_threads: int = int(
+        os.getenv("MINUTES_COMPOSER_NUM_THREADS", "12")
+    )
+    minutes_composer_temperature: float = float(
+        os.getenv("MINUTES_COMPOSER_TEMPERATURE", "0")
+    )
+    minutes_composer_max_output_tokens: int = int(
+        os.getenv("MINUTES_COMPOSER_MAX_OUTPUT_TOKENS", "200")
+    )
+    minutes_composer_max_context_chars: int = int(
+        os.getenv("MINUTES_COMPOSER_MAX_CONTEXT_CHARS", "3200")
+    )
+    minutes_composer_context_window: int = int(
+        os.getenv("MINUTES_COMPOSER_CONTEXT_WINDOW", "2048")
+    )
+    minutes_composer_keep_alive: str | int = _env_keep_alive(
+        "MINUTES_COMPOSER_KEEP_ALIVE", "-1"
     )
     database_path: Path = Path(
         os.getenv("DATABASE_PATH", str(RUNTIME_ROOT / "data" / "meeting.db"))

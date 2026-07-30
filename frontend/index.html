@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f4f7fb" />
     <title>Phòng họp không giấy</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=20260730-fallback1" />
   </head>
   <body>
     <main class="shell">
@@ -98,9 +98,12 @@
             <div class="panel-heading">
               <div>
                 <p class="eyebrow">OFFICIAL</p>
-                <h3>Biên bản timeline</h3>
+                <h3>Biên bản cuộc họp</h3>
               </div>
-              <button id="clear-button" class="text-button">Xóa</button>
+              <div class="minutes-actions-bar">
+                <span id="minutes-status" class="badge minutes-status idle">Chờ nội dung</span>
+                <button id="clear-button" class="text-button">Xóa</button>
+              </div>
             </div>
             <div id="minutes-list" class="minutes-list">
               <div class="empty-state">Chưa có nội dung được chốt.</div>
@@ -168,6 +171,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.18.8/dist/livekit-client.umd.min.js"></script>
-    <script src="/app.js"></script>
+    <script src="/app.js?v=20260730-fallback1"></script>
   </body>
 </html>

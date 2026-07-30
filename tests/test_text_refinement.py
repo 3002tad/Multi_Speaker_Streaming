@@ -8,6 +8,7 @@ from backend.text_refinement import (
     PhoneticLexicon,
     TriplePhoneticScore,
     TriplePhoneticScorer,
+    format_transcript_sentence,
     normalize_meeting_terms,
 )
 
@@ -42,6 +43,32 @@ class MeetingTermNormalizationTests(unittest.TestCase):
         self.assertEqual(
             normalize_meeting_terms("chất lượng HD rất tốt"),
             "chất lượng HD rất tốt",
+        )
+
+    def test_formats_uppercase_final_as_sentence_without_llm(self) -> None:
+        self.assertEqual(
+            format_transcript_sentence(
+                "HỆ THỐNG THU THẬP DATA REALTIME VÀ AI"
+            ),
+            "Hệ thống thu thập data realtime và AI.",
+        )
+
+    def test_formats_realtime_draft_without_punctuation(self) -> None:
+        self.assertEqual(
+            format_transcript_sentence(
+                "HỆ THỐNG THU THẬP DATA REALTIME",
+                add_terminal_punctuation=False,
+            ),
+            "Hệ thống thu thập data realtime",
+        )
+
+    def test_preserves_trusted_dynamic_term_case(self) -> None:
+        self.assertEqual(
+            format_transcript_sentence(
+                "CHÚNG TA DÙNG DATAPULSE REALTIME",
+                protected_terms=("DataPulse Realtime",),
+            ),
+            "Chúng ta dùng DataPulse Realtime.",
         )
 
 

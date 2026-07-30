@@ -25,6 +25,12 @@ from pydantic import BaseModel, Field
 
 from backend.api.database import TranscriptRepository
 from backend.config import PROJECT_ROOT, settings
+from backend.minutes_composer import (
+    MinutesCompositionError,
+    OllamaMinutesComposer,
+    empty_minutes_document,
+    normalize_minutes_document,
+)
 
 
 app = FastAPI(title="Paperless Meeting Demo API")
@@ -73,15 +79,153 @@ hub = WebSocketHub()
 final_event_lock = asyncio.Lock()
 meeting_reset_lock = asyncio.Lock()
 current_meeting_title = ""
+meeting_started_at: float | None = None
+minutes_epoch = 0
+minutes_queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
+minutes_worker_task: asyncio.Task[None] | None = None
+
+
+def _minutes_response() -> dict[str, Any]:
+    stored = repository.get_minutes(settings.meeting_room)
+    if stored is not None:
+        return stored
+    return {
+        "meeting_id": settings.meeting_room,
+        "version": 0,
+        "status": "idle",
+        "updated_at": None,
+        "metadata": {},
+        "document": empty_minutes_document(
+            current_meeting_title, started_at=meeting_started_at
+        ),
+    }
+
+
+async def _compose_minutes_once(epoch: int) -> None:
+    """Compose only from persisted final segments, never partial ASR text."""
+    if epoch != minutes_epoch:
+        return
+    segments = repository.list_for_meeting(settings.meeting_room)
+    if not segments:
+        return
+    existing = repository.get_minutes(settings.meeting_room)
+    processed_ids = set(
+        (existing or {}).get("document", {}).get("source_segment_ids", [])
+    )
+    pending_segments = [
+        segment
+        for segment in segments
+        if segment.get("segment_id") not in processed_ids
+    ]
+    composer = OllamaMinutesComposer(settings)
+    if not pending_segments and not composer.uses_transcript_timeline:
+        return
+    # The deterministic fallback is a complete current view, not an
+    # incremental LLM patch.  Rebuild it from every final segment so one new
+    # event can also replace an older low-quality generated document.
+    composition_segments = (
+        segments if composer.uses_transcript_timeline else pending_segments
+    )
+    try:
+        document, metadata = await composer.compose(
+            meeting_title=current_meeting_title,
+            existing_document=(existing or {}).get("document"),
+            segments=composition_segments,
+            started_at=meeting_started_at,
+        )
+    except MinutesCompositionError as exc:
+        if epoch == minutes_epoch:
+            await hub.broadcast(
+                {
+                    "type": "minutes.status",
+                    "status": "error",
+                    "message": str(exc),
+                    "timestamp": time.time(),
+                }
+            )
+        return
+    except Exception as exc:  # keep an ASR event from crashing the worker
+        if epoch == minutes_epoch:
+            await hub.broadcast(
+                {
+                    "type": "minutes.status",
+                    "status": "error",
+                    "message": f"Minutes composer failed: {type(exc).__name__}",
+                    "timestamp": time.time(),
+                }
+            )
+        return
+    if epoch != minutes_epoch:
+        return
+    stored = repository.upsert_minutes(
+        settings.meeting_room,
+        document=document,
+        status="ready",
+        metadata=metadata,
+        updated_at=time.time(),
+    )
+    await hub.broadcast({"type": "minutes.updated", **stored})
+
+
+async def _minutes_worker() -> None:
+    """Serialize Qwen calls and coalesce bursts of final-turn events."""
+    while True:
+        first_job = await minutes_queue.get()
+        jobs = [first_job]
+        try:
+            await asyncio.sleep(
+                max(0.0, settings.minutes_composer_debounce_seconds)
+            )
+            while True:
+                try:
+                    jobs.append(minutes_queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+            latest_epoch, _ = jobs[-1]
+            await _compose_minutes_once(latest_epoch)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            for _ in jobs:
+                minutes_queue.task_done()
+
+
+async def _schedule_minutes_composition(reason: str) -> None:
+    """Queue one eventual update; concurrent final turns are coalesced."""
+    global minutes_worker_task
+    if not settings.minutes_composer_enabled:
+        return
+    if minutes_worker_task is None or minutes_worker_task.done():
+        minutes_worker_task = asyncio.create_task(_minutes_worker())
+    await minutes_queue.put((minutes_epoch, reason))
+    await hub.broadcast(
+        {
+            "type": "minutes.status",
+            "status": "queued",
+            "reason": reason,
+            "timestamp": time.time(),
+        }
+    )
 
 
 async def _reset_meeting_transcripts(reason: str) -> float:
+    global meeting_started_at, minutes_epoch
     async with meeting_reset_lock:
         reset_at = time.time()
+        minutes_epoch += 1
+        meeting_started_at = reset_at
         repository.clear(settings.meeting_room)
+        repository.clear_minutes(settings.meeting_room)
         await hub.broadcast(
             {
                 "type": "transcript.cleared",
+                "reason": reason,
+                "reset_at": reset_at,
+            }
+        )
+        await hub.broadcast(
+            {
+                "type": "minutes.cleared",
                 "reason": reason,
                 "reset_at": reset_at,
             }
@@ -151,6 +295,10 @@ class InternalEventRequest(BaseModel):
     payload: dict[str, Any]
 
 
+class UpdateMinutesRequest(BaseModel):
+    document: dict[str, Any]
+
+
 async def _prepare_adaptive_dictionary(
     meeting_title: str | None,
 ) -> dict[str, Any]:
@@ -213,6 +361,12 @@ async def health() -> dict[str, Any]:
         "service": "meeting-backend",
         "meeting_room": settings.meeting_room,
         "livekit_configured": settings.livekit_configured,
+        "minutes_composer": {
+            "enabled": settings.minutes_composer_enabled,
+            "model": settings.minutes_composer_model,
+            "mode": settings.minutes_composer_mode,
+            "think": False,
+        },
     }
 
 
@@ -272,6 +426,44 @@ async def list_transcripts() -> dict[str, Any]:
         "meeting_id": settings.meeting_room,
         "items": repository.list_for_meeting(settings.meeting_room),
     }
+
+
+@app.get("/api/minutes")
+async def get_minutes() -> dict[str, Any]:
+    return _minutes_response()
+
+
+@app.post("/api/minutes/refresh")
+async def refresh_minutes() -> dict[str, Any]:
+    if not repository.list_for_meeting(settings.meeting_room):
+        return {"status": "skipped", "reason": "no_transcript"}
+    await _schedule_minutes_composition("manual_refresh")
+    return {"status": "queued"}
+
+
+@app.put("/api/minutes")
+async def update_minutes(request: UpdateMinutesRequest) -> dict[str, Any]:
+    """Persist a human correction without asking Qwen to rewrite it again."""
+    segments = repository.list_for_meeting(settings.meeting_room)
+    document = normalize_minutes_document(
+        request.document,
+        meeting_title=current_meeting_title,
+        valid_source_ids=[
+            str(item.get("segment_id"))
+            for item in segments
+            if item.get("segment_id")
+        ],
+        started_at=meeting_started_at,
+    )
+    stored = repository.upsert_minutes(
+        settings.meeting_room,
+        document=document,
+        status="manual",
+        metadata={"editor": "manual", "think": False},
+        updated_at=time.time(),
+    )
+    await hub.broadcast({"type": "minutes.updated", **stored})
+    return stored
 
 
 @app.delete("/api/transcripts")
@@ -337,6 +529,7 @@ async def publish_internal_event(
             if int(payload.get("revision", 1)) > 1:
                 repository.upsert(payload)
                 await hub.broadcast(payload)
+                await _schedule_minutes_composition("transcript_revision")
                 return {"status": "updated"}
             duplicate = _find_cross_mic_duplicate(payload)
             if duplicate:
@@ -364,6 +557,7 @@ async def publish_internal_event(
                 )
             repository.upsert(payload)
             await hub.broadcast(payload)
+            await _schedule_minutes_composition("final_turn")
             return {"status": "accepted"}
 
     await hub.broadcast(payload)
@@ -390,6 +584,19 @@ async def meeting_websocket(websocket: WebSocket) -> None:
         hub.disconnect(websocket)
     except Exception:
         hub.disconnect(websocket)
+
+
+@app.on_event("shutdown")
+async def stop_minutes_worker() -> None:
+    global minutes_worker_task
+    if minutes_worker_task is None:
+        return
+    minutes_worker_task.cancel()
+    try:
+        await minutes_worker_task
+    except asyncio.CancelledError:
+        pass
+    minutes_worker_task = None
 
 
 # Local demo convenience. On the home server Nginx can still serve this folder

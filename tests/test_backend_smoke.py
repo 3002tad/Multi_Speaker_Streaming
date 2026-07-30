@@ -26,6 +26,7 @@ class BackendSmokeTests(unittest.TestCase):
             main.settings,
             livekit_api_key="demo-key",
             livekit_api_secret="demo-secret",
+            minutes_composer_enabled=False,
         )
         temporary_directory = TemporaryDirectory()
         self.addCleanup(temporary_directory.cleanup)
@@ -102,7 +103,9 @@ class BackendSmokeTests(unittest.TestCase):
 
     def test_internal_transcript_event_requires_key(self) -> None:
         test_settings = replace(
-            main.settings, internal_api_key="internal-test-key"
+            main.settings,
+            internal_api_key="internal-test-key",
+            minutes_composer_enabled=False,
         )
         temporary_directory = TemporaryDirectory()
         self.addCleanup(temporary_directory.cleanup)
@@ -171,7 +174,9 @@ class BackendSmokeTests(unittest.TestCase):
 
     def test_cross_mic_duplicate_keeps_stronger_signal(self) -> None:
         test_settings = replace(
-            main.settings, internal_api_key="internal-test-key"
+            main.settings,
+            internal_api_key="internal-test-key",
+            minutes_composer_enabled=False,
         )
         temporary_directory = TemporaryDirectory()
         self.addCleanup(temporary_directory.cleanup)
@@ -227,7 +232,9 @@ class BackendSmokeTests(unittest.TestCase):
 
     def test_global_turn_keeps_distinct_overlapping_speech(self) -> None:
         test_settings = replace(
-            main.settings, internal_api_key="internal-test-key"
+            main.settings,
+            internal_api_key="internal-test-key",
+            minutes_composer_enabled=False,
         )
         temporary_directory = TemporaryDirectory()
         self.addCleanup(temporary_directory.cleanup)
@@ -276,6 +283,62 @@ class BackendSmokeTests(unittest.TestCase):
                 len(client.get("/api/transcripts").json()["items"]),
                 2,
             )
+
+    def test_minutes_are_versioned_and_require_transcript_sources(self) -> None:
+        test_settings = replace(
+            main.settings,
+            internal_api_key="internal-test-key",
+            minutes_composer_enabled=False,
+        )
+        temporary_directory = TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        test_repository = TranscriptRepository(
+            Path(temporary_directory.name) / "meeting.db"
+        )
+        headers = {"X-Internal-Api-Key": "internal-test-key"}
+        with (
+            patch("backend.api.main.settings", test_settings),
+            patch("backend.api.main.repository", test_repository),
+            TestClient(app) as client,
+        ):
+            accepted = client.post(
+                "/api/internal/events",
+                headers=headers,
+                json={
+                    "payload": {
+                        "type": "transcript.final",
+                        "segment_id": "seg-minute",
+                        "speaker": "Chủ trì",
+                        "text": "Thống nhất hoàn thành bản demo trước thứ Sáu.",
+                    }
+                },
+            )
+            self.assertEqual(accepted.status_code, 200)
+            saved = client.put(
+                "/api/minutes",
+                json={
+                    "document": {
+                        "meeting": {"title": "Không được tự đổi"},
+                        "summary": [
+                            {
+                                "content": "Hoàn thành bản demo trước thứ Sáu.",
+                                "source_segment_ids": ["seg-minute"],
+                            },
+                            {
+                                "content": "Không có nguồn nên phải bỏ.",
+                                "source_segment_ids": ["seg-fake"],
+                            },
+                        ],
+                        "topics": [],
+                    }
+                },
+            )
+            self.assertEqual(saved.status_code, 200)
+            self.assertEqual(saved.json()["version"], 1)
+            self.assertEqual(len(saved.json()["document"]["summary"]), 1)
+            fetched = client.get("/api/minutes")
+            self.assertEqual(fetched.status_code, 200)
+            self.assertEqual(fetched.json()["version"], 1)
 
 
 if __name__ == "__main__":

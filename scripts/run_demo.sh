@@ -44,16 +44,35 @@ if [[ ! -f "$PYTHON_CACHE/transformers/__init__.py" ]] \
 fi
 export PYTHONPATH="$PYTHON_CACHE${PYTHONPATH:+:$PYTHONPATH}"
 
-echo "Warm-up mô hình refinement để loại bỏ độ trễ cold-start..."
-OLLAMA_MODEL="$("$PYTHON_BIN" -c \
-  "from backend.config import settings; print(settings.sailor_model if settings.refinement_backend == 'sailor_candidate' else settings.ollama_model)")"
-if ! curl --silent --fail --max-time 120 \
-  http://127.0.0.1:11434/api/chat \
-  -H "Content-Type: application/json" \
-  -d "{\"model\":\"$OLLAMA_MODEL\",\"messages\":[{\"role\":\"system\",\"content\":\"Sửa chính tả và dấu câu tiếng Việt cho transcript cuộc họp. Không tóm tắt, không thêm ý. Chỉ trả về văn bản đã sửa.\"},{\"role\":\"user\",\"content\":\"Văn bản gốc: hệ thống đang kiểm tra biên bản cuộc họp và độ trễ xử lý trong quá trình nhiều người cùng phát biểu tại phòng họp\"}],\"stream\":false,\"keep_alive\":\"30m\",\"options\":{\"temperature\":0,\"num_predict\":64,\"num_thread\":2}}" \
-  >/dev/null; then
-  echo "Ollama/refinement model không sẵn sàng; dừng để tránh biên bản không refinement."
-  exit 1
+MINUTES_COMPOSER_ENABLED="$("$PYTHON_BIN" -c \
+  "from backend.config import settings; print(str(settings.minutes_composer_enabled).lower())")"
+MINUTES_COMPOSER_MODE="$("$PYTHON_BIN" -c \
+  "from backend.config import settings; print(settings.minutes_composer_mode)")"
+if [[ "$MINUTES_COMPOSER_ENABLED" == "true" && "$MINUTES_COMPOSER_MODE" == "llm" ]]; then
+  echo "Warm-up Qwen Minutes Composer (non-thinking) để loại bỏ độ trễ cold-start..."
+  MINUTES_MODEL="$("$PYTHON_BIN" -c \
+    "from backend.config import settings; print(settings.minutes_composer_model)")"
+  MINUTES_THREADS="$("$PYTHON_BIN" -c \
+    "from backend.config import settings; print(settings.minutes_composer_num_threads)")"
+  MINUTES_KEEP_ALIVE="$("$PYTHON_BIN" -c \
+    "from backend.config import settings; print(settings.minutes_composer_keep_alive)")"
+  if [[ "$MINUTES_KEEP_ALIVE" == "-1" ]]; then
+    MINUTES_KEEP_ALIVE_JSON="-1"
+  else
+    MINUTES_KEEP_ALIVE_JSON="\"$MINUTES_KEEP_ALIVE\""
+  fi
+  OLLAMA_URL="$("$PYTHON_BIN" -c \
+    "from backend.config import settings; print(settings.ollama_url)")"
+  if ! curl --silent --fail --max-time 120 \
+    "$OLLAMA_URL/api/chat" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\":\"$MINUTES_MODEL\",\"messages\":[{\"role\":\"system\",\"content\":\"Trả về JSON biên bản tiếng Việt, không suy luận ẩn.\"},{\"role\":\"user\",\"content\":\"{\\\"summary\\\":[],\\\"topics\\\":[]}\"}],\"stream\":false,\"think\":false,\"format\":\"json\",\"keep_alive\":$MINUTES_KEEP_ALIVE_JSON,\"options\":{\"temperature\":0.1,\"num_predict\":64,\"num_thread\":$MINUTES_THREADS}}" \
+    >/dev/null; then
+    echo "Ollama Minutes Composer không sẵn sàng; dừng để tránh biên bản thiếu cập nhật."
+    exit 1
+  fi
+elif [[ "$MINUTES_COMPOSER_ENABLED" == "true" ]]; then
+  echo "Minutes mode '$MINUTES_COMPOSER_MODE': dùng transcript timeline, bỏ qua warm-up Qwen."
 fi
 
 pids=()
