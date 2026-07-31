@@ -12,8 +12,9 @@ biên bản cuộc họp. Video không nằm trong phạm vi prototype hiện t�
 - Speaker ID dùng WavLM/Qdrant; enrollment là tùy chọn.
 - ASR chính dùng Zipformer Streaming 30M.
 - Phonetic recovery và adaptive dictionary hỗ trợ các thuật ngữ chuyên môn.
-- Transcript realtime được giữ làm bằng chứng; Qwen2.5:3B xử lý biên bản ở
-  bước hậu kỳ theo timeline, không chặn đường ASR.
+- Transcript realtime được giữ làm bằng chứng. Minutes Composer chạy hậu kỳ
+  theo timeline; có thể dùng Qwen2.5:3B ở mode `llm`, còn mode `timeline` là
+  đường an toàn không để model nhỏ tự suy diễn nội dung.
 - DPDFNet được tích hợp như nhánh A/B tùy chọn. Benchmark hiện tại chưa cho
   thấy WER tốt hơn khi bật DPDFNet, vì vậy mặc định đang tắt.
 
@@ -109,6 +110,7 @@ MEETING_ROOM=paperless-demo
 MEETING_CODE=DEMO-001
 
 MINUTES_COMPOSER_ENABLED=true
+# timeline = biên bản theo transcript; llm = tổng hợp bằng Qwen sau final turn
 MINUTES_COMPOSER_MODE=timeline
 MINUTES_COMPOSER_MODEL=qwen2.5:3b
 MINUTES_COMPOSER_NUM_THREADS=12
@@ -124,7 +126,7 @@ commit. `.env` đã được loại khỏi Git.
 
 ## Chạy demo
 
-Đảm bảo Ollama đã có model biên bản nếu bật `MINUTES_COMPOSER_MODE=llm`:
+Đảm bảo Ollama đã có model nếu bật `MINUTES_COMPOSER_MODE=llm`:
 
 ```bash
 ollama pull qwen2.5:3b
