@@ -102,6 +102,54 @@ def word_error_rate(reference: str, hypothesis: str) -> float:
     ) / len(reference_words)
 
 
+def word_error_breakdown(reference: str, hypothesis: str) -> dict[str, int]:
+    """Return substitution/deletion/insertion counts for ASR diagnosis."""
+    reference_words = normalize_transcript(reference)
+    hypothesis_words = normalize_transcript(hypothesis)
+    # Each cell stores (cost, substitutions, deletions, insertions).  Keeping
+    # the operation counts makes ties deterministic and useful for decoder A/B.
+    rows = len(reference_words)
+    columns = len(hypothesis_words)
+    table: list[list[tuple[int, int, int, int]]] = [
+        [(0, 0, 0, column) for column in range(columns + 1)]
+    ]
+    for row in range(1, rows + 1):
+        table.append(
+            [(row, 0, row, 0)]
+            + [(0, 0, 0, 0) for _ in range(columns)]
+        )
+    for row in range(1, rows + 1):
+        for column in range(1, columns + 1):
+            if reference_words[row - 1] == hypothesis_words[column - 1]:
+                diagonal = table[row - 1][column - 1]
+                candidates = [diagonal]
+            else:
+                previous = table[row - 1][column - 1]
+                candidates = [
+                    (
+                        previous[0] + 1,
+                        previous[1] + 1,
+                        previous[2],
+                        previous[3],
+                    ),
+                ]
+            deletion = table[row - 1][column]
+            candidates.append(
+                (deletion[0] + 1, deletion[1], deletion[2] + 1, deletion[3])
+            )
+            insertion = table[row][column - 1]
+            candidates.append(
+                (insertion[0] + 1, insertion[1], insertion[2], insertion[3] + 1)
+            )
+            table[row][column] = min(candidates)
+    result = table[rows][columns]
+    return {
+        "substitutions": result[1],
+        "deletions": result[2],
+        "insertions": result[3],
+    }
+
+
 def character_error_rate(reference: str, hypothesis: str) -> float:
     reference_chars = list(" ".join(normalize_transcript(reference)))
     hypothesis_chars = list(" ".join(normalize_transcript(hypothesis)))

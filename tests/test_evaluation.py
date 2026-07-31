@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from backend.evaluation import (
     character_error_rate,
     load_transcript_truth,
+    word_error_breakdown,
     word_error_rate,
 )
 
@@ -44,6 +45,16 @@ class TranscriptTruthTests(unittest.TestCase):
             row = load_transcript_truth(path)[0]
         self.assertEqual(row.start_seconds, 1.5)
         self.assertEqual(row.end_seconds, 8.0)
+
+    def test_word_error_breakdown_counts_operations(self) -> None:
+        self.assertEqual(
+            word_error_breakdown("a b c", "a x"),
+            {"substitutions": 1, "deletions": 1, "insertions": 0},
+        )
+        self.assertEqual(
+            word_error_breakdown("a", "a b"),
+            {"substitutions": 0, "deletions": 0, "insertions": 1},
+        )
 
 
 if __name__ == "__main__":

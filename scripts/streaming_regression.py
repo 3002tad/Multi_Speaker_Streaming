@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,29 @@ from backend.evaluation import (
     load_transcript_truth,
     word_error_rate,
 )
+
+
+def _with_probe_inter_turn_silence(
+    truth: list[Any],
+    inter_turn_silence: float,
+) -> list[Any]:
+    """Shift sequential truth ranges to match the synthetic LiveKit probe."""
+    if inter_turn_silence <= 0.0:
+        return truth
+    shifted = []
+    for index, row in enumerate(truth):
+        if row.start_seconds is None or row.end_seconds is None:
+            shifted.append(row)
+            continue
+        offset = index * inter_turn_silence
+        shifted.append(
+            replace(
+                row,
+                start_seconds=row.start_seconds + offset,
+                end_seconds=row.end_seconds + offset,
+            )
+        )
+    return shifted
 
 
 def _overlap_score(
@@ -259,6 +283,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "Streaming regression cần start_seconds/end_seconds trong truth.csv"
         )
 
+    truth = _with_probe_inter_turn_silence(
+        truth,
+        args.probe_inter_turn_silence,
+    )
+
     demo_process: subprocess.Popen | None = None
     log_path = PROJECT_ROOT / "output" / "streaming-regression-demo.log"
     if args.start_demo:
@@ -280,6 +309,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     sys.executable,
                     "-B",
                     "tests/livekit_dual_mic_probe.py",
+                    "--inter-turn-silence",
+                    str(args.probe_inter_turn_silence),
                 ],
                 cwd=PROJECT_ROOT,
                 capture_output=True,
@@ -421,6 +452,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "status": "passed" if passed else "failed",
         "backend_url": base_url,
+        "probe_inter_turn_silence": args.probe_inter_turn_silence,
         "probe_exit_code": probe.returncode,
         "checks": checks,
         "matches": matches,
@@ -440,11 +472,19 @@ def main() -> None:
     parser.add_argument("--start-timeout", type=float, default=300)
     parser.add_argument("--probe-timeout", type=float, default=180)
     parser.add_argument("--final-timeout", type=float, default=75)
+    parser.add_argument(
+        "--probe-inter-turn-silence",
+        type=float,
+        default=1.25,
+        help="Silence inserted between sequential fixture turns (seconds).",
+    )
     parser.add_argument("--min-overlap", type=float, default=0.35)
     parser.add_argument("--max-wer", type=float, default=0.65)
     parser.add_argument("--max-cer", type=float, default=0.60)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if args.probe_inter_turn_silence < 0.0:
+        parser.error("--probe-inter-turn-silence must not be negative")
 
     try:
         report = run(args)

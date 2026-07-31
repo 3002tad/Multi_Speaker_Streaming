@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import csv
 from pathlib import Path
 
 import httpx
@@ -16,6 +18,8 @@ from livekit import rtc
 SAMPLE_RATE = 16_000
 FRAME_SAMPLES = 320
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+TURN_SECONDS = 15.0
+INTER_TURN_SILENCE_SECONDS = 1.25
 
 
 def load_audio(filename: str) -> np.ndarray:
@@ -35,6 +39,77 @@ def load_audio(filename: str) -> np.ndarray:
             .numpy()
         )
     return audio
+
+
+def load_truth_segment(voice: str) -> np.ndarray:
+    truth_path = PROJECT_ROOT / "audio" / "truth.csv"
+    with truth_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    for row in rows:
+        if row.get("voice") != voice:
+            continue
+        start_seconds = float(row.get("start_seconds") or 0.0)
+        end_seconds = float(row.get("end_seconds") or start_seconds)
+        start_sample = int(round(start_seconds * SAMPLE_RATE))
+        end_sample = int(round(end_seconds * SAMPLE_RATE))
+        return load_audio(f"{voice}.wav")[start_sample:end_sample]
+    raise ValueError(f"Không tìm thấy voice={voice!r} trong audio/truth.csv")
+
+
+def build_sequential_cross_mic_audio(
+    first_speaker: np.ndarray,
+    second_speaker: np.ndarray,
+    *,
+    cross_mic_gain: float,
+    turn_seconds: float = TURN_SECONDS,
+    inter_turn_silence_seconds: float = INTER_TURN_SILENCE_SECONDS,
+    trailing_silence_seconds: float = 2.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build the two-mic scenario described by ``audio/truth.csv``.
+
+    The ground truth contains two *sequential* 15-second turns.  Publishing
+    those recordings concurrently used to create an artificial overlap, while
+    the regression runner compared it against the sequential timestamps.  In
+    a physical room each microphone receives both speakers, but one is the
+    stronger source for a given turn.  This helper models that condition.
+    """
+    turn_samples = int(round(turn_seconds * SAMPLE_RATE))
+    if len(first_speaker) > turn_samples or len(second_speaker) > turn_samples:
+        raise ValueError(
+            "Audio fixture dài hơn khoảng turn đã khai báo; "
+            "hãy cập nhật TURN_SECONDS và truth.csv cùng lúc."
+        )
+
+    first = np.pad(
+        np.asarray(first_speaker, dtype=np.float32),
+        (0, turn_samples - len(first_speaker)),
+    )
+    second = np.pad(
+        np.asarray(second_speaker, dtype=np.float32),
+        (0, turn_samples - len(second_speaker)),
+    )
+    inter_turn_silence_samples = int(
+        round(inter_turn_silence_seconds * SAMPLE_RATE)
+    )
+    second_turn_start = turn_samples + inter_turn_silence_samples
+    total_samples = second_turn_start + turn_samples + int(
+        round(trailing_silence_seconds * SAMPLE_RATE)
+    )
+    mic_a = np.zeros(total_samples, dtype=np.float32)
+    mic_b = np.zeros(total_samples, dtype=np.float32)
+
+    # Turn 1: speaker A is closest to mic A. Turn 2 is the reverse.
+    mic_a[:turn_samples] = first
+    mic_b[:turn_samples] = first * cross_mic_gain
+    mic_a[second_turn_start : second_turn_start + turn_samples] = (
+        second * cross_mic_gain
+    )
+    mic_b[second_turn_start : second_turn_start + turn_samples] = second
+
+    return (
+        np.clip(mic_a, -1.0, 1.0),
+        np.clip(mic_b, -1.0, 1.0),
+    )
 
 
 async def get_credentials(name: str) -> dict:
@@ -90,12 +165,18 @@ async def publish_source(
         await room.disconnect()
 
 
-async def main() -> None:
-    mic_a = load_audio("thayDung_noi.wav")
-    mic_b = load_audio("thayPhuoc_noi.wav")
-    sample_count = max(len(mic_a), len(mic_b)) + SAMPLE_RATE * 2
-    mic_a = np.pad(mic_a, (0, sample_count - len(mic_a)))
-    mic_b = np.pad(mic_b, (0, sample_count - len(mic_b)))
+async def main(
+    *,
+    cross_mic_gain: float,
+    inter_turn_silence_seconds: float,
+) -> None:
+    mic_a, mic_b = build_sequential_cross_mic_audio(
+        load_truth_segment("thayDung_noi"),
+        load_truth_segment("thayPhuoc_noi"),
+        cross_mic_gain=cross_mic_gain,
+        inter_turn_silence_seconds=inter_turn_silence_seconds,
+    )
+    sample_count = len(mic_a)
 
     ready = asyncio.Event()
     tasks = [
@@ -105,8 +186,36 @@ async def main() -> None:
     await asyncio.sleep(2)
     ready.set()
     await asyncio.gather(*tasks)
-    print("DUAL_MIC_PROBE_OK", round(sample_count / SAMPLE_RATE, 2))
+    print(
+        "DUAL_MIC_PROBE_OK",
+        round(sample_count / SAMPLE_RATE, 2),
+        f"cross_mic_gain={cross_mic_gain:.2f}",
+        f"inter_turn_silence={inter_turn_silence_seconds:.2f}",
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--cross-mic-gain",
+        type=float,
+        default=0.18,
+        help="Tỷ lệ tiếng lọt từ người nói xa tới mic còn lại (0..1).",
+    )
+    parser.add_argument(
+        "--inter-turn-silence",
+        type=float,
+        default=INTER_TURN_SILENCE_SECONDS,
+        help="Silence between the fixture turns in seconds.",
+    )
+    args = parser.parse_args()
+    if not 0.0 <= args.cross_mic_gain <= 1.0:
+        parser.error("--cross-mic-gain phải nằm trong khoảng 0..1")
+    if args.inter_turn_silence < 0.0:
+        parser.error("--inter-turn-silence must not be negative")
+    asyncio.run(
+        main(
+            cross_mic_gain=args.cross_mic_gain,
+            inter_turn_silence_seconds=args.inter_turn_silence,
+        )
+    )

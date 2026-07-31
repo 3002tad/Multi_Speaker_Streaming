@@ -118,22 +118,28 @@ def create_asr_recognizer(
             "hotwords_file": str(artifacts.hotwords_path),
             "hotwords_score": settings.zipformer_hotwords_score,
         }
+    chunk = settings.zipformer_chunk_size
     return sherpa_onnx.OnlineRecognizer.from_transducer(
         tokens=f'{asr_dir}/config.json',
-        encoder=f'{asr_dir}/encoder-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
-        decoder=f'{asr_dir}/decoder-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
-        joiner=f'{asr_dir}/joiner-epoch-31-avg-11-chunk-16-left-128.fp16.onnx',
+        encoder=f'{asr_dir}/encoder-epoch-31-avg-11-chunk-{chunk}-left-128.fp16.onnx',
+        decoder=f'{asr_dir}/decoder-epoch-31-avg-11-chunk-{chunk}-left-128.fp16.onnx',
+        joiner=f'{asr_dir}/joiner-epoch-31-avg-11-chunk-{chunk}-left-128.fp16.onnx',
         num_threads=1,
         sample_rate=16000,
         feature_dim=80,
         decoding_method='modified_beam_search',
-        max_active_paths=4,
+        max_active_paths=settings.zipformer_max_active_paths,
+        blank_penalty=settings.zipformer_blank_penalty,
         provider='cpu',
         **kwargs,
     )
 
 
 recognizer = create_asr_recognizer(hotword_artifacts)
+# sherpa streams are cheap, but the ONNX recognizer/model object is shared by
+# all microphone connections. Serialize calls into it so decoding every mic
+# continuously cannot race or corrupt another stream's state.
+zipformer_inference_lock = threading.Lock()
 
 # ============================================================
 # 2. WavLM – Speaker Embedding
@@ -152,11 +158,11 @@ wavlm_model.eval()
 # ============================================================
 print("3. Đang nạp VAD (Silero VAD)...")
 vad_model = silero.VAD.load(
-    min_speech_duration=0.3,        # Bắt từ ngắn/ấp úng (0.3s)
-    min_silence_duration=4.0,       # Giữ khoảng nghỉ nội bộ; soft boundary 15s vẫn chốt lượt dài
-    prefix_padding_duration=0.5,    
-    activation_threshold=0.55,      # Ngưỡng kích hoạt 0.55 chống nhận diện nhầm tiếng thở/nhiễu mic
-    deactivation_threshold=0.30,    # Ngưỡng ngắt mượt cho cuộc họp
+    min_speech_duration=settings.vad_min_speech_seconds,
+    min_silence_duration=settings.vad_min_silence_seconds,
+    prefix_padding_duration=settings.vad_prefix_padding_seconds,
+    activation_threshold=settings.vad_activation_threshold,
+    deactivation_threshold=settings.vad_deactivation_threshold,
 )
 
 # ============================================================
@@ -465,6 +471,22 @@ llm_client = AsyncOpenAI(
     timeout=settings.llm_timeout_seconds,
     max_retries=0,
 )
+
+
+def audio_frame_to_float(frame: rtc.AudioFrame) -> np.ndarray:
+    """Convert a LiveKit frame to mono float32 without assuming its backing type."""
+    raw = frame.data
+    if isinstance(raw, np.ndarray):
+        values = np.asarray(raw, dtype=np.int16).reshape(-1)
+    else:
+        values = np.frombuffer(raw, dtype=np.int16)
+    return values.astype(np.float32) / 32768.0
+
+
+def audio_chunk_sample_count(chunks: list[np.ndarray]) -> int:
+    return sum(int(chunk.size) for chunk in chunks)
+
+
 LLM_MIN_WORDS = 5  # Câu quá ngắn thì bỏ qua LLM, tránh hallucination
 g2p_phonemizer = None
 if settings.phonetic_recovery_enabled:
@@ -1267,9 +1289,13 @@ async def websocket_endpoint(
     vad_stream  = vad_model.stream()
     asr_lock = asyncio.Lock()
 
-    # rtc.AudioStream currently yields ~100 ms frames. Keep about 500 ms
-    # pre-roll; the old value 40 duplicated roughly four seconds of audio.
-    PRE_BUFFER_CHUNKS = 5
+    # AudioStream is pinned to 20 ms in agent.py. Keep 800 ms by sample-time,
+    # not by an assumed LiveKit packet count. Silero's START event is the
+    # authoritative fallback and carries its own prefix-padded speech buffer.
+    PRE_BUFFER_CHUNKS = max(
+        1,
+        int(round(0.8 * 1000 / settings.audio_frame_size_ms)),
+    )
     pre_speech_buf = collections.deque(maxlen=PRE_BUFFER_CHUNKS)
 
     speech_audio_chunks: list[np.ndarray] = []
@@ -1279,6 +1305,12 @@ async def websocket_endpoint(
     speech_start_time = 0.0
     current_turn_id = ""
     last_audio_timestamp = time.monotonic()
+    audio_wall_time_offset: float | None = None
+
+    def audio_timestamp_to_wall(timestamp: float) -> float:
+        if audio_wall_time_offset is None:
+            return time.time()
+        return min(time.time(), timestamp + audio_wall_time_offset)
     
     current_speaker = fallback_speaker
     audio_queue = asyncio.Queue()
@@ -1330,9 +1362,10 @@ async def websocket_endpoint(
             return
         tail = asr_enhancer.flush()
         if tail.size:
-            asr_stream.accept_waveform(16000, tail)
-            while asr_recognizer.is_ready(asr_stream):
-                asr_recognizer.decode_stream(asr_stream)
+            with zipformer_inference_lock:
+                asr_stream.accept_waveform(16000, tail)
+                while asr_recognizer.is_ready(asr_stream):
+                    asr_recognizer.decode_stream(asr_stream)
 
     def finalize_asr_stream_text() -> str:
         """Flush pending transducer tokens before reading a final result."""
@@ -1341,10 +1374,12 @@ async def websocket_endpoint(
             dtype=np.float32,
         )
         if padding.size:
-            asr_stream.accept_waveform(16000, padding)
-        while asr_recognizer.is_ready(asr_stream):
-            asr_recognizer.decode_stream(asr_stream)
-        result = asr_recognizer.get_result(asr_stream)
+            with zipformer_inference_lock:
+                asr_stream.accept_waveform(16000, padding)
+        with zipformer_inference_lock:
+            while asr_recognizer.is_ready(asr_stream):
+                asr_recognizer.decode_stream(asr_stream)
+            result = asr_recognizer.get_result(asr_stream)
         return (
             result.text.strip()
             if hasattr(result, "text")
@@ -1371,7 +1406,8 @@ async def websocket_endpoint(
                     try:
                         async with asr_lock:
                             final_text = finalize_asr_stream_text()
-                            asr_recognizer.reset(asr_stream)
+                            with zipformer_inference_lock:
+                                asr_recognizer.reset(asr_stream)
                         if not future.done():
                             future.set_result(final_text)
                     except Exception as exc:
@@ -1404,10 +1440,11 @@ async def websocket_endpoint(
                 audio_np = np.concatenate(chunks)
 
                 def decode_step():
-                    asr_stream.accept_waveform(16000, audio_np)
-                    while asr_recognizer.is_ready(asr_stream):
-                        asr_recognizer.decode_stream(asr_stream)
-                    res = asr_recognizer.get_result(asr_stream)
+                    with zipformer_inference_lock:
+                        asr_stream.accept_waveform(16000, audio_np)
+                        while asr_recognizer.is_ready(asr_stream):
+                            asr_recognizer.decode_stream(asr_stream)
+                        res = asr_recognizer.get_result(asr_stream)
                     return res.text.strip() if hasattr(res, 'text') else str(res).strip()
 
                 try:
@@ -1628,7 +1665,9 @@ async def websocket_endpoint(
             async for evt in vad_stream:
                 if evt.type == VADEventType.START_OF_SPEECH:
                     is_speaking = True
-                    speech_start_time = time.time()
+                    speech_start_time = audio_timestamp_to_wall(
+                        last_audio_timestamp
+                    )
                     current_turn_id = room_timeline.speech_started(
                         identity, timestamp=last_audio_timestamp
                     )
@@ -1639,15 +1678,40 @@ async def websocket_endpoint(
                         f"({current_turn_id})..."
                     )
 
+                    # Silero already retains the exact prefix-padded speech
+                    # buffer that triggered START. Prefer it over a packet
+                    # count assumption; the latter can lose the onset of fast
+                    # utterances when LiveKit changes frame duration.
+                    event_chunks = [
+                        audio_frame_to_float(frame)
+                        for frame in (evt.frames or [])
+                    ]
+                    event_chunks = [
+                        chunk for chunk in event_chunks if chunk.size
+                    ]
                     async with asr_lock:
-                        asr_recognizer.reset(asr_stream)
+                        with zipformer_inference_lock:
+                            asr_recognizer.reset(asr_stream)
                         asr_preprocessor.reset()
                         if asr_enhancer is not None:
                             asr_enhancer.reset()
+                        buffered = (
+                            [
+                                (
+                                    chunk,
+                                    quality_tracker.measure(
+                                        chunk, speech_active=True
+                                    ),
+                                    last_audio_timestamp,
+                                )
+                                for chunk in event_chunks
+                            ]
+                            if event_chunks
+                            else list(pre_speech_buf)
+                        )
                         # Preserve the same prefix that is fed to ASR so
                         # duration, speaker embedding and transcript all
                         # describe the same complete utterance.
-                        buffered = list(pre_speech_buf)
                         speech_audio_chunks = [
                             item[0] for item in buffered
                         ]
@@ -1655,16 +1719,12 @@ async def websocket_endpoint(
                             item[1] for item in buffered
                         ]
                         # Pre-roll belongs to the snapshot/ASR, but not to
-                        # the 15-second live-turn counter.
+                        # the soft-split live-turn counter.
                         speech_sample_count = 0
                         for chunk, quality, timestamp in buffered:
-                            if room_timeline.should_route_asr(
-                                identity, timestamp=timestamp
-                            ):
-                                prepared = prepare_asr_audio(
-                                    chunk, quality
-                                )
-                                if prepared.size:
+                            prepared = prepare_asr_audio(chunk, quality)
+                            if prepared.size:
+                                with zipformer_inference_lock:
                                     asr_stream.accept_waveform(
                                         16000, prepared
                                     )
@@ -1672,13 +1732,50 @@ async def websocket_endpoint(
                 elif (
                     evt.type == VADEventType.INFERENCE_DONE
                     and is_speaking
-                    and speech_sample_count >= 15 * 16000
+                    and speech_sample_count
+                    >= settings.asr_soft_split_seconds * 16000
+                    and (
+                        evt.raw_accumulated_silence
+                        >= settings.asr_split_min_silence_seconds
+                        or speech_sample_count
+                        >= settings.asr_hard_split_seconds * 16000
+                    )
                 ):
-                    # Bound a continuous turn to roughly 15 seconds. The
-                    # queue marker finalizes everything before it, then
-                    # resets ASR before later frames are decoded.
-                    speech_end_time = time.time()
-                    audio_snapshot = list(speech_audio_chunks)
+                    # Prefer a short observed pause as the split point. A
+                    # longer hard limit prevents an unbroken stream from
+                    # growing forever, without resetting at 15 seconds in the
+                    # middle of a word.
+                    split_reason = (
+                        "pause"
+                        if evt.raw_accumulated_silence
+                        >= settings.asr_split_min_silence_seconds
+                        else "hard_limit"
+                    )
+                    print(
+                        f"   [ASR split] [{identity}] reason={split_reason} "
+                        f"speech={speech_sample_count / 16000:.2f}s"
+                    )
+                    speech_end_time = audio_timestamp_to_wall(
+                        last_audio_timestamp
+                    )
+                    # END_OF_SPEECH carries Silero's complete buffered speech
+                    # (including prefix padding). It is more reliable for
+                    # speaker ID than the wall-clock packet list, which may
+                    # contain several seconds of endpointing silence.
+                    end_event_chunks = [
+                        audio_frame_to_float(frame)
+                        for frame in (evt.frames or [])
+                    ]
+                    end_event_chunks = [
+                        chunk for chunk in end_event_chunks if chunk.size
+                    ]
+                    captured_chunks = list(speech_audio_chunks)
+                    audio_snapshot = (
+                        end_event_chunks
+                        if audio_chunk_sample_count(end_event_chunks)
+                        > audio_chunk_sample_count(captured_chunks)
+                        else captured_chunks
+                    )
                     quality_snapshot = list(
                         speech_quality_observations
                     )
@@ -1712,7 +1809,9 @@ async def websocket_endpoint(
 
                 elif evt.type == VADEventType.END_OF_SPEECH:
                     is_speaking = False
-                    speech_end_time = time.time()
+                    speech_end_time = audio_timestamp_to_wall(
+                        last_audio_timestamp
+                    )
                     ended_turn_id = room_timeline.speech_ended(
                         identity, timestamp=last_audio_timestamp
                     )
@@ -1724,7 +1823,20 @@ async def websocket_endpoint(
                         f"({ended_turn_id})."
                     )
 
-                    audio_snapshot = list(speech_audio_chunks)
+                    end_event_chunks = [
+                        audio_frame_to_float(frame)
+                        for frame in (evt.frames or [])
+                    ]
+                    end_event_chunks = [
+                        chunk for chunk in end_event_chunks if chunk.size
+                    ]
+                    captured_chunks = list(speech_audio_chunks)
+                    audio_snapshot = (
+                        end_event_chunks
+                        if audio_chunk_sample_count(end_event_chunks)
+                        > audio_chunk_sample_count(captured_chunks)
+                        else captured_chunks
+                    )
                     quality_snapshot = list(
                         speech_quality_observations
                     )
@@ -1777,6 +1889,8 @@ async def websocket_endpoint(
             packet = await websocket.receive_bytes()
             data, sequence, captured_at = unpack_audio_packet(packet)
             last_audio_timestamp = captured_at
+            if audio_wall_time_offset is None:
+                audio_wall_time_offset = time.time() - captured_at
             if not data or len(data) % 2:
                 print(
                     f"[audio] Bỏ frame PCM không hợp lệ từ {identity}: "
@@ -1824,11 +1938,16 @@ async def websocket_endpoint(
                 speech_quality_observations.append(frame_quality)
                 speech_sample_count += len(audio_np)
 
-                # Branch 2 (ASR): the room timeline suppresses weak leakage
-                # mics before Zipformer. Similar-quality near-field mics are
-                # both retained so genuine overlap is not discarded.
-                if room_timeline.should_route_asr(
-                    identity, timestamp=captured_at
+                # Branch 2 (ASR): decode every mic continuously by default.
+                # Selecting a winner independently per frame creates holes in
+                # a fast utterance when two microphones trade loudness. The
+                # room timeline still chooses/retracts the strongest final
+                # candidate; this switch only controls CPU-saving routing.
+                if (
+                    settings.asr_decode_all_mics
+                    or room_timeline.should_route_asr(
+                        identity, timestamp=captured_at
+                    )
                 ):
                     prepared = prepare_asr_audio(
                         audio_np, frame_quality

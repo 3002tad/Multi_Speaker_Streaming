@@ -665,6 +665,17 @@ class PhoneticLexicon:
                 observed_ipa: str | None = None
                 phonetic_attempted = False
                 for entry in candidates:
+                    # Fuzzy matching is allowed to absorb spelling/noise
+                    # inside a known alias, never an extra neighbouring word.
+                    # Without this guard, ``tiên lớp adolf sorus`` can score
+                    # close enough to ``lớp adolf sorus`` and erase the word
+                    # ``tiên`` before the correct window is considered.
+                    observed_word_count = end - i
+                    alias_word_count = len(
+                        re.findall(r"[\wÀ-ỹĐđ]+", entry.alias, flags=re.UNICODE)
+                    )
+                    if observed_word_count > alias_word_count:
+                        continue
                     key_score = _similarity(observed_key, entry.key)
                     ipa_score = 0.0
                     score = key_score

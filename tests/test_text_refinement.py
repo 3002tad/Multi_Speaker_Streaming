@@ -133,6 +133,17 @@ class PhoneticRecoveryTests(unittest.TestCase):
             )
         )
 
+    def test_fuzzy_alias_does_not_consume_preceding_word(self) -> None:
+        lexicon = PhoneticLexicon(
+            (("Hadoop Storage", ("adolf sorus",)),),
+            threshold=0.86,
+        )
+        recovered = lexicon.recover("cái lớp đầu tiên adolf sorus")
+        self.assertEqual(
+            recovered.text,
+            "cái lớp đầu tiên Hadoop Storage",
+        )
+
     def test_g2p_score_can_promote_a_near_phonetic_candidate(self) -> None:
         class StubG2P:
             def phonemize(self, text: str) -> str:

@@ -53,6 +53,15 @@ def _env_keep_alive(name: str, default: str) -> str | int:
     return -1 if value == "-1" else value
 
 
+def _env_choice_int(name: str, default: int, choices: tuple[int, ...]) -> int:
+    """Read an integer setting while keeping an invalid runtime safe."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value in choices else default
+
+
 @dataclass(frozen=True)
 class Settings:
     livekit_url: str = os.getenv(
@@ -71,6 +80,9 @@ class Settings:
     )
     ai_server_http_url: str = os.getenv(
         "AI_SERVER_HTTP_URL", "http://127.0.0.1:8001"
+    )
+    audio_frame_size_ms: int = _env_choice_int(
+        "AUDIO_FRAME_SIZE_MS", 20, (10, 20, 40, 50, 100)
     )
     enable_llm_refinement: bool = _env_bool(
         "ENABLE_LLM_REFINEMENT", False
@@ -181,9 +193,42 @@ class Settings:
     asr_final_padding_seconds: float = float(
         os.getenv("ASR_FINAL_PADDING_SECONDS", "0.66")
     )
-    asr_enhancer: str = os.getenv(
-        "ASR_ENHANCER", "dpdfnet_baseline"
-    ).strip().lower()
+    # Silero controls transcript boundaries. A four-second endpoint delay
+    # merged distinct speakers and made the timeline wait too long. Keep
+    # these tunable per room so recordings can be calibrated without code.
+    vad_min_speech_seconds: float = float(
+        os.getenv("VAD_MIN_SPEECH_SECONDS", "0.20")
+    )
+    vad_min_silence_seconds: float = float(
+        os.getenv("VAD_MIN_SILENCE_SECONDS", "0.90")
+    )
+    vad_prefix_padding_seconds: float = float(
+        os.getenv("VAD_PREFIX_PADDING_SECONDS", "0.50")
+    )
+    vad_activation_threshold: float = float(
+        os.getenv("VAD_ACTIVATION_THRESHOLD", "0.50")
+    )
+    vad_deactivation_threshold: float = float(
+        os.getenv("VAD_DEACTIVATION_THRESHOLD", "0.30")
+    )
+    # Decode every microphone continuously and choose the strongest final
+    # candidate. Frame-level switching can punch holes in fast speech.
+    asr_decode_all_mics: bool = _env_bool(
+        "ASR_DECODE_ALL_MICS", True
+    )
+    asr_soft_split_seconds: float = float(
+        os.getenv("ASR_SOFT_SPLIT_SECONDS", "15")
+    )
+    asr_hard_split_seconds: float = float(
+        os.getenv("ASR_HARD_SPLIT_SECONDS", "30")
+    )
+    asr_split_min_silence_seconds: float = float(
+        os.getenv("ASR_SPLIT_MIN_SILENCE_SECONDS", "0.30")
+    )
+    # Keep neural enhancement opt-in.  Current labelled clean/noisy samples
+    # show no WER gain from DPDFNet and a higher CPU cost; retain the adapter
+    # for future recordings where a measured A/B result justifies it.
+    asr_enhancer: str = os.getenv("ASR_ENHANCER", "none").strip().lower()
     asr_enhancer_model: Path = Path(
         os.getenv(
             "ASR_ENHANCER_MODEL",
@@ -195,6 +240,21 @@ class Settings:
             "ZIPFORMER_MODEL_DIR",
             str(RUNTIME_ROOT / "Zipformer-30M-RNNT-Streaming-6000h"),
         )
+    )
+    # Beam width for Zipformer's modified beam search.  Keep this small enough
+    # for one decoder per microphone; benchmark 4/8/12 with evaluate_asr.py
+    # before changing the demo default.
+    zipformer_max_active_paths: int = max(
+        1, int(os.getenv("ZIPFORMER_MAX_ACTIVE_PATHS", "4"))
+    )
+    # The model ships three streaming receptive-field variants.  Chunk 16 is
+    # the lowest-latency baseline; 32/64 retain more acoustic context and are
+    # useful for fast speech when the demo can tolerate extra look-ahead.
+    zipformer_chunk_size: int = _env_choice_int(
+        "ZIPFORMER_CHUNK_SIZE", 32, (16, 32, 64)
+    )
+    zipformer_blank_penalty: float = float(
+        os.getenv("ZIPFORMER_BLANK_PENALTY", "0.4")
     )
     # Adaptive glossary is shared by contextual Zipformer hotwords and the
     # final-turn phonetic gate. Dynamic entries are evidence-backed and expire.

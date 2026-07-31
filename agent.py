@@ -36,7 +36,12 @@ async def process_track(
     display_name = participant.name or identity
     segment_id: str | None = None
     utterance_segments: dict[str, str] = {}
-    audio_stream = rtc.AudioStream(track, sample_rate=16000, num_channels=1)
+    audio_stream = rtc.AudioStream(
+        track,
+        sample_rate=16000,
+        num_channels=1,
+        frame_size_ms=settings.audio_frame_size_ms,
+    )
     audio_sequence = 0
     query = urlencode({"display_name": display_name})
     uri = f"{settings.ai_server_ws_url}/ws/{identity}?{query}"

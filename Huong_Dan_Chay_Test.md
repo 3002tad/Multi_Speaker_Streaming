@@ -93,9 +93,10 @@ curl -fL \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/dpdfnet_baseline.onnx
 ```
 
-Mặc định pipeline bật profile dynamic thận trọng: audio sạch được giữ nguyên;
-khi SNR giảm, output DPDFNet được hòa trộn dần vào raw audio. Có thể tắt tức
-thì để A/B hoặc xử lý sự cố bằng `ASR_ENHANCER=none` rồi restart backend.
+DPDFNet hiện là stage A/B, mặc định tắt. Các bộ `truth.csv` và `truth_1.csv`
+hiện có không cho WER tốt hơn khi bật model, trong khi chi phí CPU tăng. Chỉ
+bật `ASR_ENHANCER=dpdfnet_baseline` khi benchmark của chính phòng họp chứng
+minh có lợi; audio gốc của mic luôn đi thẳng vào WavLM.
 
 ## 1.3 Adaptive dictionary và Zipformer hotword
 
@@ -396,7 +397,7 @@ ASR_HIGH_PASS_HZ=70
 ASR_TARGET_RMS=0.065
 ASR_FINAL_PADDING_SECONDS=0.66
 # none | dpdfnet_baseline
-ASR_ENHANCER=dpdfnet_baseline
+ASR_ENHANCER=none
 ASR_ENHANCER_MODEL=/home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx
 ASR_ENHANCER_THREADS=1
 # >= bypass: raw; <= full: DPDFNet mix tối đa; ở giữa: blend động.
@@ -409,6 +410,15 @@ ASR_ENHANCER_RELEASE=0.65
 TIMELINE_ASR_QUALITY_MARGIN=3.5
 TIMELINE_ASR_RMS_RATIO=0.48
 TIMELINE_FINAL_SETTLE_SECONDS=0.75
+# modified-beam width; đã A/B 4/8/12 trước khi tăng cho mọi mic.
+ZIPFORMER_MAX_ACTIVE_PATHS=4
+ZIPFORMER_CHUNK_SIZE=32
+ZIPFORMER_BLANK_PENALTY=0.4
+AUDIO_FRAME_SIZE_MS=20
+ASR_DECODE_ALL_MICS=true
+ASR_SOFT_SPLIT_SECONDS=15
+ASR_HARD_SPLIT_SECONDS=30
+ASR_SPLIT_MIN_SILENCE_SECONDS=0.30
 SPEAKER_MATCH_THRESHOLD=0.86
 SPEAKER_OPEN_SET_FLOOR=0.86
 SPEAKER_SINGLE_PROFILE_THRESHOLD=0.90
@@ -470,6 +480,35 @@ backend:
 
 ```bash
 venv_linux/bin/python -B scripts/evaluate_asr.py --mode both
+```
+
+Đo transcript final đúng như pipeline (Zipformer + phonetic gate, không LLM):
+
+```bash
+venv_linux/bin/python -B scripts/evaluate_asr.py \
+  --mode raw --enhancer none --postprocess phonetic
+```
+
+Benchmark decoder theo tốc độ nói và nhiễu (có trailing padding giống runtime):
+
+```bash
+venv_linux/bin/python -B scripts/evaluate_asr.py \
+  --mode raw --enhancer none --postprocess phonetic \
+  --chunk-size 32 --blank-penalty 0.4 --final-padding-seconds 0.66
+```
+
+`chunk-size=16/32/64` tương ứng đánh đổi độ trễ và ngữ cảnh âm học. Với demo CPU
+hiện tại, chunk 32 (~640 ms) và blank penalty 0.4 là cấu hình cân bằng đã đo trên
+`truth.csv` và `truth_1.csv`. Chunk 64 (~1,28 s) có thể dùng cho final-pass khi
+cần thêm độ chính xác. Evaluator cũng ghi riêng số lỗi xoá/chèn/thay (D/I/S),
+giúp phân biệt model bỏ từ với hậu xử lý.
+
+So decoder beam hoặc hotword chỉ bằng A/B trên truth. Ví dụ:
+
+```bash
+venv_linux/bin/python -B scripts/evaluate_asr.py \
+  --mode raw --enhancer none --max-active-paths 8 \
+  --hotwords "VNPT,HDFS,HBase"
 ```
 
 Benchmark A/B DPDFNet trên cùng tập chuẩn:
