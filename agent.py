@@ -117,6 +117,10 @@ async def process_track(
                             "raw_text": result.get(
                                 "raw_text", result.get("text", "")
                             ),
+                            "final_asr_text": result.get("final_asr_text"),
+                            "final_turn_redecode": result.get(
+                                "final_turn_redecode"
+                            ),
                             "phonetic_recovered_text": result.get(
                                 "phonetic_recovered_text"
                             ),
@@ -143,6 +147,9 @@ async def process_track(
                             ),
                             "global_turn_id": result.get(
                                 "global_turn_id"
+                            ),
+                            "discovered_topic": result.get(
+                                "discovered_topic"
                             ),
                             "refinement_pending": result.get(
                                 "refinement_pending", False

@@ -13,6 +13,7 @@ from backend.audio_pipeline import (
     DynamicEnhancementController,
     FinalCandidate,
     FrameQuality,
+    StreamingGuardedEnhancementFrontend,
     StreamingDpdfNetEnhancer,
     StreamingAsrPreprocessor,
     pack_audio_packet,
@@ -21,6 +22,7 @@ from backend.audio_pipeline import (
     summarize_quality,
     unpack_audio_packet,
 )
+from backend.final_turn import choose_redecode_transcript
 
 
 def quality(
@@ -53,6 +55,32 @@ class AudioPacketTests(unittest.TestCase):
         self.assertEqual(decoded, pcm)
         self.assertIsNone(sequence)
         self.assertEqual(timestamp, 99.0)
+
+
+class FinalTurnRedecodeTests(unittest.TestCase):
+    def test_accepts_compatible_replay_that_restores_a_word(self) -> None:
+        decision = choose_redecode_transcript(
+            "triển khai hệ thống dữ liệu",
+            "triển khai hệ thống dữ liệu realtime",
+        )
+        self.assertTrue(decision.selected_redecode)
+        self.assertEqual(decision.reason, "compatible_word_gain")
+
+    def test_rejects_a_different_or_excessively_long_replay(self) -> None:
+        decision = choose_redecode_transcript(
+            "triển khai hệ thống dữ liệu",
+            "chúng ta cần triển khai toàn bộ phương án khác hoàn toàn",
+        )
+        self.assertFalse(decision.selected_redecode)
+        self.assertIn(decision.reason, {"low_overlap", "too_long"})
+
+    def test_keeps_streaming_text_when_replay_drops_words(self) -> None:
+        decision = choose_redecode_transcript(
+            "hệ thống thu thập dữ liệu realtime",
+            "hệ thống dữ liệu",
+        )
+        self.assertFalse(decision.selected_redecode)
+        self.assertIn(decision.reason, {"low_overlap", "no_word_gain"})
 
 
 class AudioBranchTests(unittest.TestCase):
@@ -213,6 +241,207 @@ class AudioBranchTests(unittest.TestCase):
         self.assertEqual(len(noisy), len(source))
         self.assertTrue(np.allclose(noisy, 0.0))
         self.assertAlmostEqual(enhancer.telemetry().peak_mix, 1.0)
+
+    def test_dpdfnet_frontend_receives_raw_then_conditions_output(
+        self,
+    ) -> None:
+        class RecordingDenoiser:
+            sample_rate = 16_000
+
+            def __init__(self) -> None:
+                self.received: list[np.ndarray] = []
+
+            def run(self, samples, sample_rate):
+                self.assert_sample_rate(sample_rate)
+                frame = np.asarray(samples, dtype=np.float32).copy()
+                self.received.append(frame)
+                # Simulate a model that increases output level. The
+                # post-conditioner must keep it finite and unclipped.
+                return SimpleNamespace(samples=frame * 4.0)
+
+            def flush(self):
+                return SimpleNamespace(
+                    samples=np.empty(0, dtype=np.float32)
+                )
+
+            def reset(self) -> None:
+                self.received.clear()
+
+            @staticmethod
+            def assert_sample_rate(sample_rate) -> None:
+                if sample_rate != 16_000:
+                    raise AssertionError("unexpected sample rate")
+
+        denoiser = RecordingDenoiser()
+        frontend = StreamingGuardedEnhancementFrontend(
+            model_path="unused.onnx",
+            denoiser=denoiser,
+            alignment_delay_samples=0,
+            preservation_minimum_energy_ratio=0.1,
+            preservation_maximum_energy_ratio=5.0,
+            preservation_minimum_speech_band_ratio=0.0,
+            preservation_maximum_speech_mix=1.0,
+            preservation_maximum_noise_mix=1.0,
+            preservation_crossfade_samples=0,
+            target_rms=0.055,
+            minimum_gain=0.75,
+            maximum_gain=1.50,
+        )
+        timeline = np.arange(16_000, dtype=np.float32) / 16_000
+        source = (
+            0.15 + 0.25 * np.sin(2 * np.pi * 180 * timeline)
+        ).astype(np.float32)
+        measured = quality(rms=0.2, score=20, snr=25)
+
+        output = np.concatenate(
+            [
+                frontend.process(
+                    source[start : start + 1600],
+                    quality=measured,
+                )
+                for start in range(0, len(source), 1600)
+            ]
+            + [frontend.flush()]
+        )
+
+        self.assertTrue(np.allclose(np.concatenate(denoiser.received), source))
+        self.assertEqual(len(output), len(source))
+        self.assertTrue(np.all(np.isfinite(output)))
+        self.assertLess(abs(float(np.mean(output))), 0.01)
+        self.assertLessEqual(float(np.max(np.abs(output))), 0.9701)
+        post, gate = frontend.telemetry()
+        self.assertAlmostEqual(gate.input_seconds, 1.0)
+        # The preservation gate rejects the deliberately clipping candidate,
+        # so the downstream limiter should not need to repair it.
+        self.assertEqual(post.peak_limited_frames, 0)
+        self.assertGreaterEqual(post.minimum_gain, 0.75)
+        self.assertLessEqual(post.maximum_gain, 1.50)
+        self.assertGreater(gate.fallback_speech_frames, 0)
+
+    def test_guard_aligns_40ms_model_delay_without_smearing_voice(
+        self,
+    ) -> None:
+        class DelayedIdentityDenoiser:
+            sample_rate = 16_000
+
+            def __init__(self, delay: int = 640) -> None:
+                self.delay = delay
+                self.pending = np.zeros(delay, dtype=np.float32)
+
+            def run(self, samples, sample_rate):
+                if sample_rate != self.sample_rate:
+                    raise AssertionError("unexpected sample rate")
+                samples = np.asarray(samples, dtype=np.float32)
+                combined = np.concatenate((self.pending, samples))
+                emitted = combined[: len(samples)]
+                self.pending = combined[len(samples) :]
+                return SimpleNamespace(samples=emitted)
+
+            def flush(self):
+                return SimpleNamespace(
+                    samples=np.empty(0, dtype=np.float32)
+                )
+
+            def reset(self) -> None:
+                self.pending = np.zeros(self.delay, dtype=np.float32)
+
+        denoiser = DelayedIdentityDenoiser()
+        frontend = StreamingGuardedEnhancementFrontend(
+            model_path="unused.onnx",
+            denoiser=denoiser,
+            alignment_delay_samples=640,
+            preservation_maximum_speech_mix=1.0,
+            preservation_maximum_noise_mix=0.0,
+            preservation_crossfade_samples=0,
+            dc_block_hz=0,
+            target_rms=0.05,
+            minimum_gain=1.0,
+            maximum_gain=1.0,
+            peak_limit=1.0,
+        )
+        timeline = np.arange(4_800, dtype=np.float32) / 16_000
+        source = (
+            0.08 * np.sin(2 * np.pi * 230 * timeline)
+            + 0.03 * np.sin(2 * np.pi * 1_700 * timeline)
+        ).astype(np.float32)
+        measured = quality(rms=0.06, score=18, snr=18)
+        output = np.concatenate(
+            [
+                frontend.process(
+                    source[start : start + 1600],
+                    quality=measured,
+                )
+                for start in range(0, len(source), 1600)
+            ]
+            + [frontend.flush()]
+        )
+
+        expected = np.concatenate(
+            (np.zeros(640, dtype=np.float32), source)
+        )
+        self.assertEqual(len(output), len(expected))
+        self.assertTrue(np.allclose(output, expected, atol=1e-5))
+        _, gate = frontend.telemetry()
+        self.assertEqual(gate.fallback_speech_frames, 0)
+        self.assertGreater(gate.accepted_speech_frames, 0)
+
+    def test_guard_falls_back_to_aligned_raw_when_voice_is_erased(
+        self,
+    ) -> None:
+        class DelayedDestructiveDenoiser:
+            sample_rate = 16_000
+
+            def run(self, samples, sample_rate):
+                if sample_rate != self.sample_rate:
+                    raise AssertionError("unexpected sample rate")
+                return SimpleNamespace(
+                    samples=np.zeros(len(samples), dtype=np.float32)
+                )
+
+            def flush(self):
+                return SimpleNamespace(
+                    samples=np.empty(0, dtype=np.float32)
+                )
+
+            def reset(self) -> None:
+                return None
+
+        frontend = StreamingGuardedEnhancementFrontend(
+            model_path="unused.onnx",
+            denoiser=DelayedDestructiveDenoiser(),
+            alignment_delay_samples=640,
+            preservation_maximum_speech_mix=1.0,
+            preservation_maximum_noise_mix=0.0,
+            preservation_crossfade_samples=0,
+            dc_block_hz=0,
+            target_rms=0.05,
+            minimum_gain=1.0,
+            maximum_gain=1.0,
+            peak_limit=1.0,
+        )
+        timeline = np.arange(3_200, dtype=np.float32) / 16_000
+        source = (
+            0.10 * np.sin(2 * np.pi * 800 * timeline)
+        ).astype(np.float32)
+        measured = quality(rms=0.07, score=12, snr=10)
+        output = np.concatenate(
+            [
+                frontend.process(
+                    source[start : start + 1600],
+                    quality=measured,
+                )
+                for start in range(0, len(source), 1600)
+            ]
+            + [frontend.flush()]
+        )
+
+        expected = np.concatenate(
+            (np.zeros(640, dtype=np.float32), source)
+        )
+        self.assertTrue(np.allclose(output, expected, atol=1e-5))
+        _, gate = frontend.telemetry()
+        self.assertGreater(gate.fallback_speech_frames, 0)
+        self.assertEqual(gate.accepted_speech_frames, 0)
 
 
 class CoordinatedTimelineTests(unittest.IsolatedAsyncioTestCase):

@@ -24,8 +24,6 @@ from fastapi import (
     HTTPException,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 from transformers import Wav2Vec2FeatureExtractor, WavLMForXVector
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
@@ -38,6 +36,7 @@ from backend.audio_pipeline import (
     CoordinatedVadTimeline,
     DynamicEnhancementController,
     FinalCandidate,
+    StreamingGuardedEnhancementFrontend,
     StreamingDpdfNetEnhancer,
     StreamingAsrPreprocessor,
     select_speaker_windows,
@@ -46,11 +45,13 @@ from backend.audio_pipeline import (
     unpack_audio_packet,
 )
 from backend.config import settings
+from backend.final_turn import choose_redecode_transcript
 from backend.adaptive_dictionary import (
     AdaptiveDictionary,
     HotwordArtifacts,
     build_hotword_artifacts,
 )
+from backend.topic_discovery import TopicDiscoveryWindow
 from backend.speaker_identity import (
     adaptive_absolute_threshold,
     build_enrollment_profile,
@@ -80,6 +81,7 @@ if settings.adaptive_dictionary_enabled:
     adaptive_dictionary = AdaptiveDictionary.from_paths(
         seed_path=settings.phonetic_dictionary_path,
         state_path=settings.adaptive_dictionary_state_path,
+        manual_path=settings.adaptive_dictionary_manual_path,
     )
 else:
     adaptive_dictionary = AdaptiveDictionary(
@@ -136,6 +138,22 @@ def create_asr_recognizer(
 
 
 recognizer = create_asr_recognizer(hotword_artifacts)
+dictionary_generation = 1
+topic_discovery = TopicDiscoveryWindow(
+    state_path=settings.topic_discovery_state_path,
+    bootstrap_seconds=settings.topic_discovery_bootstrap_seconds,
+    refresh_seconds=settings.topic_discovery_refresh_seconds,
+    minimum_turns=settings.topic_discovery_minimum_turns,
+    minimum_evidence_turns=settings.topic_discovery_minimum_evidence_turns,
+    minimum_topic_confidence=(
+        settings.topic_discovery_minimum_topic_confidence
+    ),
+    minimum_term_confidence=settings.topic_discovery_minimum_term_confidence,
+    term_ttl_hours=settings.topic_discovery_term_ttl_hours,
+    maximum_terms=settings.topic_discovery_maximum_terms,
+    maximum_context_chars=settings.topic_discovery_maximum_context_chars,
+    maximum_window_seconds=settings.topic_discovery_maximum_window_seconds,
+)
 # sherpa streams are cheap, but the ONNX recognizer/model object is shared by
 # all microphone connections. Serialize calls into it so decoding every mic
 # continuously cannot race or corrupt another stream's state.
@@ -357,8 +375,6 @@ def calculate_dynamic_speaker_threshold() -> float:
         )
     return threshold
 
-import base64
-
 room_timeline = CoordinatedVadTimeline(
     asr_quality_margin=settings.timeline_asr_quality_margin,
     asr_rms_ratio=settings.timeline_asr_rms_ratio,
@@ -404,69 +420,147 @@ class HeavyWorkCoordinator:
 
 heavy_work = HeavyWorkCoordinator()
 
+
+def decode_final_turn_audio(audio: np.ndarray) -> str:
+    """Replay one complete raw VAD turn without touching the WavLM branch.
+
+    This intentionally uses the established legacy frontend.  The online
+    enhancer remains an A/B candidate only; it has not demonstrated a WER gain
+    on the labelled fixtures and must not become the sole official evidence.
+    """
+    stream = recognizer.create_stream()
+    tracker = AudioQualityTracker()
+    processor = StreamingAsrPreprocessor(
+        high_pass_hz=settings.asr_high_pass_hz,
+        target_rms=settings.asr_target_rms,
+    )
+    frame_samples = 1_600
+    for start in range(0, len(audio), frame_samples):
+        frame = np.asarray(audio[start : start + frame_samples], dtype=np.float32)
+        if not frame.size:
+            continue
+        if frame.size < frame_samples:
+            frame = np.pad(frame, (0, frame_samples - frame.size))
+        rms = float(np.sqrt(np.mean(np.square(frame))))
+        measured = tracker.measure(
+            frame,
+            speech_active=rms >= max(0.008, tracker.noise_floor * 2.5),
+        )
+        prepared = (
+            processor.process(frame, quality=measured)
+            if settings.enable_asr_preprocessing
+            else frame
+        )
+        if prepared.size:
+            stream.accept_waveform(16000, prepared)
+
+    # The audio snapshot has the VAD prefix.  This extra silence is only for
+    # RNNT endpointing; it never enters speaker-ID or VAD decisions.
+    tail_seconds = (
+        settings.asr_final_padding_seconds
+        + settings.asr_final_turn_redecode_tail_padding_seconds
+    )
+    tail = np.zeros(max(0, int(round(tail_seconds * 16000))), dtype=np.float32)
+    if tail.size:
+        stream.accept_waveform(16000, tail)
+    stream.input_finished()
+    with zipformer_inference_lock:
+        while recognizer.is_ready(stream):
+            recognizer.decode_stream(stream)
+        result = recognizer.get_result(stream)
+    return result.text.strip() if hasattr(result, "text") else str(result).strip()
+
+
+class FinalTurnRedecodeCoordinator:
+    """One bounded, shared queue for full-turn Zipformer replays."""
+
+    def __init__(self) -> None:
+        self.queue: asyncio.Queue | None = None
+        self.worker_task: asyncio.Task | None = None
+
+    def _ensure_worker(self) -> asyncio.Queue:
+        if self.queue is None:
+            self.queue = asyncio.Queue(
+                maxsize=settings.asr_final_turn_redecode_queue_size
+            )
+        if self.worker_task is None or self.worker_task.done():
+            self.worker_task = asyncio.create_task(self._run())
+        return self.queue
+
+    async def submit(
+        self, audio: np.ndarray
+    ) -> tuple[str | None, dict[str, object]]:
+        if not settings.asr_final_turn_redecode_enabled or not audio.size:
+            return None, {"status": "disabled"}
+        queue = self._ensure_worker()
+        future = asyncio.get_running_loop().create_future()
+        submitted_at = time.perf_counter()
+        try:
+            queue.put_nowait((np.asarray(audio, dtype=np.float32).copy(), future, submitted_at))
+        except asyncio.QueueFull:
+            return None, {"status": "queue_full", "queue_size": queue.qsize()}
+        try:
+            text = await asyncio.wait_for(
+                asyncio.shield(future),
+                timeout=settings.asr_final_turn_redecode_timeout_seconds,
+            )
+            return text, {
+                "status": "completed",
+                "queue_wait_and_decode_ms": round(
+                    (time.perf_counter() - submitted_at) * 1000
+                ),
+            }
+        except asyncio.TimeoutError:
+            return None, {
+                "status": "timeout",
+                "timeout_seconds": settings.asr_final_turn_redecode_timeout_seconds,
+            }
+        except Exception as exc:
+            return None, {
+                "status": "error",
+                "error": type(exc).__name__,
+            }
+
+    async def _run(self) -> None:
+        assert self.queue is not None
+        try:
+            while True:
+                audio, future, _submitted_at = await self.queue.get()
+                try:
+                    text = await heavy_work.run_final_thread(
+                        lambda: decode_final_turn_audio(audio)
+                    )
+                    if not future.done():
+                        future.set_result(text)
+                except Exception as exc:
+                    if not future.done():
+                        future.set_exception(exc)
+                finally:
+                    self.queue.task_done()
+        except asyncio.CancelledError:
+            while not self.queue.empty():
+                _audio, future, _submitted_at = self.queue.get_nowait()
+                if not future.done():
+                    future.set_exception(asyncio.CancelledError())
+                self.queue.task_done()
+            raise
+
+    async def close(self) -> None:
+        if self.worker_task is not None:
+            self.worker_task.cancel()
+            await asyncio.gather(self.worker_task, return_exceptions=True)
+        self.worker_task = None
+        self.queue = None
+
+
+final_turn_redecode = FinalTurnRedecodeCoordinator()
+
 # Quản lý WebSocket clients kết nối tới Web Dashboard
-class WebDashboardManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        await self.broadcast_speakers()
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict):
-        for connection in list(self.active_connections):
-            try:
-                await connection.send_text(json.dumps(message, ensure_ascii=False))
-            except Exception:
-                self.disconnect(connection)
-
-    async def broadcast_audio(self, identity: str, data: bytes):
-        if not self.active_connections:
-            return
-        b64_audio = base64.b64encode(data).decode('ascii')
-        msg = {
-            "type": "live_audio",
-            "identity": identity,
-            "audio": b64_audio,
-            "ts": time.time()
-        }
-        await self.broadcast(msg)
-
-    async def broadcast_speakers(self):
-        points = _all_speaker_points(with_vectors=True)
-        speakers = [_speaker_label(point) for point in points]
-        sim_str = None
-        grouped: dict[str, list[np.ndarray]] = {}
-        for point in points:
-            label = _speaker_label(point)
-            if label and point.vector is not None:
-                grouped.setdefault(label, []).append(np.asarray(point.vector))
-        labels = list(grouped)
-        if len(labels) >= 2:
-            left = np.mean(grouped[labels[0]], axis=0)
-            right = np.mean(grouped[labels[1]], axis=0)
-            left /= np.linalg.norm(left)
-            right /= np.linalg.norm(right)
-            sim_str = f"{float(np.dot(left, right)):.4f}"
-
-        await self.broadcast({
-            "type": "enrolled_speakers",
-            "speakers": sorted(set(filter(None, speakers))),
-            "similarity": sim_str
-        })
-
-dashboard_manager = WebDashboardManager()
-
 # ============================================================
 # 5. LLM – Ollama Qwen2.5
 # ============================================================
 llm_client = AsyncOpenAI(
-    base_url="http://localhost:11434/v1",
+    base_url=f"{settings.ollama_url.rstrip('/')}/v1",
     api_key="ollama",
     timeout=settings.llm_timeout_seconds,
     max_retries=0,
@@ -561,19 +655,20 @@ dictionary_runtime_lock = threading.RLock()
 
 
 def refresh_adaptive_dictionary_for_next_streams() -> dict[str, object]:
-    """Reload persisted glossary without invalidating active ASR streams.
+    """Reload the glossary and publish one new immutable decoder generation.
 
-    Each WebSocket captures its recognizer at connect time. Swapping the global
-    recognizer here therefore affects only microphones that connect after this
-    function returns; an in-progress global turn continues with its original
-    decoder and timestamp alignment.
+    Connected microphones adopt the new recognizer only when their next VAD
+    turn starts.  An in-progress turn therefore retains one decoder, hotword
+    snapshot and timestamp alignment from start to finish.
     """
     global adaptive_dictionary, hotword_artifacts, phonetic_lexicon, recognizer
+    global dictionary_generation
     with dictionary_runtime_lock:
         if settings.adaptive_dictionary_enabled:
             updated_dictionary = AdaptiveDictionary.from_paths(
                 seed_path=settings.phonetic_dictionary_path,
                 state_path=settings.adaptive_dictionary_state_path,
+                manual_path=settings.adaptive_dictionary_manual_path,
             )
         else:
             updated_dictionary = AdaptiveDictionary(
@@ -597,7 +692,9 @@ def refresh_adaptive_dictionary_for_next_streams() -> dict[str, object]:
         phonetic_lexicon = create_phonetic_lexicon(updated_dictionary)
         hotword_artifacts = updated_artifacts
         recognizer = updated_recognizer
+        dictionary_generation += 1
         return {
+            "generation": dictionary_generation,
             "active_entries": len(updated_dictionary.active_entries()),
             "dynamic_entries": len(updated_dictionary.active_dynamic_entries()),
             "hotword_enabled": bool(
@@ -609,26 +706,201 @@ def refresh_adaptive_dictionary_for_next_streams() -> dict[str, object]:
         }
 
 
-def prepare_adaptive_dictionary_for_meeting(title: str) -> dict[str, object]:
-    """Replace dynamic terms using explicit technical terms in a meeting title."""
+def _merge_dynamic_entries(
+    entries,
+    *,
+    replace_sources: set[str],
+) -> dict[str, object]:
+    """Replace selected generated sources while preserving other live terms."""
+    retained = [
+        entry
+        for entry in adaptive_dictionary.active_dynamic_entries()
+        if entry.source not in replace_sources
+    ]
+    merged = {}
+    for entry in (*retained, *tuple(entries)):
+        key = entry.canonical.casefold()
+        previous = merged.get(key)
+        if previous is None or entry.confidence >= previous.confidence:
+            merged[key] = entry
+    adaptive_dictionary.save_dynamic_entries(merged.values())
+    return refresh_adaptive_dictionary_for_next_streams()
+
+
+def reset_adaptive_dictionary_for_meeting(
+    participant_names: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Clear generated terms and seed the new room with participant names."""
     if not settings.adaptive_dictionary_enabled:
         return {"enabled": False, "entries": [], "hotword_count": 0}
-    title = " ".join(title.split()).strip()
-    if not title:
-        raise ValueError("meeting_title must not be empty")
-    entries = AdaptiveDictionary.entries_from_meeting_title(
-        title,
-        ttl_hours=settings.adaptive_dictionary_title_ttl_hours,
+    names = tuple(
+        dict.fromkeys(
+            " ".join(str(name).split()).strip()
+            for name in participant_names
+            if " ".join(str(name).split()).strip()
+        )
     )
+    topic_discovery.reset(started_at=time.time(), participant_names=names)
+    entries = AdaptiveDictionary.entries_from_participants(names)
     with dictionary_runtime_lock:
         adaptive_dictionary.save_dynamic_entries(entries)
         state = refresh_adaptive_dictionary_for_next_streams()
     return {
         "enabled": True,
-        "meeting_title": title,
         "entries": [entry.to_json() for entry in entries],
+        "topic_discovery": topic_discovery.status(),
         **state,
     }
+
+
+def register_participant_for_meeting(display_name: str) -> dict[str, object]:
+    """Add one proper name without clearing topic-derived entries."""
+    name = " ".join(display_name.split()).strip()
+    if not settings.adaptive_dictionary_enabled or not name:
+        return {"enabled": settings.adaptive_dictionary_enabled, "added": False}
+    added = topic_discovery.add_participant(name)
+    if not added:
+        return {"enabled": True, "added": False}
+    entries = AdaptiveDictionary.entries_from_participants((name,))
+    with dictionary_runtime_lock:
+        state = _merge_dynamic_entries(entries, replace_sources=set())
+    return {
+        "enabled": True,
+        "added": True,
+        "participant": name,
+        **state,
+    }
+
+
+topic_analysis_lock = asyncio.Lock()
+topic_analysis_tasks: set[asyncio.Task] = set()
+
+
+async def observe_topic_from_raw_transcript(
+    *,
+    turn_id: str,
+    raw_text: str,
+    speaker: str,
+    timestamp: float,
+) -> dict[str, object]:
+    """Run bounded topic discovery outside the realtime transcript path."""
+    if (
+        not settings.adaptive_dictionary_enabled
+        or not settings.topic_discovery_enabled
+    ):
+        return {"status": "disabled"}
+    async with topic_analysis_lock:
+        ready = topic_discovery.observe(
+            turn_id=turn_id,
+            raw_text=raw_text,
+            speaker=speaker,
+            timestamp=timestamp,
+        )
+        if not ready:
+            return {"status": "buffering", **topic_discovery.status()}
+
+        topic_discovery.mark_analysis_attempt(timestamp=timestamp)
+        evidence = topic_discovery.analysis_payload()
+        session_started_at = evidence["session_started_at"]
+        try:
+            response = await llm_client.chat.completions.create(
+                model=settings.topic_discovery_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Bạn phân tích raw ASR tiếng Việt của một cuộc họp. "
+                            "Hãy suy ra một nhãn chủ đề ngắn và thuật ngữ/tên "
+                            "sản phẩm có khả năng được nhắc tới. Không sửa toàn "
+                            "bộ transcript. Mỗi observed_variants phải là chuỗi "
+                            "xuất hiện nguyên văn trong ít nhất một turn được "
+                            "dẫn bằng evidence_turn_ids. Không đưa tên thành "
+                            "viên vào terms. Chỉ trả JSON dạng "
+                            "{\"topic\":\"...\",\"topic_confidence\":0.0,"
+                            "\"terms\":[{\"canonical\":\"...\","
+                            "\"observed_variants\":[\"...\"],"
+                            "\"evidence_turn_ids\":[\"...\"],"
+                            "\"confidence\":0.0}]}. Nếu chưa đủ bằng chứng, "
+                            "trả terms rỗng và confidence thấp."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(evidence, ensure_ascii=False),
+                    },
+                ],
+                max_tokens=520,
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                timeout=settings.topic_discovery_timeout_seconds,
+                extra_body={
+                    "keep_alive": settings.minutes_composer_keep_alive,
+                    "options": {
+                        "num_thread": max(
+                            1, settings.minutes_composer_num_threads
+                        ),
+                        "num_predict": 520,
+                        "temperature": 0,
+                    },
+                },
+            )
+            content = response.choices[0].message.content or "{}"
+            model_payload = json.loads(content)
+            if (
+                topic_discovery.status()["started_at"]
+                != session_started_at
+            ):
+                return {"status": "stale_session"}
+            snapshot = topic_discovery.accept_model_response(model_payload)
+        except Exception as exc:
+            print(
+                "[Topic] Không thể phân tích cửa sổ raw transcript: "
+                f"{type(exc).__name__}"
+            )
+            return {
+                "status": "unavailable",
+                "reason": type(exc).__name__,
+                **topic_discovery.status(),
+            }
+
+        with dictionary_runtime_lock:
+            state = _merge_dynamic_entries(
+                snapshot.entries,
+                replace_sources={"topic_discovery"},
+            )
+        print(
+            f"[Topic] snapshot={snapshot.version} "
+            f"topic={snapshot.topic or '(uncertain)'} "
+            f"terms={len(snapshot.entries)} generation="
+            f"{state.get('generation')}"
+        )
+        return {
+            "status": "updated",
+            "snapshot": snapshot.to_json(),
+            **state,
+        }
+
+
+def schedule_topic_observation(
+    *,
+    turn_id: str,
+    raw_text: str,
+    speaker: str,
+    timestamp: float,
+) -> None:
+    """Keep topic inference detached from final transcript delivery."""
+    task = asyncio.create_task(
+        observe_topic_from_raw_transcript(
+            turn_id=turn_id,
+            raw_text=raw_text,
+            speaker=speaker,
+            timestamp=timestamp,
+        )
+    )
+    topic_analysis_tasks.add(task)
+    task.add_done_callback(topic_analysis_tasks.discard)
+
+
 # Only finalized turns enter this buffer.  It is deliberately small: context
 # helps decide an ambiguous domain term, but must not turn realtime correction
 # into meeting summarization.
@@ -637,10 +909,14 @@ recent_refinement_context: collections.deque[str] = collections.deque(
 )
 
 
-def recover_phonetics(raw_text: str) -> PhoneticRecovery:
+def recover_phonetics(
+    raw_text: str,
+    *,
+    lexicon: PhoneticLexicon | None = None,
+) -> PhoneticRecovery:
     if not settings.phonetic_recovery_enabled:
         return PhoneticRecovery(text=raw_text, replacements=())
-    return phonetic_lexicon.recover(raw_text)
+    return (lexicon or phonetic_lexicon).recover(raw_text)
 
 
 def format_final_transcript(text: str) -> str:
@@ -1039,9 +1315,20 @@ async def refine_text(
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+
+@app.on_event("shutdown")
+async def shutdown_final_turn_redecode() -> None:
+    """Release queued replay callers before the AI process exits."""
+    await final_turn_redecode.close()
+
 @app.get("/")
-async def get_dashboard():
-    return FileResponse("static/index.html")
+async def get_health():
+    """Readiness endpoint for the AI process; the UI is served by backend API."""
+    return {
+        "status": "ok",
+        "service": "ai-pipeline",
+        "ui": "backend-api",
+    }
 
 
 def _require_internal_key(x_internal_key: str | None) -> None:
@@ -1067,36 +1354,50 @@ async def adaptive_dictionary_status(
                 hotword_artifacts.phrase_count if hotword_artifacts else 0
             ),
             "entries": [entry.to_json() for entry in entries],
+            "topic_discovery": topic_discovery.status(),
         }
 
 
-@app.post("/api/adaptive-dictionary/prepare")
-async def prepare_adaptive_dictionary_api(
+@app.post("/api/adaptive-dictionary/reset")
+async def reset_adaptive_dictionary_api(
     payload: dict = Body(...),
     x_internal_key: str | None = Header(default=None),
 ):
-    """Prepare the next room's glossary from an explicit meeting title."""
+    """Start one clean dictionary session without requiring a meeting title."""
     _require_internal_key(x_internal_key)
-    title = str(payload.get("meeting_title", ""))
     try:
-        return prepare_adaptive_dictionary_for_meeting(title)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        names = tuple(
+            str(name)
+            for name in payload.get("participant_names", [])
+            if isinstance(name, str)
+        )
+        return reset_adaptive_dictionary_for_meeting(names)
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Unable to prepare adaptive dictionary: {type(exc).__name__}",
+            detail=f"Unable to reset adaptive dictionary: {type(exc).__name__}",
         ) from exc
 
 
-@app.websocket("/ws/web_dashboard")
-async def web_dashboard_websocket(websocket: WebSocket):
-    await dashboard_manager.connect(websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        dashboard_manager.disconnect(websocket)
+@app.post("/api/adaptive-dictionary/participants")
+async def register_adaptive_dictionary_participant_api(
+    payload: dict = Body(...),
+    x_internal_key: str | None = Header(default=None),
+):
+    _require_internal_key(x_internal_key)
+    return register_participant_for_meeting(
+        str(payload.get("display_name", ""))
+    )
+
+
+@app.post("/api/adaptive-dictionary/reload")
+async def reload_adaptive_dictionary_api(
+    x_internal_key: str | None = Header(default=None),
+):
+    """Reload the operator-owned lexicon at the next safe decoder boundary."""
+    _require_internal_key(x_internal_key)
+    return refresh_adaptive_dictionary_for_next_streams()
+
 
 async def _process_enrollment_audio(speaker_name: str, audio: np.ndarray, sr: int):
     if audio.ndim > 1: audio = audio.mean(axis=1)
@@ -1235,7 +1536,6 @@ async def _process_enrollment_audio(speaker_name: str, audio: np.ndarray, sr: in
         f"{clean_duration:.1f}s audio sạch)"
     )
     
-    await dashboard_manager.broadcast_speakers()
     return {
         "status": "success",
         "speaker_name": normalized_name,
@@ -1280,12 +1580,14 @@ async def websocket_endpoint(
 ):
     await websocket.accept()
     fallback_speaker = (display_name or identity).strip() or identity
+    register_participant_for_meeting(fallback_speaker)
     print(f"\n[+] Đã cấp phát luồng AI cho Client: {identity}")
 
-    # Keep a stable decoder for this microphone. Dictionary refresh may swap
-    # the global recognizer for later connections, never for this stream.
+    # A decoder generation stays immutable within one VAD/global turn.
     asr_recognizer = recognizer
     asr_stream = asr_recognizer.create_stream()
+    local_dictionary_generation = dictionary_generation
+    turn_phonetic_lexicon = phonetic_lexicon
     vad_stream  = vad_model.stream()
     asr_lock = asyncio.Lock()
 
@@ -1320,11 +1622,63 @@ async def websocket_endpoint(
         target_rms=settings.asr_target_rms,
     )
 
-    # The neural enhancer is per microphone because DPDFNet is stateful.
-    # It is deliberately not shared with WavLM: speaker embeddings always
-    # receive the original VAD-selected waveform.
+    # Every neural frontend is per microphone because DPDFNet is stateful.
+    # WavLM always receives the original VAD-selected waveform.
+    guarded_frontend = None
     asr_enhancer = None
-    if settings.asr_enhancer not in {"", "none", "off"}:
+    if settings.asr_frontend == "dpdfnet":
+        guarded_frontend = StreamingGuardedEnhancementFrontend(
+            model_path=str(settings.asr_enhancer_model),
+            num_threads=settings.asr_enhancer_threads,
+            model_type=settings.asr_enhancer_model_type,
+            alignment_delay_samples=round(
+                settings.asr_enhancer_alignment_delay_ms * 16
+            ),
+            preservation_minimum_correlation=(
+                settings.asr_preservation_min_correlation
+            ),
+            preservation_minimum_energy_ratio=(
+                settings.asr_preservation_min_energy_ratio
+            ),
+            preservation_maximum_energy_ratio=(
+                settings.asr_preservation_max_energy_ratio
+            ),
+            preservation_minimum_speech_band_ratio=(
+                settings.asr_preservation_min_speech_band_ratio
+            ),
+            preservation_maximum_speech_mix=(
+                settings.asr_preservation_max_speech_mix
+            ),
+            preservation_maximum_noise_mix=(
+                settings.asr_preservation_max_noise_mix
+            ),
+            preservation_crossfade_samples=round(
+                settings.asr_preservation_crossfade_ms * 16
+            ),
+            dc_block_hz=settings.asr_dpdfnet_post_dc_hz,
+            target_rms=settings.asr_dpdfnet_post_target_rms,
+            minimum_gain=settings.asr_dpdfnet_post_min_gain,
+            maximum_gain=settings.asr_dpdfnet_post_max_gain,
+            attenuation_rate=(
+                settings.asr_dpdfnet_post_attenuation_rate
+            ),
+            boost_rate=settings.asr_dpdfnet_post_boost_rate,
+            activity_floor=settings.asr_dpdfnet_post_activity_floor,
+            peak_limit=settings.asr_dpdfnet_post_peak_limit,
+        )
+        print(
+            f"[ASR frontend] [{identity}] raw → "
+            f"{settings.asr_enhancer_model_type.upper()} candidate → "
+            f"preservation gate (delay "
+            f"{settings.asr_enhancer_alignment_delay_ms:g} ms, "
+            f"speech mix <= "
+            f"{settings.asr_preservation_max_speech_mix:.2f}) → "
+            f"post-condition (target RMS "
+            f"{settings.asr_dpdfnet_post_target_rms:.3f}, "
+            f"gain {settings.asr_dpdfnet_post_min_gain:.2f}–"
+            f"{settings.asr_dpdfnet_post_max_gain:.2f})."
+        )
+    elif settings.asr_enhancer not in {"", "none", "off"}:
         if settings.asr_enhancer != "dpdfnet_baseline":
             raise RuntimeError(
                 "ASR_ENHANCER không hỗ trợ: "
@@ -1333,6 +1687,10 @@ async def websocket_endpoint(
         asr_enhancer = StreamingDpdfNetEnhancer(
             model_path=str(settings.asr_enhancer_model),
             num_threads=settings.asr_enhancer_threads,
+            model_type=settings.asr_enhancer_model_type,
+            alignment_delay_samples=round(
+                settings.asr_enhancer_alignment_delay_ms * 16
+            ),
             controller=DynamicEnhancementController(
                 bypass_snr_db=settings.asr_enhancer_bypass_snr_db,
                 full_snr_db=settings.asr_enhancer_full_snr_db,
@@ -1349,6 +1707,8 @@ async def websocket_endpoint(
         )
 
     def prepare_asr_audio(audio, quality):
+        if guarded_frontend is not None:
+            return guarded_frontend.process(audio, quality=quality)
         prepared = audio
         if settings.enable_asr_preprocessing:
             prepared = asr_preprocessor.process(audio, quality=quality)
@@ -1356,16 +1716,51 @@ async def websocket_endpoint(
             prepared = asr_enhancer.process(prepared, quality=quality)
         return prepared
 
-    def flush_asr_enhancer() -> None:
+    def reset_asr_frontend() -> None:
+        asr_preprocessor.reset()
+        if guarded_frontend is not None:
+            guarded_frontend.reset()
+        elif asr_enhancer is not None:
+            asr_enhancer.reset()
+
+    def flush_asr_frontend() -> None:
         """Deliver DPDFNet's one-frame look-ahead before final Zipformer."""
-        if asr_enhancer is None:
+        if guarded_frontend is not None:
+            tail = guarded_frontend.flush()
+        elif asr_enhancer is not None:
+            tail = asr_enhancer.flush()
+        else:
             return
-        tail = asr_enhancer.flush()
         if tail.size:
             with zipformer_inference_lock:
                 asr_stream.accept_waveform(16000, tail)
                 while asr_recognizer.is_ready(asr_stream):
                     asr_recognizer.decode_stream(asr_stream)
+
+    def log_asr_frontend_telemetry() -> None:
+        if guarded_frontend is not None:
+            post, gate = guarded_frontend.telemetry()
+            print(
+                f"[Guarded enhancer] [{identity}] "
+                f"{gate.input_seconds:.1f}s, "
+                f"speech accepted={gate.accepted_speech_frames}/"
+                f"{gate.evaluated_speech_frames}, "
+                f"fallback={gate.fallback_speech_frames}, "
+                f"mix avg={gate.average_mix:.2f}, "
+                f"corr={gate.average_correlation:.2f}, "
+                f"energy={gate.average_energy_ratio:.2f}, "
+                f"band={gate.average_speech_band_ratio:.2f}; "
+                f"post gain={post.average_gain:.2f}, "
+                f"limited={post.peak_limited_frames}."
+            )
+        elif asr_enhancer is not None:
+            telemetry = asr_enhancer.telemetry()
+            print(
+                f"[DPDFNet blend] [{identity}] "
+                f"{telemetry.processed_seconds:.1f}s, "
+                f"mix avg={telemetry.average_mix:.2f}, "
+                f"peak={telemetry.peak_mix:.2f}."
+            )
 
     def finalize_asr_stream_text() -> str:
         """Flush pending transducer tokens before reading a final result."""
@@ -1405,9 +1800,12 @@ async def websocket_endpoint(
                     _, future = command
                     try:
                         async with asr_lock:
+                            flush_asr_frontend()
                             final_text = finalize_asr_stream_text()
                             with zipformer_inference_lock:
                                 asr_recognizer.reset(asr_stream)
+                            log_asr_frontend_telemetry()
+                            reset_asr_frontend()
                         if not future.done():
                             future.set_result(final_text)
                     except Exception as exc:
@@ -1473,7 +1871,6 @@ async def websocket_endpoint(
                     }
                     try:
                         await websocket.send_text(json.dumps(partial_msg, ensure_ascii=False))
-                        await dashboard_manager.broadcast(partial_msg)
                     except Exception:
                         pass
                 if finalize_command is not None:
@@ -1492,17 +1889,13 @@ async def websocket_endpoint(
         start_ts: float,
         end_ts: float,
         turn_id: str,
+        lexicon_snapshot: PhoneticLexicon,
     ):
         if len(raw_text) < 4:
             return
 
         final_pipeline_started = time.perf_counter()
-        phonetic_result = recover_phonetics(raw_text)
-        # Final transcript remains evidence.  Qwen is reserved for the
-        # backend Minutes Composer, never for per-segment ASR rewriting.
-        transcript_text = format_final_transcript(
-            phonetic_result.text or raw_text
-        )
+        streaming_text = raw_text
         refinement_metadata: dict[str, object] = {
             "backend": "disabled_for_minutes_composer",
             "decision": "SOURCE_TRANSCRIPT_ONLY",
@@ -1547,6 +1940,35 @@ async def websocket_endpoint(
                     "mic khác có SNR/chất lượng tốt hơn."
                 )
                 return
+            redecode_text, redecode_metadata = await final_turn_redecode.submit(
+                audio_for_id
+            )
+            if redecode_text:
+                redecode_decision = choose_redecode_transcript(
+                    streaming_text,
+                    redecode_text,
+                    minimum_overlap=settings.asr_final_turn_redecode_min_overlap,
+                    maximum_word_ratio=settings.asr_final_turn_redecode_max_word_ratio,
+                )
+                raw_text = redecode_decision.text
+                redecode_metadata.update({
+                    "candidate_text": redecode_text,
+                    "selected": redecode_decision.selected_redecode,
+                    "decision": redecode_decision.reason,
+                    "overlap": round(redecode_decision.overlap, 4),
+                    "word_ratio": round(redecode_decision.word_ratio, 4),
+                })
+            else:
+                redecode_metadata.setdefault("selected", False)
+                redecode_metadata.setdefault("decision", "streaming_fallback")
+            phonetic_result = recover_phonetics(
+                raw_text, lexicon=lexicon_snapshot
+            )
+            # Final transcript remains evidence.  Qwen is reserved for the
+            # backend Minutes Composer, never for per-segment ASR rewriting.
+            transcript_text = format_final_transcript(
+                phonetic_result.text or raw_text
+            )
             # Realtime speaker checks yield only for final WavLM identity.
             # Qwen is intentionally deferred to the backend minutes queue.
             heavy_work.mark_final()
@@ -1606,11 +2028,20 @@ async def websocket_endpoint(
                     f"{settings.speaker_min_id_seconds:.1f}s; "
                     f"fallback về {fallback_speaker}"
                 )
+        else:
+            redecode_metadata = {
+                "status": "empty_audio",
+                "selected": False,
+                "decision": "streaming_fallback",
+            }
+            phonetic_result = recover_phonetics(
+                raw_text, lexicon=lexicon_snapshot
+            )
+            transcript_text = format_final_transcript(
+                phonetic_result.text or raw_text
+            )
+
         async def emit_payload(message: dict) -> None:
-            try:
-                await dashboard_manager.broadcast(message)
-            except Exception as exc:
-                print(f"Lỗi broadcast Dashboard: {exc}")
             try:
                 await websocket.send_text(
                     json.dumps(message, ensure_ascii=False)
@@ -1621,6 +2052,7 @@ async def websocket_endpoint(
         utterance_id = uuid.uuid4().hex
         refinement_pending = False
         refinement_ms = 0
+        topic_snapshot = topic_discovery.snapshot
 
         payload = {
             "utterance_id": utterance_id,
@@ -1632,7 +2064,9 @@ async def websocket_endpoint(
             "speaker_consensus": speaker_consensus,
             "speaker_id_ms": speaker_id_ms,
             "text":     transcript_text,
-            "raw_text": raw_text,
+            "raw_text": streaming_text,
+            "final_asr_text": raw_text,
+            "final_turn_redecode": redecode_metadata,
             "phonetic_recovered_text": phonetic_result.text,
             "phonetic_recovery_applied": bool(phonetic_result.replacements),
             "phonetic_replacements": list(phonetic_result.replacements),
@@ -1649,10 +2083,25 @@ async def websocket_endpoint(
                 quality_summary.clipping_ratio, 5
             ),
             "global_turn_id": turn_id,
+            "discovered_topic": (
+                {
+                    "topic": topic_snapshot.topic,
+                    "confidence": topic_snapshot.topic_confidence,
+                    "snapshot_version": topic_snapshot.version,
+                }
+                if topic_snapshot and topic_snapshot.topic
+                else None
+            ),
             "refinement_pending": refinement_pending,
             "revision": 1,
         }
         await emit_payload(payload)
+        schedule_topic_observation(
+            turn_id=turn_id,
+            raw_text=streaming_text,
+            speaker=speaker_name,
+            timestamp=end_ts,
+        )
 
         print(f"[✅ Đã xuất Biên Bản cho {identity}]")
 
@@ -1661,6 +2110,9 @@ async def websocket_endpoint(
         nonlocal speech_quality_observations, speech_sample_count
         nonlocal last_sent_text, last_speech_end_time, current_speaker
         nonlocal current_turn_id
+        nonlocal asr_recognizer, asr_stream
+        nonlocal local_dictionary_generation
+        nonlocal turn_phonetic_lexicon
         try:
             async for evt in vad_stream:
                 if evt.type == VADEventType.START_OF_SPEECH:
@@ -1690,11 +2142,23 @@ async def websocket_endpoint(
                         chunk for chunk in event_chunks if chunk.size
                     ]
                     async with asr_lock:
+                        with dictionary_runtime_lock:
+                            next_recognizer = recognizer
+                            next_generation = dictionary_generation
+                            next_lexicon = phonetic_lexicon
                         with zipformer_inference_lock:
-                            asr_recognizer.reset(asr_stream)
-                        asr_preprocessor.reset()
-                        if asr_enhancer is not None:
-                            asr_enhancer.reset()
+                            if next_generation != local_dictionary_generation:
+                                asr_recognizer = next_recognizer
+                                asr_stream = asr_recognizer.create_stream()
+                                local_dictionary_generation = next_generation
+                                print(
+                                    f"   [Dictionary] [{identity}] "
+                                    f"generation={next_generation}"
+                                )
+                            else:
+                                asr_recognizer.reset(asr_stream)
+                        turn_phonetic_lexicon = next_lexicon
+                        reset_asr_frontend()
                         buffered = (
                             [
                                 (
@@ -1795,6 +2259,7 @@ async def websocket_endpoint(
                             speech_start_time,
                             speech_end_time,
                             current_turn_id,
+                            turn_phonetic_lexicon,
                         )
                     )
                     bg_tasks.add(t)
@@ -1848,16 +2313,9 @@ async def websocket_endpoint(
                     # accepted speech chunk has been decoded.
                     await audio_queue.join()
                     async with asr_lock:
-                        flush_asr_enhancer()
+                        flush_asr_frontend()
                         raw_text = finalize_asr_stream_text()
-                        if asr_enhancer is not None:
-                            telemetry = asr_enhancer.telemetry()
-                            print(
-                                f"[DPDFNet] [{identity}] "
-                                f"{telemetry.processed_seconds:.1f}s, "
-                                f"mix avg={telemetry.average_mix:.2f}, "
-                                f"peak={telemetry.peak_mix:.2f}."
-                            )
+                        log_asr_frontend_telemetry()
 
                     # Bật tác vụ ngầm chạy WavLM + LLM để luồng VAD không bao giờ bị nghẽn hay khựng!
                     t = asyncio.create_task(
@@ -1868,6 +2326,7 @@ async def websocket_endpoint(
                             speech_start_time,
                             speech_end_time,
                             ended_turn_id,
+                            turn_phonetic_lexicon,
                         )
                     )
                     bg_tasks.add(t)
@@ -1881,7 +2340,6 @@ async def websocket_endpoint(
     vad_task = asyncio.create_task(process_vad_events())
     asr_task = asyncio.create_task(asr_worker())
 
-    audio_batch_buf = bytearray()
     last_voice_time = time.time()
 
     try:
@@ -1897,14 +2355,6 @@ async def websocket_endpoint(
                     f"{len(data)} bytes"
                 )
                 continue
-            
-            # Gom đệm 50ms âm thanh (1600 bytes) rồi mới broadcast về Web UI để stream mượt mượt không giật
-            audio_batch_buf.extend(data)
-            if len(audio_batch_buf) >= 1600:
-                chunk_to_send = bytes(audio_batch_buf)
-                audio_batch_buf.clear()
-                asyncio.create_task(dashboard_manager.broadcast_audio(identity, chunk_to_send))
-
             audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
             frame_quality = quality_tracker.measure(
                 audio_np, speech_active=is_speaking

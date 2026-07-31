@@ -40,7 +40,7 @@ Ubuntu WSL
   │    ├─ Zipformer ASR trên nhiều mic
   │    ├─ WavLM + Qdrant speaker identification
   │    ├─ phonetic recovery / adaptive dictionary
-  │    └─ DPDFNet tùy chọn cho nhánh ASR
+  │    └─ DPDFNet/GTCRN guarded tùy chọn cho nhánh ASR
   └─ agent.py
        └─ LiveKit worker chuyển audio về ai_server
 ```
@@ -49,7 +49,8 @@ Hai nhánh audio được tách riêng:
 
 ```text
 Audio gốc → VAD → WavLM → Speaker ID
-Audio gốc → ASR preprocessing → (DPDFNet tùy chọn) → Zipformer → transcript
+Audio gốc → ASR preprocessing → (guarded enhancer tùy chọn) → Zipformer
+          → transcript
 ```
 
 Audio dùng cho Speaker ID không đi qua DPDFNet để tránh làm thay đổi đặc trưng
@@ -61,7 +62,7 @@ giọng nói.
 agent.py                         LiveKit worker
 ai_server.py                     VAD, ASR, speaker ID, timeline
 backend/api/                     REST API, SQLite, minutes queue
-backend/audio_pipeline.py        preprocessing và DPDFNet adapter
+backend/audio_pipeline.py        preprocessing và guarded enhancer adapter
 backend/text_refinement.py       dictionary và phonetic recovery
 frontend/                        giao diện web demo
 scripts/run_demo.sh              khởi chạy toàn bộ backend trên WSL
@@ -115,10 +116,19 @@ MINUTES_COMPOSER_MODE=timeline
 MINUTES_COMPOSER_MODEL=qwen2.5:3b
 MINUTES_COMPOSER_NUM_THREADS=12
 
+ASR_FRONTEND=legacy
 ASR_ENHANCER=none
 ZIPFORMER_CHUNK_SIZE=32
 ZIPFORMER_MAX_ACTIVE_PATHS=4
 ZIPFORMER_BLANK_PENALTY=0.4
+
+ADAPTIVE_DICTIONARY_ENABLED=true
+ADAPTIVE_DICTIONARY_MANUAL_PATH=/home/ntd/meeting_runtime/data/meeting_lexicon.txt
+TOPIC_DISCOVERY_ENABLED=true
+TOPIC_DISCOVERY_MODEL=qwen2.5:3b
+TOPIC_DISCOVERY_BOOTSTRAP_SECONDS=90
+TOPIC_DISCOVERY_REFRESH_SECONDS=60
+ZIPFORMER_HOTWORDS_ENABLED=true
 ```
 
 Không lưu mật khẩu sudo hoặc secret thật vào README, source code hay file được
@@ -146,6 +156,10 @@ Web/API : http://127.0.0.1:8000
 AI      : http://127.0.0.1:8001
 ```
 
+Frontend chính được phục vụ từ `frontend/` qua backend API. AI server port 8001
+chỉ cung cấp pipeline và readiness API; không còn phụ thuộc vào thư mục
+dashboard tĩnh riêng.
+
 Kiểm tra nhanh:
 
 ```bash
@@ -164,19 +178,78 @@ giây; audio được xử lý qua VAD và WavLM rồi lưu embedding vào Qdran
 enroll, hệ thống dùng tên đăng nhập/mic làm fallback và không được tự ý gán
 người nói vào một voice profile gần giống nếu độ tin cậy không đủ.
 
-## DPDFNet
+## Dictionary thích nghi theo nội dung
 
-DPDFNet chỉ tác động lên nhánh ASR và chạy stateful theo từng microphone:
+Người tạo phòng không cần nhập tên/chủ đề cuộc họp. Khi tạo phiên mới, AI xóa
+term tự sinh của phiên trước và đăng ký tên hiển thị của các thành viên làm
+proper-name candidate. Tên một từ như `An`, `Long`, `Đạt` không được đưa thẳng
+vào decoder hotword để tránh bias từ phổ thông; chúng vẫn có thể được dùng bởi
+phonetic recovery.
 
-```dotenv
-ASR_ENHANCER=dpdfnet_baseline
-ASR_ENHANCER_MODEL=/home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx
-ASR_ENHANCER_THREADS=1
+Trong 90 giây đầu, hệ thống chỉ lưu raw Zipformer transcript của mic thắng mỗi
+global turn. Sau tối thiểu 6 turn, Qwen suy ra nhãn chủ đề và đề xuất term dưới
+dạng JSON. Một term chỉ được nhận khi alias quan sát xuất hiện nguyên văn trong
+ít nhất 2 global turn; snapshot được áp dụng cho Zipformer và phonetic recovery
+ở đầu turn tiếp theo. Cứ 60 giây hệ thống đánh giá lại để theo kịp việc đổi chủ
+đề từ cửa sổ rolling 180 giây, còn term tự sinh hết hạn sau TTL.
+
+File do người vận hành chỉnh tay có ưu tiên cao nhất và không bị pipeline ghi
+đè:
+
+```bash
+cp config/meeting_lexicon.example.txt \
+  /home/ntd/meeting_runtime/data/meeting_lexicon.txt
 ```
 
-Chỉ bật sau khi A/B trên audio của chính phòng họp cho thấy WER/CER giảm. Trên
-fixture hiện tại, DPDFNet làm tăng chi phí CPU và chưa cải thiện ASR. DPDFNet
-cũng không giải quyết được overlap speech hoặc tách người nói từ hai microphone.
+Sau khi sửa file trong lúc hệ thống đang chạy, reload tại ranh giới turn an
+toàn:
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/adaptive-dictionary/reload \
+  -H "X-Internal-Key: $INTERNAL_API_KEY"
+```
+
+## Guarded speech enhancement
+
+Enhancer chỉ tác động lên nhánh ASR và chạy stateful theo từng microphone.
+WavLM luôn nhận audio gốc. Frontend thử nghiệm hỗ trợ DPDFNet hoặc GTCRN:
+
+```dotenv
+ASR_FRONTEND=dpdfnet
+ASR_ENHANCER_MODEL_TYPE=dpdfnet
+ASR_ENHANCER_MODEL=/home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx
+ASR_ENHANCER_THREADS=1
+ASR_ENHANCER_ALIGNMENT_DELAY_MS=40
+ASR_PRESERVATION_MAX_SPEECH_MIX=0.10
+```
+
+Luồng tương ứng:
+
+```text
+raw 16-kHz audio ───────────────┐
+        └→ DPDFNet/GTCRN ───────┤
+                                └→ delay alignment
+                                   + voice-preservation gate
+                 → DC-block 20 Hz + gain chậm có giới hạn + peak limiter
+                 → Zipformer
+```
+
+Gate kiểm tra correlation, tỷ lệ năng lượng, dải thoại 1–4 kHz và clipping trên
+hai waveform đã căn thời gian. Frame làm mất giọng sẽ dùng raw; frame đạt gate
+chỉ được trộn tối đa 10%. DPDFNet baseline hiện được bù 40 ms, GTCRN dùng 0 ms.
+
+Benchmark hiện tại:
+
+| Frontend | WER clean | WER noisy | RTF noisy |
+|---|---:|---:|---:|
+| legacy | 8,26% | 21,82% | 0,061 |
+| guarded DPDFNet baseline | 7,54% | 22,93% | 0,158 |
+| guarded GTCRN | 8,26% | 21,82% | 0,133 |
+
+DPDFNet4 không tăng độ chính xác nhưng RTF lên khoảng 0,33. Streaming regression
+cũng chưa cho thấy hai enhancer vượt `legacy`, nên `ASR_FRONTEND=legacy` vẫn là
+mặc định. Nhánh guarded được giữ để A/B trên dữ liệu phòng thật; nó không giải
+quyết overlap speech hoặc tách người nói giữa các mic.
 
 ## Kiểm thử
 
@@ -190,8 +263,26 @@ Benchmark Zipformer:
 
 ```bash
 /home/ntd/meeting_runtime/venv_linux/bin/python -B scripts/evaluate_asr.py \
-  --mode light --enhancer none --postprocess phonetic \
+  --frontend legacy --mode light --enhancer none --postprocess phonetic \
   --chunk-size 32 --blank-penalty 0.4 --final-padding-seconds 0.66
+```
+
+So sánh frontend DPDFNet guarded:
+
+```bash
+/home/ntd/meeting_runtime/venv_linux/bin/python -B scripts/evaluate_asr.py \
+  --frontend dpdfnet --mode raw --enhancer none --postprocess phonetic \
+  --chunk-size 32 --blank-penalty 0.4 --final-padding-seconds 0.66
+```
+
+So sánh GTCRN mà không sửa `.env`:
+
+```bash
+/home/ntd/meeting_runtime/venv_linux/bin/python -B scripts/evaluate_asr.py \
+  --frontend dpdfnet --denoiser-model-type gtcrn \
+  --denoiser-model /home/ntd/meeting_runtime/models/gtcrn_simple.onnx \
+  --alignment-delay-ms 0 --mode raw --enhancer none \
+  --postprocess phonetic
 ```
 
 Streaming regression, yêu cầu backend đang chạy:
@@ -231,5 +322,5 @@ thời phục vụ frontend tĩnh. LiveKit dùng domain/WSS riêng và cần m�
 - ASR chưa đạt độ chính xác production với nói nhanh hoặc overlap mạnh.
 - Qwen chỉ nên tổng hợp biên bản từ transcript đã lưu, không dùng để rewrite
   từng câu realtime một cách tự do.
-- Bước tiếp theo là benchmark DPDFNet theo điều kiện phòng thật, cải thiện
-  dictionary/hotword theo tên cuộc họp và đánh giá riêng chất lượng biên bản.
+- Bước tiếp theo là benchmark topic-derived hotword trên nhiều chủ đề phòng
+  thật và đánh giá riêng chất lượng biên bản.

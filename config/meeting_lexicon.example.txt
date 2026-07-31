@@ -1,0 +1,8 @@
+# Canonical term | optional aliases heard in raw ASR
+# Copy to /home/ntd/meeting_runtime/data/meeting_lexicon.txt.
+# This file is operator-owned and is never overwritten by topic discovery.
+#
+# Uncomment only terms known to be relevant to the current deployment:
+# VNPT | vê en pê tê | v n p t
+# HDFS | h d f s | hdx
+# HBase | h base | h pase | hpase

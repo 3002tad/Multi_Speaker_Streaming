@@ -351,13 +351,29 @@ class DynamicEnhancementController:
         return float(np.clip(self._mix, 0.0, self.maximum_mix))
 
 
+class FixedEnhancementController:
+    """Use a constant enhanced/raw mix for controlled frontend experiments."""
+
+    def __init__(self, mix: float = 1.0) -> None:
+        self.mix = float(np.clip(mix, 0.0, 1.0))
+
+    def reset(self) -> None:
+        return None
+
+    def next_mix(self, quality: FrameQuality) -> float:
+        del quality
+        return self.mix
+
+
 class StreamingDpdfNetEnhancer:
     """Stateful 16-kHz DPDFNet adapter with dynamic raw/enhanced blending.
 
-    The online sherpa-onnx model has a one-frame look-ahead. Raw audio and
-    dynamic mix values are delayed by exactly the same amount before blending,
-    so Zipformer receives a time-aligned stream. This object is intentionally
-    ASR-only: WavLM must continue to receive raw VAD-selected audio.
+    ``alignment_delay_samples`` compensates for model latency by delaying the
+    raw branch and its mix envelope by the same amount. Without that explicit
+    compensation, a sample-count aligned blend can combine speech from two
+    different instants and smear short consonants. This object is
+    intentionally ASR-only: WavLM must continue to receive raw VAD-selected
+    audio.
     """
 
     def __init__(
@@ -365,14 +381,27 @@ class StreamingDpdfNetEnhancer:
         *,
         model_path: str,
         num_threads: int = 1,
-        controller: DynamicEnhancementController | None = None,
+        controller: (
+            DynamicEnhancementController
+            | FixedEnhancementController
+            | None
+        ) = None,
         denoiser: object | None = None,
         sample_rate: int = SAMPLE_RATE,
+        alignment_delay_samples: int = 0,
+        model_type: str = "dpdfnet",
     ) -> None:
         self.sample_rate = int(sample_rate)
+        self.alignment_delay_samples = max(
+            0, int(alignment_delay_samples)
+        )
+        self.model_type = model_type.strip().lower()
+        if self.model_type not in {"dpdfnet", "gtcrn"}:
+            raise ValueError(
+                "model_type must be either 'dpdfnet' or 'gtcrn'"
+            )
         self.controller = controller or DynamicEnhancementController()
-        self._raw_pending = np.empty(0, dtype=np.float32)
-        self._mix_pending = np.empty(0, dtype=np.float32)
+        self._reset_alignment_buffers()
         self._processed_samples = 0
         self._weighted_mix = 0.0
         self._peak_mix = 0.0
@@ -384,31 +413,44 @@ class StreamingDpdfNetEnhancer:
 
             if not Path(model_path).is_file():
                 raise FileNotFoundError(
-                    "Không tìm thấy DPDFNet model: "
+                    "Không tìm thấy speech-enhancement model: "
                     f"{model_path}"
                 )
             config = sherpa_onnx.OnlineSpeechDenoiserConfig()
-            config.model.dpdfnet.model = str(model_path)
+            if self.model_type == "dpdfnet":
+                config.model.dpdfnet.model = str(model_path)
+            else:
+                config.model.gtcrn.model = str(model_path)
             config.model.num_threads = max(1, int(num_threads))
             config.model.provider = "cpu"
             if not config.validate():
-                raise RuntimeError("DPDFNet configuration is invalid")
+                raise RuntimeError(
+                    f"{self.model_type} configuration is invalid"
+                )
             denoiser = sherpa_onnx.OnlineSpeechDenoiser(config)
         self._denoiser = denoiser
 
         model_rate = int(getattr(self._denoiser, "sample_rate"))
         if model_rate != self.sample_rate:
             raise ValueError(
-                "DPDFNet sample rate mismatch: "
+                f"{self.model_type} sample rate mismatch: "
                 f"expected {self.sample_rate}, got {model_rate}"
             )
 
     def reset(self) -> None:
         self._denoiser.reset()
         self.controller.reset()
-        self._raw_pending = np.empty(0, dtype=np.float32)
-        self._mix_pending = np.empty(0, dtype=np.float32)
+        self._reset_alignment_buffers()
         self.reset_telemetry()
+
+    def _reset_alignment_buffers(self) -> None:
+        self._raw_pending = np.zeros(
+            self.alignment_delay_samples, dtype=np.float32
+        )
+        # Never mix the model output into the leading delay padding.
+        self._mix_pending = np.zeros(
+            self.alignment_delay_samples, dtype=np.float32
+        )
 
     def reset_telemetry(self) -> None:
         self._processed_samples = 0
@@ -439,7 +481,26 @@ class StreamingDpdfNetEnhancer:
 
     def flush(self) -> np.ndarray:
         result = self._denoiser.flush()
-        return self._blend_result(result)
+        emitted = self._blend_result(result)
+        if self.alignment_delay_samples <= 0:
+            return emitted
+
+        # Some online denoisers keep output length equal to input length and
+        # therefore cannot emit the last algorithmic-delay samples. Preserve
+        # those samples from the delayed raw branch instead of truncating the
+        # end of an utterance.
+        tail_size = min(len(self._raw_pending), len(self._mix_pending))
+        if tail_size <= 0:
+            return emitted
+        raw_tail = self._raw_pending[:tail_size].copy()
+        self._raw_pending = self._raw_pending[tail_size:]
+        self._mix_pending = self._mix_pending[tail_size:]
+        self._processed_samples += tail_size
+        if emitted.size == 0:
+            return raw_tail
+        return np.concatenate((emitted, raw_tail)).astype(
+            np.float32, copy=False
+        )
 
     def _append_pending(self, samples: np.ndarray, mix: float) -> None:
         self._raw_pending = np.concatenate((self._raw_pending, samples))
@@ -471,6 +532,502 @@ class StreamingDpdfNetEnhancer:
         self._weighted_mix += float(np.sum(mix, dtype=np.float64))
         self._peak_mix = max(self._peak_mix, float(np.max(mix)))
         return blended.astype(np.float32, copy=False)
+
+
+@dataclass(frozen=True)
+class VoicePreservationTelemetry:
+    """Observability for the raw/enhanced preservation gate."""
+
+    input_seconds: float
+    evaluated_speech_frames: int
+    accepted_speech_frames: int
+    fallback_speech_frames: int
+    noise_frames: int
+    average_mix: float
+    peak_mix: float
+    average_correlation: float
+    average_energy_ratio: float
+    average_speech_band_ratio: float
+
+
+class StreamingVoicePreservationGate:
+    """Blend only enhanced frames that retain the aligned speech waveform.
+
+    The neural model is still evaluated in shadow on every input frame. Its
+    waveform is mixed into the ASR branch only when correlation, total energy,
+    the 1--4 kHz speech band, and clipping all pass conservative checks.
+    Otherwise the time-aligned raw branch is used.
+    """
+
+    def __init__(
+        self,
+        *,
+        sample_rate: int = SAMPLE_RATE,
+        alignment_delay_samples: int = 640,
+        minimum_correlation: float = 0.93,
+        minimum_energy_ratio: float = 0.65,
+        maximum_energy_ratio: float = 1.35,
+        minimum_speech_band_ratio: float = 0.80,
+        maximum_speech_mix: float = 0.10,
+        maximum_noise_mix: float = 0.65,
+        crossfade_samples: int = 240,
+        activity_floor: float = 0.003,
+    ) -> None:
+        if minimum_energy_ratio <= 0:
+            raise ValueError("minimum_energy_ratio must be positive")
+        if maximum_energy_ratio < minimum_energy_ratio:
+            raise ValueError(
+                "maximum_energy_ratio must not be below minimum"
+            )
+        self.sample_rate = int(sample_rate)
+        self.alignment_delay_samples = max(
+            0, int(alignment_delay_samples)
+        )
+        self.minimum_correlation = float(
+            np.clip(minimum_correlation, -1.0, 1.0)
+        )
+        self.minimum_energy_ratio = float(minimum_energy_ratio)
+        self.maximum_energy_ratio = float(maximum_energy_ratio)
+        self.minimum_speech_band_ratio = max(
+            0.0, float(minimum_speech_band_ratio)
+        )
+        self.maximum_speech_mix = float(
+            np.clip(maximum_speech_mix, 0.0, 1.0)
+        )
+        self.maximum_noise_mix = float(
+            np.clip(maximum_noise_mix, 0.0, 1.0)
+        )
+        self.crossfade_samples = max(0, int(crossfade_samples))
+        self.activity_floor = max(1e-6, float(activity_floor))
+        self.reset()
+
+    def reset(self) -> None:
+        self._raw_pending = np.zeros(
+            self.alignment_delay_samples, dtype=np.float32
+        )
+        self._current_mix = 0.0
+        self._input_samples = 0
+        self._output_samples = 0
+        self._weighted_mix = 0.0
+        self._peak_mix = 0.0
+        self._speech_frames = 0
+        self._accepted_speech_frames = 0
+        self._fallback_speech_frames = 0
+        self._noise_frames = 0
+        self._correlations: list[float] = []
+        self._energy_ratios: list[float] = []
+        self._speech_band_ratios: list[float] = []
+
+    @staticmethod
+    def _rms(samples: np.ndarray) -> float:
+        return float(
+            np.sqrt(np.mean(np.square(samples), dtype=np.float64))
+        )
+
+    def _speech_band_rms(self, samples: np.ndarray) -> float:
+        if len(samples) < 16:
+            return self._rms(samples)
+        centered = samples - float(np.mean(samples))
+        windowed = centered * np.hanning(len(centered)).astype(np.float32)
+        spectrum = np.fft.rfft(windowed)
+        frequencies = np.fft.rfftfreq(
+            len(windowed), d=1.0 / self.sample_rate
+        )
+        band = spectrum[
+            (frequencies >= 1_000.0) & (frequencies <= 4_000.0)
+        ]
+        if band.size == 0:
+            return 0.0
+        return float(
+            np.sqrt(np.mean(np.square(np.abs(band)), dtype=np.float64))
+        )
+
+    @staticmethod
+    def _correlation(
+        raw: np.ndarray, enhanced: np.ndarray
+    ) -> float:
+        raw_centered = raw - float(np.mean(raw))
+        enhanced_centered = enhanced - float(np.mean(enhanced))
+        denominator = float(
+            np.linalg.norm(raw_centered)
+            * np.linalg.norm(enhanced_centered)
+        )
+        if denominator <= 1e-9:
+            return 1.0
+        return float(
+            np.clip(
+                np.dot(raw_centered, enhanced_centered) / denominator,
+                -1.0,
+                1.0,
+            )
+        )
+
+    def process(
+        self,
+        raw_audio: np.ndarray,
+        enhanced_audio: np.ndarray,
+        *,
+        quality: FrameQuality,
+    ) -> np.ndarray:
+        raw_input = np.asarray(
+            raw_audio, dtype=np.float32
+        ).reshape(-1)
+        enhanced = np.asarray(
+            enhanced_audio, dtype=np.float32
+        ).reshape(-1)
+        if raw_input.size:
+            self._raw_pending = np.concatenate(
+                (self._raw_pending, raw_input)
+            )
+            self._input_samples += len(raw_input)
+        if enhanced.size == 0:
+            return enhanced.copy()
+
+        usable = min(len(enhanced), len(self._raw_pending))
+        if usable <= 0:
+            return np.empty(0, dtype=np.float32)
+        raw = self._raw_pending[:usable]
+        self._raw_pending = self._raw_pending[usable:]
+        enhanced = enhanced[:usable]
+
+        raw_rms = self._rms(raw)
+        speech_active = raw_rms >= max(
+            self.activity_floor,
+            float(quality.noise_floor) * 1.5,
+        )
+        if speech_active:
+            correlation = self._correlation(raw, enhanced)
+            enhanced_rms = self._rms(enhanced)
+            energy_ratio = enhanced_rms / max(raw_rms, 1e-7)
+            raw_band = self._speech_band_rms(raw)
+            enhanced_band = self._speech_band_rms(enhanced)
+            speech_band_ratio = enhanced_band / max(raw_band, 1e-7)
+            enhanced_clipping = float(
+                np.mean(np.abs(enhanced) >= 0.98)
+            )
+            clipping_preserved = enhanced_clipping <= (
+                float(quality.clipping_ratio) + 0.001
+            )
+            preserved = (
+                correlation >= self.minimum_correlation
+                and self.minimum_energy_ratio
+                <= energy_ratio
+                <= self.maximum_energy_ratio
+                and speech_band_ratio >= self.minimum_speech_band_ratio
+                and clipping_preserved
+            )
+            target_mix = self.maximum_speech_mix if preserved else 0.0
+            self._speech_frames += 1
+            if preserved:
+                self._accepted_speech_frames += 1
+            else:
+                self._fallback_speech_frames += 1
+            self._correlations.append(correlation)
+            self._energy_ratios.append(energy_ratio)
+            self._speech_band_ratios.append(speech_band_ratio)
+        else:
+            target_mix = self.maximum_noise_mix
+            self._noise_frames += 1
+
+        mix = np.full(usable, target_mix, dtype=np.float32)
+        fade_size = min(self.crossfade_samples, usable)
+        if fade_size:
+            mix[:fade_size] = np.linspace(
+                self._current_mix,
+                target_mix,
+                fade_size,
+                endpoint=True,
+                dtype=np.float32,
+            )
+        self._current_mix = target_mix
+        output = raw * (1.0 - mix) + enhanced * mix
+        self._output_samples += usable
+        self._weighted_mix += float(np.sum(mix, dtype=np.float64))
+        self._peak_mix = max(
+            self._peak_mix, float(np.max(mix, initial=0.0))
+        )
+        return output.astype(np.float32, copy=False)
+
+    def flush(self) -> np.ndarray:
+        """Return speech not covered by the model without truncating it."""
+        tail = self._raw_pending.copy()
+        self._raw_pending = np.empty(0, dtype=np.float32)
+        if tail.size:
+            self._output_samples += len(tail)
+            # The uncovered model tail is deliberately 100% raw.
+            self._current_mix = 0.0
+        return tail
+
+    def telemetry(self) -> VoicePreservationTelemetry:
+        def average(values: list[float]) -> float:
+            return float(np.mean(values)) if values else 0.0
+
+        return VoicePreservationTelemetry(
+            input_seconds=self._input_samples / self.sample_rate,
+            evaluated_speech_frames=self._speech_frames,
+            accepted_speech_frames=self._accepted_speech_frames,
+            fallback_speech_frames=self._fallback_speech_frames,
+            noise_frames=self._noise_frames,
+            average_mix=self._weighted_mix
+            / max(1, self._output_samples),
+            peak_mix=float(self._peak_mix),
+            average_correlation=average(self._correlations),
+            average_energy_ratio=average(self._energy_ratios),
+            average_speech_band_ratio=average(
+                self._speech_band_ratios
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class PostConditioningTelemetry:
+    """Observability for the lightweight stage after neural enhancement."""
+
+    processed_seconds: float
+    average_gain: float
+    minimum_gain: float
+    maximum_gain: float
+    peak_limited_frames: int
+
+
+class StreamingAsrPostConditioner:
+    """Minimal stateful conditioning after DPDFNet.
+
+    DPDFNet receives the untouched 16-kHz waveform. This stage only removes
+    residual DC below the speech band, applies slow bounded gain correction
+    to reduce microphone-level differences, and prevents clipping. It does
+    not estimate noise or attenuate spectral content.
+    """
+
+    def __init__(
+        self,
+        *,
+        sample_rate: int = SAMPLE_RATE,
+        dc_block_hz: float = 20.0,
+        target_rms: float = 0.055,
+        minimum_gain: float = 0.75,
+        maximum_gain: float = 1.50,
+        attenuation_rate: float = 0.08,
+        boost_rate: float = 0.02,
+        activity_floor: float = 0.003,
+        peak_limit: float = 0.97,
+    ) -> None:
+        if minimum_gain <= 0.0 or maximum_gain < minimum_gain:
+            raise ValueError("invalid post-conditioning gain range")
+        if not 0.0 < peak_limit <= 1.0:
+            raise ValueError("peak_limit must be in (0, 1]")
+        self.sample_rate = int(sample_rate)
+        self.target_rms = max(1e-5, float(target_rms))
+        self.minimum_gain = float(minimum_gain)
+        self.maximum_gain = float(maximum_gain)
+        self.attenuation_rate = float(
+            np.clip(attenuation_rate, 0.0, 1.0)
+        )
+        self.boost_rate = float(np.clip(boost_rate, 0.0, 1.0))
+        self.activity_floor = max(0.0, float(activity_floor))
+        self.peak_limit = float(peak_limit)
+        self._dc_alpha = math.exp(
+            -2.0 * math.pi * max(0.0, float(dc_block_hz))
+            / self.sample_rate
+        )
+        self.reset()
+
+    def reset(self) -> None:
+        self._previous_input = 0.0
+        self._previous_output = 0.0
+        self._gain = 1.0
+        self._processed_samples = 0
+        self._weighted_gain = 0.0
+        self._minimum_observed_gain = 1.0
+        self._maximum_observed_gain = 1.0
+        self._peak_limited_frames = 0
+
+    def process(self, audio: np.ndarray) -> np.ndarray:
+        samples = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if samples.size == 0:
+            return samples.copy()
+
+        conditioned = np.empty_like(samples)
+        previous_input = self._previous_input
+        previous_output = self._previous_output
+        alpha = self._dc_alpha
+        for index, sample in enumerate(samples):
+            output = alpha * (
+                previous_output + float(sample) - previous_input
+            )
+            conditioned[index] = output
+            previous_input = float(sample)
+            previous_output = output
+        self._previous_input = previous_input
+        self._previous_output = previous_output
+
+        rms = float(
+            np.sqrt(np.mean(np.square(conditioned), dtype=np.float64))
+        )
+        if rms >= self.activity_floor:
+            desired_gain = float(
+                np.clip(
+                    self.target_rms / max(rms, 1e-6),
+                    self.minimum_gain,
+                    self.maximum_gain,
+                )
+            )
+            rate = (
+                self.attenuation_rate
+                if desired_gain < self._gain
+                else self.boost_rate
+            )
+            self._gain += rate * (desired_gain - self._gain)
+
+        conditioned *= self._gain
+        peak = float(np.max(np.abs(conditioned)))
+        if peak > self.peak_limit:
+            conditioned *= self.peak_limit / peak
+            self._peak_limited_frames += 1
+
+        self._processed_samples += len(conditioned)
+        self._weighted_gain += self._gain * len(conditioned)
+        self._minimum_observed_gain = min(
+            self._minimum_observed_gain, self._gain
+        )
+        self._maximum_observed_gain = max(
+            self._maximum_observed_gain, self._gain
+        )
+        return conditioned.astype(np.float32, copy=False)
+
+    def telemetry(self) -> PostConditioningTelemetry:
+        average_gain = self._weighted_gain / max(
+            1, self._processed_samples
+        )
+        return PostConditioningTelemetry(
+            processed_seconds=self._processed_samples / self.sample_rate,
+            average_gain=float(average_gain),
+            minimum_gain=float(self._minimum_observed_gain),
+            maximum_gain=float(self._maximum_observed_gain),
+            peak_limited_frames=self._peak_limited_frames,
+        )
+
+
+class StreamingGuardedEnhancementFrontend:
+    """Raw → denoiser candidate → preservation gate → post-conditioner."""
+
+    def __init__(
+        self,
+        *,
+        model_path: str,
+        num_threads: int = 1,
+        denoiser: object | None = None,
+        sample_rate: int = SAMPLE_RATE,
+        dc_block_hz: float = 20.0,
+        target_rms: float = 0.055,
+        minimum_gain: float = 0.75,
+        maximum_gain: float = 1.50,
+        attenuation_rate: float = 0.08,
+        boost_rate: float = 0.02,
+        activity_floor: float = 0.003,
+        peak_limit: float = 0.97,
+        model_type: str = "dpdfnet",
+        alignment_delay_samples: int = 640,
+        preservation_minimum_correlation: float = 0.93,
+        preservation_minimum_energy_ratio: float = 0.65,
+        preservation_maximum_energy_ratio: float = 1.35,
+        preservation_minimum_speech_band_ratio: float = 0.80,
+        preservation_maximum_speech_mix: float = 0.10,
+        preservation_maximum_noise_mix: float = 0.65,
+        preservation_crossfade_samples: int = 240,
+    ) -> None:
+        self.model_type = model_type.strip().lower()
+        self.enhancer = StreamingDpdfNetEnhancer(
+            model_path=model_path,
+            num_threads=num_threads,
+            denoiser=denoiser,
+            sample_rate=sample_rate,
+            controller=FixedEnhancementController(1.0),
+            alignment_delay_samples=0,
+            model_type=self.model_type,
+        )
+        self.preservation_gate = StreamingVoicePreservationGate(
+            sample_rate=sample_rate,
+            alignment_delay_samples=alignment_delay_samples,
+            minimum_correlation=preservation_minimum_correlation,
+            minimum_energy_ratio=preservation_minimum_energy_ratio,
+            maximum_energy_ratio=preservation_maximum_energy_ratio,
+            minimum_speech_band_ratio=(
+                preservation_minimum_speech_band_ratio
+            ),
+            maximum_speech_mix=preservation_maximum_speech_mix,
+            maximum_noise_mix=preservation_maximum_noise_mix,
+            crossfade_samples=preservation_crossfade_samples,
+            activity_floor=activity_floor,
+        )
+        self.conditioner = StreamingAsrPostConditioner(
+            sample_rate=sample_rate,
+            dc_block_hz=dc_block_hz,
+            target_rms=target_rms,
+            minimum_gain=minimum_gain,
+            maximum_gain=maximum_gain,
+            attenuation_rate=attenuation_rate,
+            boost_rate=boost_rate,
+            activity_floor=activity_floor,
+            peak_limit=peak_limit,
+        )
+
+    def reset(self) -> None:
+        self.enhancer.reset()
+        self.preservation_gate.reset()
+        self.conditioner.reset()
+
+    def process(
+        self,
+        audio: np.ndarray,
+        *,
+        quality: FrameQuality,
+    ) -> np.ndarray:
+        enhanced = self.enhancer.process(audio, quality=quality)
+        preserved = self.preservation_gate.process(
+            audio, enhanced, quality=quality
+        )
+        return self.conditioner.process(preserved)
+
+    def flush(self) -> np.ndarray:
+        enhanced_tail = self.enhancer.flush()
+        parts = []
+        if enhanced_tail.size:
+            # No new raw samples arrive at flush; the gate consumes the raw
+            # samples that were delayed for model alignment.
+            quality = FrameQuality(
+                rms=0.0,
+                peak=0.0,
+                clipping_ratio=0.0,
+                noise_floor=self.preservation_gate.activity_floor,
+                snr_db=-20.0,
+                score=-40.0,
+            )
+            aligned = self.preservation_gate.process(
+                np.empty(0, dtype=np.float32),
+                enhanced_tail,
+                quality=quality,
+            )
+            if aligned.size:
+                parts.append(aligned)
+        raw_tail = self.preservation_gate.flush()
+        if raw_tail.size:
+            parts.append(raw_tail)
+        if not parts:
+            return np.empty(0, dtype=np.float32)
+        return self.conditioner.process(np.concatenate(parts))
+
+    def telemetry(
+        self,
+    ) -> tuple[PostConditioningTelemetry, VoicePreservationTelemetry]:
+        return (
+            self.conditioner.telemetry(),
+            self.preservation_gate.telemetry(),
+        )
+
+
+# Backwards-compatible alias for earlier A/B scripts.
+StreamingDpdfNetFrontend = StreamingGuardedEnhancementFrontend
 
 
 @dataclass

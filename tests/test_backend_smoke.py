@@ -48,6 +48,14 @@ class BackendSmokeTests(unittest.TestCase):
         with (
             patch("backend.api.main.settings", test_settings),
             patch("backend.api.main.repository", test_repository),
+            patch(
+                "backend.api.main._reset_adaptive_dictionary",
+                AsyncMock(return_value={"status": "ready"}),
+            ),
+            patch(
+                "backend.api.main._register_dictionary_participant",
+                AsyncMock(return_value={"status": "ready"}),
+            ),
             TestClient(app) as client,
         ):
             created = client.post(
@@ -74,7 +82,7 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertEqual(joined.json()["role"], "participant")
             self.assertTrue(joined.json()["token"])
 
-    def test_host_title_prepares_dictionary_without_blocking_room(self) -> None:
+    def test_host_name_resets_dictionary_without_meeting_title(self) -> None:
         test_settings = replace(
             main.settings,
             livekit_api_key="demo-key",
@@ -85,21 +93,17 @@ class BackendSmokeTests(unittest.TestCase):
         )
         with (
             patch("backend.api.main.settings", test_settings),
-            patch("backend.api.main._prepare_adaptive_dictionary", prepared),
+            patch("backend.api.main._reset_adaptive_dictionary", prepared),
             TestClient(app) as client,
         ):
             created = client.post(
                 "/api/meeting/create",
-                json={
-                    "host_name": "Chủ trì",
-                    "meeting_title": "Triển khai VNPT SmartCA",
-                },
+                json={"host_name": "Chủ trì"},
             )
 
         self.assertEqual(created.status_code, 200)
-        self.assertEqual(created.json()["meeting_title"], "Triển khai VNPT SmartCA")
         self.assertEqual(created.json()["adaptive_dictionary"]["status"], "ready")
-        prepared.assert_awaited_once_with("Triển khai VNPT SmartCA")
+        prepared.assert_awaited_once_with(["Chủ trì"])
 
     def test_internal_transcript_event_requires_key(self) -> None:
         test_settings = replace(

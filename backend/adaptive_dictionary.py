@@ -14,7 +14,7 @@ phonetic gate.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 import re
@@ -90,19 +90,26 @@ class AdaptiveDictionary:
         *,
         state_path: Path,
         seed_entries: Iterable[GlossaryEntry] = (),
+        manual_entries: Iterable[GlossaryEntry] = (),
         dynamic_entries: Iterable[GlossaryEntry] = (),
     ) -> None:
         self.state_path = state_path
         self._seed_entries = tuple(seed_entries)
+        self._manual_entries = tuple(manual_entries)
         self._dynamic_entries = tuple(dynamic_entries)
 
     @classmethod
     def from_paths(
-        cls, *, seed_path: Path | None, state_path: Path
+        cls,
+        *,
+        seed_path: Path | None,
+        state_path: Path,
+        manual_path: Path | None = None,
     ) -> "AdaptiveDictionary":
         return cls(
             state_path=state_path,
             seed_entries=cls._read_seed_entries(seed_path),
+            manual_entries=cls._read_manual_entries(manual_path),
             dynamic_entries=cls._read_dynamic_entries(state_path),
         )
 
@@ -127,6 +134,36 @@ class AdaptiveDictionary:
                         canonical=canonical,
                         aliases=aliases,
                         source="seed",
+                        confidence=1.0,
+                        last_seen=now,
+                    )
+                )
+        return tuple(entries)
+
+    @staticmethod
+    def _read_manual_entries(path: Path | None) -> tuple[GlossaryEntry, ...]:
+        """Read operator-owned terms that are trusted for both ASR branches."""
+        if not path or not path.exists():
+            return ()
+        now = _utc_now().isoformat()
+        entries: list[GlossaryEntry] = []
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            fields = re.split(r"\s*(?:\||\t)\s*", line)
+            canonical = fields[0].strip()
+            aliases = tuple(
+                dict.fromkeys(
+                    item.strip() for item in fields[1:] if item.strip()
+                )
+            )
+            if canonical:
+                entries.append(
+                    GlossaryEntry(
+                        canonical=canonical,
+                        aliases=aliases,
+                        source="manual",
                         confidence=1.0,
                         last_seen=now,
                     )
@@ -177,7 +214,11 @@ class AdaptiveDictionary:
         """Return active canonical entries, merging duplicate canonicals safely."""
         now = now or _utc_now()
         merged: dict[str, GlossaryEntry] = {}
-        for entry in (*self._seed_entries, *self._dynamic_entries):
+        for entry in (
+            *self._seed_entries,
+            *self._manual_entries,
+            *self._dynamic_entries,
+        ):
             if not entry.is_active(now=now):
                 continue
             key = entry.canonical.casefold()
@@ -194,12 +235,19 @@ class AdaptiveDictionary:
     ) -> tuple[tuple[str, tuple[str, ...]], ...]:
         """Return only active, sufficiently evidenced dynamic phonetic terms."""
         now = now or _utc_now()
-        return tuple(
-            (entry.canonical, entry.aliases)
-            for entry in self._dynamic_entries
-            if entry.is_active(now=now)
-            and entry.confidence >= minimum_confidence
-        )
+        result: list[tuple[str, tuple[str, ...]]] = []
+        seen: set[str] = set()
+        for entry in (*self._manual_entries, *self._dynamic_entries):
+            key = entry.canonical.casefold()
+            if (
+                key in seen
+                or not entry.is_active(now=now)
+                or entry.confidence < minimum_confidence
+            ):
+                continue
+            seen.add(key)
+            result.append((entry.canonical, entry.aliases))
+        return tuple(result)
 
     def active_dynamic_entries(
         self, *, now: datetime | None = None
@@ -212,80 +260,28 @@ class AdaptiveDictionary:
         )
 
     @staticmethod
-    def _title_acronym_aliases(term: str) -> tuple[str, ...]:
-        """Return deterministic spoken forms for a title-supplied acronym."""
-        letters = [character for character in term.upper() if character.isalpha()]
-        if len(letters) < 2 or len(letters) != len(term):
-            return ()
-        vietnamese_names = {
-            "A": "a", "B": "bê", "C": "xê", "D": "đê", "E": "e",
-            "F": "ép", "G": "gi", "H": "hát", "I": "i", "K": "ca",
-            "L": "lờ", "M": "em", "N": "en", "O": "ô", "P": "pê",
-            "Q": "quy", "R": "rờ", "S": "ét", "T": "tê", "U": "u",
-            "V": "vê", "X": "ích", "Y": "i", "Z": "dét",
-        }
-        return (
-            " ".join(letters).casefold(),
-            " ".join(vietnamese_names.get(letter, letter) for letter in letters),
-        )
-
-    @classmethod
-    def entries_from_meeting_title(
-        cls, title: str, *, ttl_hours: float, now: datetime | None = None
+    def entries_from_participants(
+        display_names: Iterable[str],
+        *,
+        now: datetime | None = None,
     ) -> tuple[GlossaryEntry, ...]:
-        """Derive only explicit technical terms from a user-supplied title.
-
-        A regular sentence in a title is not a reliable glossary source.  This
-        function therefore accepts only quoted phrases, all-caps acronyms,
-        camel-case product names and tokens containing a digit.  It is safe to
-        run automatically when a room is created.
-        """
-        title = " ".join(title.split()).strip()
-        if not title:
-            return ()
+        """Create meeting-scoped proper-name entries from participant names."""
         now = now or _utc_now()
-        expires_at = (now + timedelta(hours=max(0.25, ttl_hours))).isoformat()
-        candidates: list[tuple[str, tuple[str, ...]]] = []
-        for quoted in re.findall(r"[\"'“”]([^\"'“”]{2,80})[\"'“”]", title):
-            phrase = " ".join(quoted.split()).strip()
-            if phrase:
-                candidates.append((phrase, ()))
-        # Two-letter generic abbreviations such as AI/IT are normal meeting
-        # vocabulary, not safe decoder hotwords. Keep title-derived acronyms
-        # at three characters or more; the ASR baseline already handles them.
-        for token in re.findall(r"\b[A-ZĐ]{3,12}\b", title):
-            candidates.append((token, cls._title_acronym_aliases(token)))
-        for token in re.findall(r"\b[A-Za-z][A-Za-z0-9-]{1,40}\b", title):
-            # SmartCA, Qwen3, DPDFNet and v2-style identifiers are explicit
-            # names, unlike ordinary Vietnamese title words.
-            has_digit = any(character.isdigit() for character in token)
-            has_inner_capital = any(
-                character.isupper() for character in token[1:]
-            )
-            if len(token) < 3 and token.isupper():
-                continue
-            if has_digit or has_inner_capital:
-                candidates.append((token, ()))
-
         entries: list[GlossaryEntry] = []
         seen: set[str] = set()
-        for canonical, aliases in candidates:
-            canonical = canonical.strip()
+        for raw_name in display_names:
+            canonical = " ".join(str(raw_name).split()).strip()[:80]
             key = canonical.casefold()
             if not canonical or key in seen:
                 continue
             seen.add(key)
-            deduplicated_aliases = tuple(
-                dict.fromkeys(alias for alias in aliases if alias.strip())
-            )
             entries.append(
                 GlossaryEntry(
                     canonical=canonical,
-                    aliases=deduplicated_aliases,
-                    source="meeting_title",
-                    confidence=0.98,
+                    aliases=(),
+                    source="participant",
+                    confidence=1.0,
                     last_seen=now.isoformat(),
-                    expires_at=expires_at,
                 )
             )
         return tuple(entries)
@@ -303,8 +299,16 @@ class AdaptiveDictionary:
         now = now or _utc_now()
         seen: set[str] = set()
         phrases: list[str] = []
-        for entry in self._dynamic_entries:
+        for entry in (*self._manual_entries, *self._dynamic_entries):
             if not entry.is_trusted_for_hotword(minimum_confidence, now=now):
+                continue
+            # Single-token participant display names such as "Long", "An" or
+            # "Đạt" are ordinary Vietnamese words too.  They stay available
+            # to the final phonetic gate but must not bias every decoder beam.
+            if (
+                entry.source == "participant"
+                and len(entry.canonical.split()) < 2
+            ):
                 continue
             phrase = entry.canonical.strip()
             key = phrase.casefold()

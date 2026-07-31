@@ -27,6 +27,7 @@ if str(SCRIPT_PROJECT_ROOT) not in sys.path:
 from backend.audio_pipeline import (
     AudioQualityTracker,
     DynamicEnhancementController,
+    StreamingGuardedEnhancementFrontend,
     StreamingDpdfNetEnhancer,
     StreamingAsrPreprocessor,
 )
@@ -43,6 +44,7 @@ from backend.evaluation import (
     word_error_breakdown,
     word_error_rate,
 )
+from backend.final_turn import choose_redecode_transcript
 from backend.text_refinement import (
     EpitranVietnamesePhonemizer,
     G2POnnxPhonemizer,
@@ -135,6 +137,7 @@ def build_phonetic_postprocessor() -> Callable[[str], str]:
     dictionary = AdaptiveDictionary.from_paths(
         seed_path=settings.phonetic_dictionary_path,
         state_path=settings.adaptive_dictionary_state_path,
+        manual_path=settings.adaptive_dictionary_manual_path,
     )
     g2p = None
     triple = None
@@ -192,21 +195,67 @@ def decode(
     recognizer: sherpa_onnx.OnlineRecognizer,
     audio: np.ndarray,
     *,
+    frontend_name: str,
+    denoiser_model_type: str,
+    denoiser_model_path: Path,
+    alignment_delay_ms: float,
     use_light_preprocessing: bool,
     enhancer_name: str,
     final_padding_seconds: float,
-) -> tuple[str, dict[str, float] | None]:
+    defer_decode_until_final: bool = False,
+) -> tuple[str, dict[str, object] | None]:
     stream = recognizer.create_stream()
     tracker = AudioQualityTracker()
     processor = StreamingAsrPreprocessor(
         high_pass_hz=settings.asr_high_pass_hz,
         target_rms=settings.asr_target_rms,
     )
+    guarded_frontend = None
     enhancer = None
-    if enhancer_name == "dpdfnet_baseline":
-        enhancer = StreamingDpdfNetEnhancer(
-            model_path=str(settings.asr_enhancer_model),
+    if frontend_name == "dpdfnet":
+        guarded_frontend = StreamingGuardedEnhancementFrontend(
+            model_path=str(denoiser_model_path),
             num_threads=settings.asr_enhancer_threads,
+            model_type=denoiser_model_type,
+            alignment_delay_samples=round(alignment_delay_ms * 16),
+            preservation_minimum_correlation=(
+                settings.asr_preservation_min_correlation
+            ),
+            preservation_minimum_energy_ratio=(
+                settings.asr_preservation_min_energy_ratio
+            ),
+            preservation_maximum_energy_ratio=(
+                settings.asr_preservation_max_energy_ratio
+            ),
+            preservation_minimum_speech_band_ratio=(
+                settings.asr_preservation_min_speech_band_ratio
+            ),
+            preservation_maximum_speech_mix=(
+                settings.asr_preservation_max_speech_mix
+            ),
+            preservation_maximum_noise_mix=(
+                settings.asr_preservation_max_noise_mix
+            ),
+            preservation_crossfade_samples=round(
+                settings.asr_preservation_crossfade_ms * 16
+            ),
+            dc_block_hz=settings.asr_dpdfnet_post_dc_hz,
+            target_rms=settings.asr_dpdfnet_post_target_rms,
+            minimum_gain=settings.asr_dpdfnet_post_min_gain,
+            maximum_gain=settings.asr_dpdfnet_post_max_gain,
+            attenuation_rate=(
+                settings.asr_dpdfnet_post_attenuation_rate
+            ),
+            boost_rate=settings.asr_dpdfnet_post_boost_rate,
+            activity_floor=settings.asr_dpdfnet_post_activity_floor,
+            peak_limit=settings.asr_dpdfnet_post_peak_limit,
+        )
+    elif enhancer_name == "dpdfnet_baseline":
+        enhancer = StreamingDpdfNetEnhancer(
+            model_path=str(denoiser_model_path),
+            num_threads=settings.asr_enhancer_threads,
+            model_type=denoiser_model_type,
+            alignment_delay_samples=round(alignment_delay_ms * 16),
             controller=DynamicEnhancementController(
                 bypass_snr_db=settings.asr_enhancer_bypass_snr_db,
                 full_snr_db=settings.asr_enhancer_full_snr_db,
@@ -224,21 +273,58 @@ def decode(
         measured = tracker.measure(
             frame, speech_active=speech_active
         )
-        if use_light_preprocessing:
-            frame = processor.process(frame, quality=measured)
-        if enhancer is not None:
-            frame = enhancer.process(frame, quality=measured)
+        if guarded_frontend is not None:
+            frame = guarded_frontend.process(frame, quality=measured)
+        else:
+            if use_light_preprocessing:
+                frame = processor.process(frame, quality=measured)
+            if enhancer is not None:
+                frame = enhancer.process(frame, quality=measured)
         if frame.size:
             stream.accept_waveform(SAMPLE_RATE, frame)
-        while recognizer.is_ready(stream):
-            recognizer.decode_stream(stream)
+        if not defer_decode_until_final:
+            while recognizer.is_ready(stream):
+                recognizer.decode_stream(stream)
     enhancement = None
-    if enhancer is not None:
+    if guarded_frontend is not None:
+        tail = guarded_frontend.flush()
+        if tail.size:
+            stream.accept_waveform(SAMPLE_RATE, tail)
+            if not defer_decode_until_final:
+                while recognizer.is_ready(stream):
+                    recognizer.decode_stream(stream)
+        post, gate = guarded_frontend.telemetry()
+        enhancement = {
+            "frontend": "guarded",
+            "model_type": denoiser_model_type,
+            "alignment_delay_ms": alignment_delay_ms,
+            "speech_frames": gate.evaluated_speech_frames,
+            "accepted_speech_frames": gate.accepted_speech_frames,
+            "fallback_speech_frames": gate.fallback_speech_frames,
+            "noise_frames": gate.noise_frames,
+            "average_mix": round(gate.average_mix, 4),
+            "peak_mix": round(gate.peak_mix, 4),
+            "average_correlation": round(
+                gate.average_correlation, 4
+            ),
+            "average_energy_ratio": round(
+                gate.average_energy_ratio, 4
+            ),
+            "average_speech_band_ratio": round(
+                gate.average_speech_band_ratio, 4
+            ),
+            "average_gain": round(post.average_gain, 4),
+            "minimum_gain": round(post.minimum_gain, 4),
+            "maximum_gain": round(post.maximum_gain, 4),
+            "peak_limited_frames": post.peak_limited_frames,
+        }
+    elif enhancer is not None:
         tail = enhancer.flush()
         if tail.size:
             stream.accept_waveform(SAMPLE_RATE, tail)
-            while recognizer.is_ready(stream):
-                recognizer.decode_stream(stream)
+            if not defer_decode_until_final:
+                while recognizer.is_ready(stream):
+                    recognizer.decode_stream(stream)
         telemetry = enhancer.telemetry()
         enhancement = {
             "average_mix": round(telemetry.average_mix, 4),
@@ -250,8 +336,9 @@ def decode(
     )
     if padding.size:
         stream.accept_waveform(SAMPLE_RATE, padding)
-        while recognizer.is_ready(stream):
-            recognizer.decode_stream(stream)
+        if not defer_decode_until_final:
+            while recognizer.is_ready(stream):
+                recognizer.decode_stream(stream)
     stream.input_finished()
     while recognizer.is_ready(stream):
         recognizer.decode_stream(stream)
@@ -267,6 +354,10 @@ def decode(
 def evaluate(
     mode: str,
     *,
+    frontend_name: str,
+    denoiser_model_type: str,
+    denoiser_model_path: Path,
+    alignment_delay_ms: float,
     enhancer_name: str,
     max_active_paths: int,
     chunk_size: int,
@@ -274,6 +365,7 @@ def evaluate(
     blank_penalty: float,
     hotwords: tuple[str, ...] = (),
     postprocess: str = "none",
+    final_turn_redecode: bool = False,
     truth_path: Path = PROJECT_ROOT / "audio" / "truth.csv",
 ) -> dict:
     truth_rows = load_transcript_truth(truth_path)
@@ -311,11 +403,47 @@ def evaluate(
         raw_hypothesis, enhancement = decode(
             recognizer,
             audio,
+            frontend_name=frontend_name,
+            denoiser_model_type=denoiser_model_type,
+            denoiser_model_path=denoiser_model_path,
+            alignment_delay_ms=alignment_delay_ms,
             use_light_preprocessing=mode == "light",
             enhancer_name=enhancer_name,
             final_padding_seconds=final_padding_seconds,
         )
-        hypothesis = postprocessor(raw_hypothesis)
+        redecode = None
+        selected_raw = raw_hypothesis
+        if final_turn_redecode:
+            replayed, _ = decode(
+                recognizer,
+                audio,
+                frontend_name=frontend_name,
+                denoiser_model_type=denoiser_model_type,
+                denoiser_model_path=denoiser_model_path,
+                alignment_delay_ms=alignment_delay_ms,
+                use_light_preprocessing=mode == "light",
+                enhancer_name=enhancer_name,
+                final_padding_seconds=(
+                    final_padding_seconds
+                    + settings.asr_final_turn_redecode_tail_padding_seconds
+                ),
+                defer_decode_until_final=True,
+            )
+            decision = choose_redecode_transcript(
+                raw_hypothesis,
+                replayed,
+                minimum_overlap=settings.asr_final_turn_redecode_min_overlap,
+                maximum_word_ratio=settings.asr_final_turn_redecode_max_word_ratio,
+            )
+            selected_raw = decision.text
+            redecode = {
+                "candidate_text": replayed,
+                "selected": decision.selected_redecode,
+                "decision": decision.reason,
+                "overlap": round(decision.overlap, 4),
+                "word_ratio": round(decision.word_ratio, 4),
+            }
+        hypothesis = postprocessor(selected_raw)
         elapsed = time.perf_counter() - item_started
         item = {
             "voice": truth.voice,
@@ -336,12 +464,18 @@ def evaluate(
         item["substitutions"] = breakdown["substitutions"]
         if hypothesis != raw_hypothesis:
             item["raw_hypothesis"] = raw_hypothesis
+        if redecode is not None:
+            item["final_turn_redecode"] = redecode
         if enhancement is not None:
             item["enhancement"] = enhancement
         rows.append(item)
     elapsed = time.perf_counter() - started
     return {
         "mode": mode,
+        "frontend": frontend_name,
+        "denoiser_model_type": denoiser_model_type,
+        "denoiser_model_path": str(denoiser_model_path),
+        "alignment_delay_ms": alignment_delay_ms,
         "enhancer": enhancer_name,
         "max_active_paths": max_active_paths,
         "chunk_size": chunk_size,
@@ -349,6 +483,7 @@ def evaluate(
         "blank_penalty": blank_penalty,
         "hotwords": list(hotwords),
         "postprocess": postprocess,
+        "final_turn_redecode": final_turn_redecode,
         "mean_wer": round(
             float(np.mean([item["wer"] for item in rows])), 4
         ),
@@ -368,6 +503,33 @@ def main() -> None:
         "--mode",
         choices=("raw", "light", "both"),
         default="both",
+    )
+    parser.add_argument(
+        "--frontend",
+        choices=("legacy", "dpdfnet"),
+        default="legacy",
+        help=(
+            "legacy = optional light DSP/enhancer; dpdfnet = raw plus "
+            "a guarded DPDFNet/GTCRN candidate and post-conditioning"
+        ),
+    )
+    parser.add_argument(
+        "--denoiser-model-type",
+        choices=("dpdfnet", "gtcrn"),
+        default=settings.asr_enhancer_model_type,
+        help="Online denoiser architecture used by the guarded frontend.",
+    )
+    parser.add_argument(
+        "--denoiser-model",
+        type=Path,
+        default=settings.asr_enhancer_model,
+        help="Path to the DPDFNet or GTCRN ONNX model.",
+    )
+    parser.add_argument(
+        "--alignment-delay-ms",
+        type=float,
+        default=settings.asr_enhancer_alignment_delay_ms,
+        help="Measured waveform delay compensated before preservation gating.",
     )
     parser.add_argument(
         "--enhancer",
@@ -417,22 +579,47 @@ def main() -> None:
         help="Apply the production deterministic final-turn phonetic gate.",
     )
     parser.add_argument(
+        "--final-turn-redecode",
+        action="store_true",
+        help=(
+            "A/B test a deferred full-turn replay and the production "
+            "conservative selection gate."
+        ),
+    )
+    parser.add_argument(
         "--truth",
         type=Path,
         default=PROJECT_ROOT / "audio" / "truth.csv",
         help="CSV transcript truth file (default: audio/truth.csv).",
     )
     args = parser.parse_args()
+    if args.frontend == "dpdfnet" and args.enhancer != "none":
+        parser.error(
+            "--frontend dpdfnet already owns the neural stage; "
+            "use --enhancer none"
+        )
     hotwords = tuple(
         dict.fromkeys(
             item.strip() for item in args.hotwords.split(",") if item.strip()
         )
     )
-    modes = ("raw", "light") if args.mode == "both" else (args.mode,)
+    modes = (
+        ("dpdfnet",)
+        if args.frontend == "dpdfnet"
+        else (
+            ("raw", "light")
+            if args.mode == "both"
+            else (args.mode,)
+        )
+    )
     report = {
         "results": [
             evaluate(
                 mode,
+                frontend_name=args.frontend,
+                denoiser_model_type=args.denoiser_model_type,
+                denoiser_model_path=args.denoiser_model,
+                alignment_delay_ms=max(0.0, args.alignment_delay_ms),
                 enhancer_name=args.enhancer,
                 max_active_paths=max(1, args.max_active_paths),
                 chunk_size=args.chunk_size,
@@ -440,6 +627,7 @@ def main() -> None:
                 blank_penalty=args.blank_penalty,
                 hotwords=hotwords,
                 postprocess=args.postprocess,
+                final_turn_redecode=args.final_turn_redecode,
                 truth_path=args.truth,
             )
             for mode in modes

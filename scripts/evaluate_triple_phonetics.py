@@ -33,7 +33,6 @@ from backend.text_refinement import (
 )
 
 
-DEFAULT_TITLE = "Triển khai các phần mềm AI của VNPT cho các cơ quan doanh nghiệp"
 CASES = (
     "H PASE chạy trên Zipformer",
     "lớp adolf sorus đang triển khai",
@@ -45,7 +44,11 @@ CASES = (
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--title", default=DEFAULT_TITLE)
+    parser.add_argument(
+        "--manual-dictionary",
+        type=Path,
+        default=PROJECT_ROOT / "config" / "meeting_lexicon.example.txt",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -62,10 +65,12 @@ def main() -> None:
         PanphonFeatureScorer(),
         consensus_tolerance=settings.phonetic_triple_consensus_tolerance,
     )
-    dynamic_entries = AdaptiveDictionary.entries_from_meeting_title(
-        args.title,
-        ttl_hours=settings.adaptive_dictionary_title_ttl_hours,
+    dictionary = AdaptiveDictionary.from_paths(
+        seed_path=None,
+        state_path=PROJECT_ROOT / "tmp" / "unused-adaptive-state.json",
+        manual_path=args.manual_dictionary,
     )
+    dynamic_entries = dictionary.active_entries()
     lexicon = PhoneticLexicon.from_file(
         settings.phonetic_dictionary_path,
         extra_entries=(
@@ -98,7 +103,7 @@ def main() -> None:
             }
         )
     report = {
-        "title": args.title,
+        "manual_dictionary": str(args.manual_dictionary),
         "dynamic_terms": [entry.to_json() for entry in dynamic_entries],
         "initialization_seconds": round(initialized_seconds, 3),
         "cases": rows,

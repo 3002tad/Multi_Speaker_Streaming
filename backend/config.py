@@ -184,6 +184,12 @@ class Settings:
     enable_asr_preprocessing: bool = _env_bool(
         "ENABLE_ASR_PREPROCESSING", True
     )
+    # ``legacy`` keeps the light DSP frontend and optional dynamic enhancer.
+    # ``dpdfnet`` is the backwards-compatible name for the guarded online
+    # DPDFNet/GTCRN candidate plus bounded post-conditioning.
+    asr_frontend: str = os.getenv(
+        "ASR_FRONTEND", "legacy"
+    ).strip().lower()
     asr_high_pass_hz: float = float(
         os.getenv("ASR_HIGH_PASS_HZ", "70")
     )
@@ -192,6 +198,28 @@ class Settings:
     )
     asr_final_padding_seconds: float = float(
         os.getenv("ASR_FINAL_PADDING_SECONDS", "0.66")
+    )
+    # The realtime stream produces the draft immediately.  After an endpoint,
+    # one shared worker may replay the complete VAD turn before it is written
+    # to the official timeline.  It is deliberately bounded: a busy room must
+    # fall back to the realtime final instead of accumulating stale work.
+    asr_final_turn_redecode_enabled: bool = _env_bool(
+        "ASR_FINAL_TURN_REDECODE_ENABLED", False
+    )
+    asr_final_turn_redecode_queue_size: int = max(
+        1, int(os.getenv("ASR_FINAL_TURN_REDECODE_QUEUE_SIZE", "4"))
+    )
+    asr_final_turn_redecode_timeout_seconds: float = float(
+        os.getenv("ASR_FINAL_TURN_REDECODE_TIMEOUT_SECONDS", "8.0")
+    )
+    asr_final_turn_redecode_tail_padding_seconds: float = float(
+        os.getenv("ASR_FINAL_TURN_REDECODE_TAIL_PADDING_SECONDS", "0.40")
+    )
+    asr_final_turn_redecode_min_overlap: float = float(
+        os.getenv("ASR_FINAL_TURN_REDECODE_MIN_OVERLAP", "0.72")
+    )
+    asr_final_turn_redecode_max_word_ratio: float = float(
+        os.getenv("ASR_FINAL_TURN_REDECODE_MAX_WORD_RATIO", "1.35")
     )
     # Silero controls transcript boundaries. A four-second endpoint delay
     # merged distinct speakers and made the timeline wait too long. Keep
@@ -235,6 +263,9 @@ class Settings:
             str(RUNTIME_ROOT / "models" / "dpdfnet_baseline.onnx"),
         )
     )
+    asr_enhancer_model_type: str = os.getenv(
+        "ASR_ENHANCER_MODEL_TYPE", "dpdfnet"
+    ).strip().lower()
     zipformer_model_dir: Path = Path(
         os.getenv(
             "ZIPFORMER_MODEL_DIR",
@@ -267,8 +298,59 @@ class Settings:
             str(RUNTIME_ROOT / "data" / "adaptive_dictionary.json"),
         )
     )
+    adaptive_dictionary_manual_path: Path = Path(
+        os.getenv(
+            "ADAPTIVE_DICTIONARY_MANUAL_PATH",
+            str(RUNTIME_ROOT / "data" / "meeting_lexicon.txt"),
+        )
+    )
+    topic_discovery_enabled: bool = _env_bool(
+        "TOPIC_DISCOVERY_ENABLED", True
+    )
+    topic_discovery_state_path: Path = Path(
+        os.getenv(
+            "TOPIC_DISCOVERY_STATE_PATH",
+            str(RUNTIME_ROOT / "data" / "topic_discovery.json"),
+        )
+    )
+    topic_discovery_model: str = os.getenv(
+        "TOPIC_DISCOVERY_MODEL", "qwen2.5:3b"
+    )
+    topic_discovery_bootstrap_seconds: float = float(
+        os.getenv("TOPIC_DISCOVERY_BOOTSTRAP_SECONDS", "90")
+    )
+    topic_discovery_refresh_seconds: float = float(
+        os.getenv("TOPIC_DISCOVERY_REFRESH_SECONDS", "60")
+    )
+    topic_discovery_minimum_turns: int = max(
+        1, int(os.getenv("TOPIC_DISCOVERY_MINIMUM_TURNS", "6"))
+    )
+    topic_discovery_minimum_evidence_turns: int = max(
+        1, int(os.getenv("TOPIC_DISCOVERY_MINIMUM_EVIDENCE_TURNS", "2"))
+    )
+    topic_discovery_minimum_topic_confidence: float = float(
+        os.getenv("TOPIC_DISCOVERY_MINIMUM_TOPIC_CONFIDENCE", "0.65")
+    )
+    topic_discovery_minimum_term_confidence: float = float(
+        os.getenv("TOPIC_DISCOVERY_MINIMUM_TERM_CONFIDENCE", "0.88")
+    )
+    topic_discovery_term_ttl_hours: float = float(
+        os.getenv("TOPIC_DISCOVERY_TERM_TTL_HOURS", "0.25")
+    )
+    topic_discovery_maximum_terms: int = max(
+        1, int(os.getenv("TOPIC_DISCOVERY_MAXIMUM_TERMS", "24"))
+    )
+    topic_discovery_maximum_context_chars: int = max(
+        500, int(os.getenv("TOPIC_DISCOVERY_MAXIMUM_CONTEXT_CHARS", "6000"))
+    )
+    topic_discovery_maximum_window_seconds: float = float(
+        os.getenv("TOPIC_DISCOVERY_MAXIMUM_WINDOW_SECONDS", "180")
+    )
+    topic_discovery_timeout_seconds: float = float(
+        os.getenv("TOPIC_DISCOVERY_TIMEOUT_SECONDS", "30")
+    )
     zipformer_hotwords_enabled: bool = _env_bool(
-        "ZIPFORMER_HOTWORDS_ENABLED", False
+        "ZIPFORMER_HOTWORDS_ENABLED", True
     )
     zipformer_hotwords_score: float = float(
         os.getenv("ZIPFORMER_HOTWORDS_SCORE", "1.5")
@@ -278,9 +360,6 @@ class Settings:
     )
     adaptive_dictionary_phonetic_min_confidence: float = float(
         os.getenv("ADAPTIVE_DICTIONARY_PHONETIC_MIN_CONFIDENCE", "0.75")
-    )
-    adaptive_dictionary_title_ttl_hours: float = float(
-        os.getenv("ADAPTIVE_DICTIONARY_TITLE_TTL_HOURS", "12")
     )
     zipformer_hotwords_path: Path = Path(
         os.getenv(
@@ -311,6 +390,60 @@ class Settings:
     )
     asr_enhancer_release: float = float(
         os.getenv("ASR_ENHANCER_RELEASE", "0.65")
+    )
+    # DPDFNet baseline shifts waveform content by about 40 ms on the labelled
+    # fixtures. The raw fallback must be delayed by the same amount before
+    # waveform comparison or blending.
+    asr_enhancer_alignment_delay_ms: float = float(
+        os.getenv(
+            "ASR_ENHANCER_ALIGNMENT_DELAY_MS",
+            "0" if asr_enhancer_model_type == "gtcrn" else "40",
+        )
+    )
+    asr_preservation_min_correlation: float = float(
+        os.getenv("ASR_PRESERVATION_MIN_CORRELATION", "0.93")
+    )
+    asr_preservation_min_energy_ratio: float = float(
+        os.getenv("ASR_PRESERVATION_MIN_ENERGY_RATIO", "0.65")
+    )
+    asr_preservation_max_energy_ratio: float = float(
+        os.getenv("ASR_PRESERVATION_MAX_ENERGY_RATIO", "1.35")
+    )
+    asr_preservation_min_speech_band_ratio: float = float(
+        os.getenv("ASR_PRESERVATION_MIN_SPEECH_BAND_RATIO", "0.80")
+    )
+    asr_preservation_max_speech_mix: float = float(
+        os.getenv("ASR_PRESERVATION_MAX_SPEECH_MIX", "0.10")
+    )
+    asr_preservation_max_noise_mix: float = float(
+        os.getenv("ASR_PRESERVATION_MAX_NOISE_MIX", "0.65")
+    )
+    asr_preservation_crossfade_ms: float = float(
+        os.getenv("ASR_PRESERVATION_CROSSFADE_MS", "15")
+    )
+    asr_dpdfnet_post_dc_hz: float = float(
+        os.getenv("ASR_DPDFNET_POST_DC_HZ", "20")
+    )
+    asr_dpdfnet_post_target_rms: float = float(
+        os.getenv("ASR_DPDFNET_POST_TARGET_RMS", "0.055")
+    )
+    asr_dpdfnet_post_min_gain: float = float(
+        os.getenv("ASR_DPDFNET_POST_MIN_GAIN", "0.75")
+    )
+    asr_dpdfnet_post_max_gain: float = float(
+        os.getenv("ASR_DPDFNET_POST_MAX_GAIN", "1.50")
+    )
+    asr_dpdfnet_post_attenuation_rate: float = float(
+        os.getenv("ASR_DPDFNET_POST_ATTENUATION_RATE", "0.08")
+    )
+    asr_dpdfnet_post_boost_rate: float = float(
+        os.getenv("ASR_DPDFNET_POST_BOOST_RATE", "0.02")
+    )
+    asr_dpdfnet_post_activity_floor: float = float(
+        os.getenv("ASR_DPDFNET_POST_ACTIVITY_FLOOR", "0.003")
+    )
+    asr_dpdfnet_post_peak_limit: float = float(
+        os.getenv("ASR_DPDFNET_POST_PEAK_LIMIT", "0.97")
     )
     timeline_asr_quality_margin: float = float(
         os.getenv("TIMELINE_ASR_QUALITY_MARGIN", "3.5")
@@ -407,6 +540,22 @@ class Settings:
 
     def validate_runtime(self) -> None:
         self.validate_livekit()
+        if self.asr_frontend not in {"legacy", "dpdfnet"}:
+            raise RuntimeError(
+                "ASR_FRONTEND must be either 'legacy' or 'dpdfnet'"
+            )
+        if self.asr_enhancer_model_type not in {"dpdfnet", "gtcrn"}:
+            raise RuntimeError(
+                "ASR_ENHANCER_MODEL_TYPE must be 'dpdfnet' or 'gtcrn'"
+            )
+        if (
+            self.asr_frontend == "dpdfnet"
+            and not self.asr_enhancer_model.is_file()
+        ):
+            raise RuntimeError(
+                "Speech-enhancement model not found: "
+                f"{self.asr_enhancer_model}"
+            )
         if (
             len(self.internal_api_key) < 24
             or self.internal_api_key.startswith("replace_")

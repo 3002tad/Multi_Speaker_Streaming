@@ -79,57 +79,93 @@ Script chấp nhận `.env` ở thư mục project hoặc
 `/home/ntd/meeting_runtime/.env`. Không tạo thêm virtualenv hay sao chép model
 trở lại ổ `/mnt/d`.
 
-## 1.2 DPDFNet cho nhánh ASR
+## 1.2 Guarded enhancer cho nhánh ASR
 
-DPDFNet chỉ xử lý nhánh ASR trước Zipformer. Audio gốc của mic vẫn đi thẳng
-vào WavLM để speaker ID không bị thay đổi đặc trưng giọng. Model được lưu ở
-`/home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx`; chỉ tải khi máy chưa
-có file:
+DPDFNet/GTCRN chỉ xử lý nhánh ASR trước Zipformer. Audio gốc của mic vẫn đi
+thẳng vào WavLM để speaker ID không bị thay đổi đặc trưng giọng. Chỉ tải model
+khi máy chưa có file:
 
 ```bash
 mkdir -p /home/ntd/meeting_runtime/models
 curl -fL \
   -o /home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/dpdfnet_baseline.onnx
+curl -fL \
+  -o /home/ntd/meeting_runtime/models/gtcrn_simple.onnx \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/gtcrn_simple.onnx
 ```
 
-DPDFNet hiện là stage A/B, mặc định tắt. Các bộ `truth.csv` và `truth_1.csv`
-hiện có không cho WER tốt hơn khi bật model, trong khi chi phí CPU tăng. Chỉ
-bật `ASR_ENHANCER=dpdfnet_baseline` khi benchmark của chính phòng họp chứng
-minh có lợi; audio gốc của mic luôn đi thẳng vào WavLM.
+Frontend guarded có thể bật để A/B:
+
+```dotenv
+ASR_FRONTEND=dpdfnet
+ASR_ENHANCER_MODEL_TYPE=dpdfnet
+ASR_ENHANCER_MODEL=/home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx
+ASR_ENHANCER_ALIGNMENT_DELAY_MS=40
+ASR_PRESERVATION_MAX_SPEECH_MIX=0.10
+```
+
+Luồng này là `raw + candidate enhancer → căn delay → preservation gate →
+DC-block/gain chậm/peak-limit → Zipformer`; không chạy high-pass 70 Hz, noise
+attenuation hoặc AGC cũ trước enhancer. Gate kiểm tra correlation, năng lượng,
+dải thoại 1–4 kHz và clipping. Frame không giữ được giọng sẽ fallback raw;
+frame đạt gate chỉ trộn tối đa 10%.
+
+DPDFNet baseline cần bù 40 ms. Khi A/B GTCRN, đổi model type/path và đặt
+`ASR_ENHANCER_ALIGNMENT_DELAY_MS=0`. Benchmark hiện tại chưa vượt frontend
+`legacy` trong streaming, nên mặc định vẫn giữ `ASR_FRONTEND=legacy`.
 
 ## 1.3 Adaptive dictionary và Zipformer hotword
 
 `AdaptiveDictionary` là nguồn term chung cho hai nhánh: canonical term được
 đưa vào Zipformer hotword; canonical + alias được dùng bởi phonetic recovery
-sau khi global turn kết thúc. Không thêm transcript ASR thô vào dictionary.
-Mỗi entry động phải có `source`, `confidence`, `last_seen` và `expires_at`;
-xem mẫu tại `config/adaptive_dictionary.example.json`.
+sau khi global turn kết thúc. Người dùng không nhập tên cuộc họp. Raw
+transcript chỉ được lưu làm evidence; nó không tự động trở thành hotword.
 
 `phonetic_dictionary.txt` là seed rộng và chỉ dùng cho phonetic recovery;
 không tự trở thành hotword cho mọi cuộc họp. Hotword chỉ lấy term động của
 phiên hiện tại để tránh bias các chủ đề không liên quan.
 
-Mặc định contextual hotword tắt để giữ baseline. Chỉ bật sau A/B với bộ term
-của cuộc họp và dùng điểm thấp:
+Ba nguồn term theo thứ tự ưu tiên là file manual, tên thành viên và topic
+discovery. File manual có thể sửa khi chạy:
 
 ```dotenv
 ADAPTIVE_DICTIONARY_ENABLED=true
 ADAPTIVE_DICTIONARY_STATE_PATH=/home/ntd/meeting_runtime/data/adaptive_dictionary.json
+ADAPTIVE_DICTIONARY_MANUAL_PATH=/home/ntd/meeting_runtime/data/meeting_lexicon.txt
+TOPIC_DISCOVERY_ENABLED=true
+TOPIC_DISCOVERY_STATE_PATH=/home/ntd/meeting_runtime/data/topic_discovery.json
+TOPIC_DISCOVERY_MODEL=qwen2.5:3b
+TOPIC_DISCOVERY_BOOTSTRAP_SECONDS=90
+TOPIC_DISCOVERY_REFRESH_SECONDS=60
+TOPIC_DISCOVERY_MINIMUM_TURNS=6
+TOPIC_DISCOVERY_MINIMUM_EVIDENCE_TURNS=2
+TOPIC_DISCOVERY_MINIMUM_TOPIC_CONFIDENCE=0.65
+TOPIC_DISCOVERY_MINIMUM_TERM_CONFIDENCE=0.88
+TOPIC_DISCOVERY_TERM_TTL_HOURS=0.25
+TOPIC_DISCOVERY_MAXIMUM_WINDOW_SECONDS=180
 ZIPFORMER_HOTWORDS_ENABLED=true
 ZIPFORMER_HOTWORDS_SCORE=1.5
 ZIPFORMER_HOTWORDS_MIN_CONFIDENCE=0.9
 ADAPTIVE_DICTIONARY_PHONETIC_MIN_CONFIDENCE=0.75
-ADAPTIVE_DICTIONARY_TITLE_TTL_HOURS=12
 ```
 
-Khi bật lần đầu, cài `sentencepiece` trong `venv_linux`; backend tự sinh
-`zipformer_hotwords.txt` và BPE vocabulary trong runtime. Thay đổi dictionary
-được áp dụng an toàn khi khởi động phiên/pipeline mới, không thay recognizer
-của microphone đang nói.
+Sao chép file manual mẫu:
+
+```bash
+cp config/meeting_lexicon.example.txt \
+  /home/ntd/meeting_runtime/data/meeting_lexicon.txt
+```
+
+Khi bật lần đầu, cài `sentencepiece` trong `venv_linux`; AI server tự sinh
+`zipformer_hotwords.txt` và BPE vocabulary trong runtime. Snapshot mới không
+đổi recognizer của microphone đang nói; mic đang kết nối nhận generation mới
+ở VAD/global turn kế tiếp.
 
 ```bash
 /home/ntd/meeting_runtime/venv_linux/bin/python -m pip install sentencepiece
+curl -X POST http://127.0.0.1:8001/api/adaptive-dictionary/reload \
+  -H "X-Internal-Key: $INTERNAL_API_KEY"
 ```
 
 ## 2. Cấu hình home server
@@ -396,9 +432,12 @@ ENABLE_ASR_PREPROCESSING=true
 ASR_HIGH_PASS_HZ=70
 ASR_TARGET_RMS=0.065
 ASR_FINAL_PADDING_SECONDS=0.66
-# none | dpdfnet_baseline
+# legacy | dpdfnet
+ASR_FRONTEND=legacy
+# Chỉ dùng cho frontend legacy: none | dpdfnet_baseline
 ASR_ENHANCER=none
 ASR_ENHANCER_MODEL=/home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx
+ASR_ENHANCER_MODEL_TYPE=dpdfnet
 ASR_ENHANCER_THREADS=1
 # >= bypass: raw; <= full: DPDFNet mix tối đa; ở giữa: blend động.
 ASR_ENHANCER_BYPASS_SNR_DB=15
@@ -407,6 +446,24 @@ ASR_ENHANCER_MAX_MIX=0.65
 # attack vào DPDFNet chậm, release về raw nhanh khi audio sạch trở lại.
 ASR_ENHANCER_ATTACK=0.20
 ASR_ENHANCER_RELEASE=0.65
+# Căn waveform trước khi gate: DPDFNet baseline=40 ms, GTCRN=0 ms.
+ASR_ENHANCER_ALIGNMENT_DELAY_MS=40
+ASR_PRESERVATION_MIN_CORRELATION=0.93
+ASR_PRESERVATION_MIN_ENERGY_RATIO=0.65
+ASR_PRESERVATION_MAX_ENERGY_RATIO=1.35
+ASR_PRESERVATION_MIN_SPEECH_BAND_RATIO=0.80
+ASR_PRESERVATION_MAX_SPEECH_MIX=0.10
+ASR_PRESERVATION_MAX_NOISE_MIX=0.65
+ASR_PRESERVATION_CROSSFADE_MS=15
+# Chỉ dùng khi ASR_FRONTEND=dpdfnet.
+ASR_DPDFNET_POST_DC_HZ=20
+ASR_DPDFNET_POST_TARGET_RMS=0.055
+ASR_DPDFNET_POST_MIN_GAIN=0.75
+ASR_DPDFNET_POST_MAX_GAIN=1.50
+ASR_DPDFNET_POST_ATTENUATION_RATE=0.08
+ASR_DPDFNET_POST_BOOST_RATE=0.02
+ASR_DPDFNET_POST_ACTIVITY_FLOOR=0.003
+ASR_DPDFNET_POST_PEAK_LIMIT=0.97
 TIMELINE_ASR_QUALITY_MARGIN=3.5
 TIMELINE_ASR_RMS_RATIO=0.48
 TIMELINE_FINAL_SETTLE_SECONDS=0.75
@@ -486,14 +543,14 @@ venv_linux/bin/python -B scripts/evaluate_asr.py --mode both
 
 ```bash
 venv_linux/bin/python -B scripts/evaluate_asr.py \
-  --mode raw --enhancer none --postprocess phonetic
+  --frontend legacy --mode light --enhancer none --postprocess phonetic
 ```
 
 Benchmark decoder theo tốc độ nói và nhiễu (có trailing padding giống runtime):
 
 ```bash
 venv_linux/bin/python -B scripts/evaluate_asr.py \
-  --mode raw --enhancer none --postprocess phonetic \
+  --frontend legacy --mode light --enhancer none --postprocess phonetic \
   --chunk-size 32 --blank-penalty 0.4 --final-padding-seconds 0.66
 ```
 
@@ -511,17 +568,31 @@ venv_linux/bin/python -B scripts/evaluate_asr.py \
   --hotwords "VNPT,HDFS,HBase"
 ```
 
-Benchmark A/B DPDFNet trên cùng tập chuẩn:
+Benchmark A/B DPDFNet guarded trên cùng tập chuẩn:
 
 ```bash
 venv_linux/bin/python -B scripts/evaluate_asr.py \
-  --mode light --enhancer dpdfnet_baseline \
-  --output output/asr-dpdfnet-light.json
+  --frontend dpdfnet --mode raw --enhancer none \
+  --postprocess phonetic \
+  --output output/asr-dpdfnet-frontend.json
 ```
 
-Report ghi cả `average_mix` và `peak_mix`. Nếu WER xấu hơn mốc `--enhancer
-none`, hạ `ASR_ENHANCER_MAX_MIX`, hạ `ASR_ENHANCER_BYPASS_SNR_DB`, hoặc tắt
-enhancer; không tăng cường mù quáng trên audio vốn đã sạch.
+Benchmark GTCRN trên cùng gate mà không sửa `.env`:
+
+```bash
+venv_linux/bin/python -B scripts/evaluate_asr.py \
+  --frontend dpdfnet --denoiser-model-type gtcrn \
+  --denoiser-model /home/ntd/meeting_runtime/models/gtcrn_simple.onnx \
+  --alignment-delay-ms 0 --mode raw --enhancer none \
+  --postprocess phonetic \
+  --output output/asr-gtcrn-frontend.json
+```
+
+Report ghi số frame thoại accepted/fallback, mix, correlation, energy ratio,
+speech-band ratio, gain và peak-limit. Nếu WER xấu hơn frontend `legacy`, giữ
+`ASR_FRONTEND=legacy`. Có thể benchmark blend động cũ riêng bằng `--frontend
+legacy --mode light --enhancer dpdfnet_baseline`, nhưng không trộn kết quả của
+hai kiến trúc vào cùng một baseline.
 
 Nếu một file chứa nhiều đoạn/giọng khác nhau, nên thêm hai cột
 `start_seconds,end_seconds` vào `truth.csv`; evaluator sẽ chỉ cắt đúng đoạn

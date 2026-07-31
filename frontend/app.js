@@ -11,6 +11,8 @@ const state = {
   playbackAudioContext: null,
   remoteAudio: new Map(),
   eventSocket: null,
+  displayName: "",
+  meetingCode: "",
   drafts: new Map(),
   transcripts: new Map(),
   minutesDocument: null,
@@ -204,7 +206,6 @@ function setPlayback(enabled) {
 async function joinRoom(mode) {
   const displayName = $("display-name").value.trim();
   const meetingCode = $("meeting-code").value.trim();
-  const meetingTitle = $("meeting-title").value.trim();
   $("join-error").textContent = "";
   if (!displayName) {
     $("join-error").textContent = "Vui lòng nhập tên hiển thị.";
@@ -214,7 +215,7 @@ async function joinRoom(mode) {
   const endpoint = mode === "create" ? "/api/meeting/create" : "/api/meeting/join";
   const body =
     mode === "create"
-      ? { host_name: displayName, meeting_title: meetingTitle || null }
+      ? { host_name: displayName }
       : { display_name: displayName, meeting_code: meetingCode };
 
   try {
@@ -237,14 +238,15 @@ async function joinRoom(mode) {
       },
     });
     state.room = room;
+    state.displayName = displayName;
+    state.meetingCode = data.meeting_code;
     wireRoomEvents(room);
     await room.connect(data.livekit_url, data.token, { autoSubscribe: true });
     await room.localParticipant.setMicrophoneEnabled(true);
 
     $("join-view").classList.add("hidden");
     $("meeting-view").classList.remove("hidden");
-    const title = data.meeting_title || data.meeting_code;
-    $("room-title").textContent = `${title} · ${displayName}`;
+    $("room-title").textContent = `${data.meeting_code} · ${displayName}`;
     $("connection-state").textContent = "Đã kết nối";
     $("connection-state").className = "badge online";
     renderParticipants();
@@ -329,6 +331,8 @@ function handleMeetingEvent(payload) {
     renderMinutes();
   } else if (payload.type === "transcript.cleared") {
     resetTranscriptState();
+  } else if (payload.type === "meeting.topic" && payload.topic) {
+    $("room-title").textContent = `${payload.topic} · ${state.displayName}`;
   }
 }
 

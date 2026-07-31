@@ -283,7 +283,6 @@ def _find_cross_mic_duplicate(
 
 class CreateMeetingRequest(BaseModel):
     host_name: str = Field(min_length=1, max_length=80)
-    meeting_title: str | None = Field(default=None, max_length=180)
 
 
 class JoinMeetingRequest(BaseModel):
@@ -299,23 +298,20 @@ class UpdateMinutesRequest(BaseModel):
     document: dict[str, Any]
 
 
-async def _prepare_adaptive_dictionary(
-    meeting_title: str | None,
+async def _reset_adaptive_dictionary(
+    participant_names: list[str],
 ) -> dict[str, Any]:
-    """Ask the private AI service to prepare the next room's glossary.
+    """Reset generated terms and register the first room participants.
 
     Creating/joining a meeting must remain available if the optional AI
-    preparation endpoint is temporarily restarting. The result is returned to
+    dictionary endpoint is temporarily restarting. The result is returned to
     the host UI for diagnostics rather than blocking access to the room.
     """
-    title = " ".join((meeting_title or "").split())
-    if not title:
-        return {"status": "skipped", "reason": "no_meeting_title"}
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=4.0) as client:
             response = await client.post(
-                f"{settings.ai_server_http_url}/api/adaptive-dictionary/prepare",
-                json={"meeting_title": title},
+                f"{settings.ai_server_http_url}/api/adaptive-dictionary/reset",
+                json={"participant_names": participant_names},
                 headers={"X-Internal-Key": settings.internal_api_key},
             )
             response.raise_for_status()
@@ -325,6 +321,25 @@ async def _prepare_adaptive_dictionary(
             "status": "unavailable",
             "reason": type(exc).__name__,
         }
+
+
+async def _register_dictionary_participant(
+    display_name: str,
+) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.post(
+                (
+                    f"{settings.ai_server_http_url}"
+                    "/api/adaptive-dictionary/participants"
+                ),
+                json={"display_name": display_name},
+                headers={"X-Internal-Key": settings.internal_api_key},
+            )
+            response.raise_for_status()
+            return {"status": "ready", **response.json()}
+    except (httpx.HTTPError, ValueError) as exc:
+        return {"status": "unavailable", "reason": type(exc).__name__}
 
 
 def _issue_token(display_name: str, role: str) -> tuple[str, str]:
@@ -384,8 +399,8 @@ async def meeting_info() -> dict[str, Any]:
 async def create_meeting(request: CreateMeetingRequest) -> dict[str, Any]:
     global current_meeting_title
     identity, token = _issue_token(request.host_name, "host")
-    current_meeting_title = " ".join((request.meeting_title or "").split())
-    dictionary = await _prepare_adaptive_dictionary(current_meeting_title)
+    current_meeting_title = ""
+    dictionary = await _reset_adaptive_dictionary([request.host_name])
     reset_at = await _reset_meeting_transcripts("new_meeting")
     return {
         "status": "success",
@@ -397,7 +412,6 @@ async def create_meeting(request: CreateMeetingRequest) -> dict[str, Any]:
         "role": "host",
         "token": token,
         "reset_at": reset_at,
-        "meeting_title": current_meeting_title,
         "adaptive_dictionary": dictionary,
     }
 
@@ -407,6 +421,9 @@ async def join_meeting(request: JoinMeetingRequest) -> dict[str, Any]:
     if request.meeting_code.strip().upper() != settings.meeting_code.upper():
         raise HTTPException(status_code=404, detail="Mã phòng không đúng")
     identity, token = _issue_token(request.display_name, "participant")
+    dictionary = await _register_dictionary_participant(
+        request.display_name
+    )
     return {
         "status": "success",
         "meeting_code": settings.meeting_code,
@@ -416,7 +433,7 @@ async def join_meeting(request: JoinMeetingRequest) -> dict[str, Any]:
         "display_name": request.display_name,
         "role": "participant",
         "token": token,
-        "meeting_title": current_meeting_title,
+        "adaptive_dictionary": dictionary,
     }
 
 
@@ -516,6 +533,7 @@ async def publish_internal_event(
     request: InternalEventRequest,
     x_internal_api_key: str | None = Header(default=None),
 ) -> dict[str, str]:
+    global current_meeting_title
     if x_internal_api_key != settings.internal_api_key:
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -524,6 +542,30 @@ async def publish_internal_event(
     payload.setdefault("timestamp", time.time())
     if payload.get("type") == "transcript.final":
         async with final_event_lock:
+            discovered_topic = payload.get("discovered_topic")
+            if isinstance(discovered_topic, dict):
+                topic = " ".join(
+                    str(discovered_topic.get("topic", "")).split()
+                )[:180]
+                try:
+                    topic_confidence = float(
+                        discovered_topic.get("confidence", 0.0)
+                    )
+                except (TypeError, ValueError):
+                    topic_confidence = 0.0
+                if topic and topic_confidence >= 0.65:
+                    current_meeting_title = topic
+                    await hub.broadcast(
+                        {
+                            "type": "meeting.topic",
+                            "topic": topic,
+                            "confidence": topic_confidence,
+                            "snapshot_version": discovered_topic.get(
+                                "snapshot_version"
+                            ),
+                            "timestamp": time.time(),
+                        }
+                    )
             payload.setdefault("segment_id", f"seg-{uuid.uuid4().hex}")
             payload.setdefault("created_at", time.time())
             if int(payload.get("revision", 1)) > 1:
