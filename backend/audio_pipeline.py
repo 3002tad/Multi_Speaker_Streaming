@@ -71,6 +71,19 @@ class FrameQuality:
     score: float
 
 
+@dataclass(frozen=True)
+class AsrPreprocessingTelemetry:
+    """Observability for the lightweight legacy ASR frontend."""
+
+    processed_seconds: float
+    voiced_seconds: float
+    average_noise_gain: float
+    average_gain: float
+    minimum_gain: float
+    maximum_gain: float
+    peak_limited_frames: int
+
+
 class AudioQualityTracker:
     """Estimate per-mic quality without modifying speaker characteristics."""
 
@@ -226,21 +239,60 @@ class StreamingAsrPreprocessor:
         high_pass_hz: float = 70.0,
         target_rms: float = 0.065,
         minimum_noise_gain: float = 0.65,
+        loudness_window_seconds: float = 0.60,
+        boost_rate: float = 0.10,
+        attenuation_rate: float = 0.30,
     ) -> None:
         self.sample_rate = sample_rate
         self.target_rms = target_rms
         self.minimum_noise_gain = minimum_noise_gain
+        self.loudness_window_seconds = max(
+            0.10, float(loudness_window_seconds)
+        )
+        self.boost_rate = float(np.clip(boost_rate, 0.01, 1.0))
+        self.attenuation_rate = float(
+            np.clip(attenuation_rate, 0.01, 1.0)
+        )
         self._hp_alpha = math.exp(
             -2.0 * math.pi * high_pass_hz / sample_rate
         )
         self._previous_input = 0.0
         self._previous_output = 0.0
         self._smoothed_gain = 1.0
+        self._smoothed_loudness_sq: float | None = None
+        self.reset_telemetry()
 
     def reset(self) -> None:
         self._previous_input = 0.0
         self._previous_output = 0.0
         self._smoothed_gain = 1.0
+        self._smoothed_loudness_sq = None
+        self.reset_telemetry()
+
+    def reset_telemetry(self) -> None:
+        self._processed_samples = 0
+        self._voiced_samples = 0
+        self._weighted_noise_gain = 0.0
+        self._weighted_gain = 0.0
+        self._minimum_observed_gain = float("inf")
+        self._maximum_observed_gain = 0.0
+        self._peak_limited_frames = 0
+
+    def telemetry(self) -> AsrPreprocessingTelemetry:
+        processed = max(1, self._processed_samples)
+        return AsrPreprocessingTelemetry(
+            processed_seconds=self._processed_samples / self.sample_rate,
+            voiced_seconds=self._voiced_samples / self.sample_rate,
+            average_noise_gain=self._weighted_noise_gain / processed,
+            average_gain=self._weighted_gain / processed,
+            minimum_gain=(
+                1.0
+                if not math.isfinite(self._minimum_observed_gain)
+                else self._minimum_observed_gain
+            ),
+            maximum_gain=self._maximum_observed_gain,
+            peak_limited_frames=self._peak_limited_frames,
+        )
 
     def process(
         self,
@@ -282,20 +334,60 @@ class StreamingAsrPreprocessor:
             )
         )
 
+        # Learn a loudness reference only from probable speech. Silence and
+        # short pauses otherwise pull AGC upward and over-amplify the next
+        # word. The window is deliberately longer than one ASR frame.
+        speech_floor = max(0.004, quality.noise_floor * 1.8)
+        speech_active = filtered_rms >= speech_floor
+        if speech_active:
+            frame_seconds = samples.size / self.sample_rate
+            alpha = 1.0 - math.exp(
+                -frame_seconds / self.loudness_window_seconds
+            )
+            frame_power = filtered_rms * filtered_rms
+            if self._smoothed_loudness_sq is None:
+                self._smoothed_loudness_sq = frame_power
+            else:
+                self._smoothed_loudness_sq = (
+                    (1.0 - alpha) * self._smoothed_loudness_sq
+                    + alpha * frame_power
+                )
+        loudness_rms = math.sqrt(
+            max(
+                1e-12,
+                self._smoothed_loudness_sq
+                if self._smoothed_loudness_sq is not None
+                else filtered_rms * filtered_rms,
+            )
+        )
         desired_gain = float(
             np.clip(
-                self.target_rms / max(filtered_rms * noise_gain, 1e-5),
+                self.target_rms / max(loudness_rms * noise_gain, 1e-5),
                 0.65,
                 2.5,
             )
         )
-        self._smoothed_gain = (
-            0.88 * self._smoothed_gain + 0.12 * desired_gain
+        rate = (
+            self.boost_rate
+            if desired_gain > self._smoothed_gain
+            else self.attenuation_rate
         )
+        self._smoothed_gain += rate * (desired_gain - self._smoothed_gain)
         enhanced = filtered * noise_gain * self._smoothed_gain
         peak = float(np.max(np.abs(enhanced)))
         if peak > 0.97:
             enhanced *= 0.97 / peak
+            self._peak_limited_frames += 1
+        self._processed_samples += samples.size
+        self._voiced_samples += samples.size if speech_active else 0
+        self._weighted_noise_gain += noise_gain * samples.size
+        self._weighted_gain += self._smoothed_gain * samples.size
+        self._minimum_observed_gain = min(
+            self._minimum_observed_gain, self._smoothed_gain
+        )
+        self._maximum_observed_gain = max(
+            self._maximum_observed_gain, self._smoothed_gain
+        )
         return enhanced.astype(np.float32, copy=False)
 
 

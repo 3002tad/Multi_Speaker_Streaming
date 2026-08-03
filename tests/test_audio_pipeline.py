@@ -95,6 +95,33 @@ class AudioBranchTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(enhanced)))
         self.assertLess(abs(float(np.mean(enhanced))), 0.02)
         self.assertLessEqual(float(np.max(np.abs(enhanced))), 0.9701)
+        telemetry = processor.telemetry()
+        self.assertAlmostEqual(telemetry.processed_seconds, 0.1)
+        self.assertGreater(telemetry.average_gain, 0.0)
+
+    def test_asr_preprocessor_keeps_loudness_reference_through_pause(self) -> None:
+        tracker = AudioQualityTracker(initial_noise_floor=0.002)
+        processor = StreamingAsrPreprocessor(
+            loudness_window_seconds=0.60,
+            boost_rate=0.10,
+            attenuation_rate=0.30,
+        )
+        timeline = np.arange(1600, dtype=np.float32) / 16_000
+        speech = (0.03 * np.sin(2 * np.pi * 180 * timeline)).astype(
+            np.float32
+        )
+        silence = np.zeros(1600, dtype=np.float32)
+        processor.process(
+            speech,
+            quality=tracker.measure(speech, speech_active=True),
+        )
+        processor.process(
+            silence,
+            quality=tracker.measure(silence, speech_active=False),
+        )
+        telemetry = processor.telemetry()
+        self.assertAlmostEqual(telemetry.voiced_seconds, 0.1)
+        self.assertGreater(telemetry.average_gain, 0.0)
 
     def test_speaker_branch_keeps_clean_raw_windows(self) -> None:
         timeline = np.arange(4 * 16_000, dtype=np.float32) / 16_000

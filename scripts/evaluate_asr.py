@@ -209,6 +209,9 @@ def decode(
     processor = StreamingAsrPreprocessor(
         high_pass_hz=settings.asr_high_pass_hz,
         target_rms=settings.asr_target_rms,
+        loudness_window_seconds=settings.asr_loudness_window_seconds,
+        boost_rate=settings.asr_gain_boost_rate,
+        attenuation_rate=settings.asr_gain_attenuation_rate,
     )
     guarded_frontend = None
     enhancer = None
@@ -329,6 +332,18 @@ def decode(
         enhancement = {
             "average_mix": round(telemetry.average_mix, 4),
             "peak_mix": round(telemetry.peak_mix, 4),
+        }
+    elif use_light_preprocessing:
+        telemetry = processor.telemetry()
+        enhancement = {
+            "frontend": "legacy_dsp",
+            "processed_seconds": round(telemetry.processed_seconds, 4),
+            "voiced_seconds": round(telemetry.voiced_seconds, 4),
+            "average_noise_gain": round(telemetry.average_noise_gain, 4),
+            "average_gain": round(telemetry.average_gain, 4),
+            "minimum_gain": round(telemetry.minimum_gain, 4),
+            "maximum_gain": round(telemetry.maximum_gain, 4),
+            "peak_limited_frames": telemetry.peak_limited_frames,
         }
     padding = np.zeros(
         max(0, int(round(final_padding_seconds * SAMPLE_RATE))),

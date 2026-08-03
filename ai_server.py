@@ -1620,6 +1620,9 @@ async def websocket_endpoint(
     asr_preprocessor = StreamingAsrPreprocessor(
         high_pass_hz=settings.asr_high_pass_hz,
         target_rms=settings.asr_target_rms,
+        loudness_window_seconds=settings.asr_loudness_window_seconds,
+        boost_rate=settings.asr_gain_boost_rate,
+        attenuation_rate=settings.asr_gain_attenuation_rate,
     )
 
     # Every neural frontend is per microphone because DPDFNet is stateful.
@@ -1752,6 +1755,17 @@ async def websocket_endpoint(
                 f"band={gate.average_speech_band_ratio:.2f}; "
                 f"post gain={post.average_gain:.2f}, "
                 f"limited={post.peak_limited_frames}."
+            )
+        elif settings.enable_asr_preprocessing:
+            telemetry = asr_preprocessor.telemetry()
+            print(
+                f"[Legacy DSP] [{identity}] "
+                f"{telemetry.processed_seconds:.1f}s, "
+                f"voiced={telemetry.voiced_seconds:.1f}s, "
+                f"noise-gain={telemetry.average_noise_gain:.2f}, "
+                f"gain avg={telemetry.average_gain:.2f} "
+                f"({telemetry.minimum_gain:.2f}-{telemetry.maximum_gain:.2f}), "
+                f"peak-limit={telemetry.peak_limited_frames}."
             )
         elif asr_enhancer is not None:
             telemetry = asr_enhancer.telemetry()

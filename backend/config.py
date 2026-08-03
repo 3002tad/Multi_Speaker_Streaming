@@ -196,6 +196,15 @@ class Settings:
     asr_target_rms: float = float(
         os.getenv("ASR_TARGET_RMS", "0.065")
     )
+    asr_loudness_window_seconds: float = float(
+        os.getenv("ASR_LOUDNESS_WINDOW_SECONDS", "0.45")
+    )
+    asr_gain_boost_rate: float = float(
+        os.getenv("ASR_GAIN_BOOST_RATE", "0.16")
+    )
+    asr_gain_attenuation_rate: float = float(
+        os.getenv("ASR_GAIN_ATTENUATION_RATE", "0.35")
+    )
     asr_final_padding_seconds: float = float(
         os.getenv("ASR_FINAL_PADDING_SECONDS", "0.66")
     )
