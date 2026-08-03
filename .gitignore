@@ -36,3 +36,6 @@ frontend/dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# Separate eCabinet repository
+/ecabinet/
