@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://simplething.id.vn/contracts/ai-event-v1.schema.json",
+  "title": "Meeting AI event envelope v1",
+  "oneOf": [
+    {"$ref": "#/$defs/session_status_event"},
+    {"$ref": "#/$defs/speaker_active_event"},
+    {"$ref": "#/$defs/transcript_partial_event"},
+    {"$ref": "#/$defs/transcript_final_event"},
+    {"$ref": "#/$defs/transcript_retracted_event"},
+    {"$ref": "#/$defs/minutes_updated_event"},
+    {"$ref": "#/$defs/pipeline_warning_event"}
+  ],
+  "$defs": {
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_id",
+        "type",
+        "meeting_id",
+        "runtime_session_id",
+        "occurred_at",
+        "sequence",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "event_id": {"type": "string", "format": "uuid"},
+        "type": {
+          "type": "string",
+          "enum": [
+            "session.status",
+            "speaker.active",
+            "transcript.partial",
+            "transcript.final",
+            "transcript.retracted",
+            "minutes.updated",
+            "pipeline.warning"
+          ]
+        },
+        "meeting_id": {"type": "string", "format": "uuid"},
+        "runtime_session_id": {"type": "string", "format": "uuid"},
+        "occurred_at": {"type": "string", "format": "date-time"},
+        "sequence": {"type": "integer", "minimum": 0},
+        "payload": {"type": "object"}
+      }
+    },
+    "speaker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "identity_method"],
+      "properties": {
+        "user_id": {"type": ["string", "null"], "format": "uuid"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 160},
+        "identity_method": {
+          "type": "string",
+          "enum": ["voice_profile", "mic_fallback", "unknown"]
+        },
+        "confidence": {"type": ["number", "null"], "minimum": 0},
+        "margin": {"type": ["number", "null"]},
+        "consensus": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "signal_rms": {"type": ["number", "null"], "minimum": 0},
+        "signal_snr_db": {"type": ["number", "null"]},
+        "clipping_ratio": {"type": ["number", "null"], "minimum": 0},
+        "speaker_id_ms": {"type": ["integer", "null"], "minimum": 0},
+        "pipeline_ms": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "session_status_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["STARTING", "READY", "RECORDING", "STOPPING", "COMPLETED", "FAILED"]
+        },
+        "reason": {"type": ["string", "null"], "maxLength": 1000}
+      }
+    },
+    "speaker_active_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_identity", "speaker", "active"],
+      "properties": {
+        "source_identity": {"type": "string", "minLength": 1, "maxLength": 255},
+        "speaker": {"$ref": "#/$defs/speaker"},
+        "active": {"type": "boolean"},
+        "global_turn_id": {"type": ["string", "null"], "maxLength": 160}
+      }
+    },
+    "transcript_partial_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segment_id", "source_identity", "speaker", "content_text", "revision"],
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1, "maxLength": 160},
+        "source_identity": {"type": "string", "minLength": 1, "maxLength": 255},
+        "speaker": {"$ref": "#/$defs/speaker"},
+        "content_text": {"type": "string"},
+        "global_turn_id": {"type": ["string", "null"], "maxLength": 160},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "transcript_final_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "segment_id",
+        "source_identity",
+        "speaker",
+        "raw_text",
+        "content_text",
+        "started_at",
+        "ended_at",
+        "revision"
+      ],
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1, "maxLength": 160},
+        "source_identity": {"type": "string", "minLength": 1, "maxLength": 255},
+        "speaker": {"$ref": "#/$defs/speaker"},
+        "raw_text": {"type": "string"},
+        "content_text": {"type": "string"},
+        "started_at": {"type": "string", "format": "date-time"},
+        "ended_at": {"type": "string", "format": "date-time"},
+        "global_turn_id": {"type": ["string", "null"], "maxLength": 160},
+        "revision": {"type": "integer", "minimum": 1},
+        "quality": {"$ref": "#/$defs/quality"},
+        "pipeline_meta": {"type": "object"}
+      }
+    },
+    "transcript_retracted_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segment_id", "reason", "revision"],
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1, "maxLength": 160},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 500},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "minutes_updated_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation_id", "base_transcript_revision", "document"],
+      "properties": {
+        "generation_id": {"type": "string", "format": "uuid"},
+        "base_transcript_revision": {"type": "integer", "minimum": 1},
+        "document": {"$ref": "minutes-document.schema.json"},
+        "generator_meta": {"type": "object"}
+      }
+    },
+    "pipeline_warning_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1, "maxLength": 160},
+        "message": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "retryable": {"type": "boolean"},
+        "details": {"type": "object"}
+      }
+    },
+    "session_status_event": {
+      "allOf": [
+        {"$ref": "#/$defs/envelope"},
+        {"properties": {"type": {"const": "session.status"}, "payload": {"$ref": "#/$defs/session_status_payload"}}}
+      ]
+    },
+    "speaker_active_event": {
+      "allOf": [
+        {"$ref": "#/$defs/envelope"},
+        {"properties": {"type": {"const": "speaker.active"}, "payload": {"$ref": "#/$defs/speaker_active_payload"}}}
+      ]
+    },
+    "transcript_partial_event": {
+      "allOf": [
+        {"$ref": "#/$defs/envelope"},
+        {"properties": {"type": {"const": "transcript.partial"}, "payload": {"$ref": "#/$defs/transcript_partial_payload"}}}
+      ]
+    },
+    "transcript_final_event": {
+      "allOf": [
+        {"$ref": "#/$defs/envelope"},
+        {"properties": {"type": {"const": "transcript.final"}, "payload": {"$ref": "#/$defs/transcript_final_payload"}}}
+      ]
+    },
+    "transcript_retracted_event": {
+      "allOf": [
+        {"$ref": "#/$defs/envelope"},
+        {"properties": {"type": {"const": "transcript.retracted"}, "payload": {"$ref": "#/$defs/transcript_retracted_payload"}}}
+      ]
+    },
+    "minutes_updated_event": {
+      "allOf": [
+        {"$ref": "#/$defs/envelope"},
+        {"properties": {"type": {"const": "minutes.updated"}, "payload": {"$ref": "#/$defs/minutes_updated_payload"}}}
+      ]
+    },
+    "pipeline_warning_event": {
+      "allOf": [
+        {"$ref": "#/$defs/envelope"},
+        {"properties": {"type": {"const": "pipeline.warning"}, "payload": {"$ref": "#/$defs/pipeline_warning_payload"}}}
+      ]
+    }
+  }
+}

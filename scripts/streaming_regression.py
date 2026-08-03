@@ -311,6 +311,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "tests/livekit_dual_mic_probe.py",
                     "--inter-turn-silence",
                     str(args.probe_inter_turn_silence),
+                    "--connection-warmup",
+                    str(args.probe_connection_warmup),
                 ],
                 cwd=PROJECT_ROOT,
                 capture_output=True,
@@ -453,6 +455,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "status": "passed" if passed else "failed",
         "backend_url": base_url,
         "probe_inter_turn_silence": args.probe_inter_turn_silence,
+        "probe_connection_warmup": args.probe_connection_warmup,
         "probe_exit_code": probe.returncode,
         "checks": checks,
         "matches": matches,
@@ -478,6 +481,12 @@ def main() -> None:
         default=1.25,
         help="Silence inserted between sequential fixture turns (seconds).",
     )
+    parser.add_argument(
+        "--probe-connection-warmup",
+        type=float,
+        default=15.0,
+        help="Wait for per-mic decoder allocation before measured speech.",
+    )
     parser.add_argument("--min-overlap", type=float, default=0.35)
     parser.add_argument("--max-wer", type=float, default=0.65)
     parser.add_argument("--max-cer", type=float, default=0.60)
@@ -485,6 +494,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.probe_inter_turn_silence < 0.0:
         parser.error("--probe-inter-turn-silence must not be negative")
+    if args.probe_connection_warmup < 0.0:
+        parser.error("--probe-connection-warmup must not be negative")
 
     try:
         report = run(args)

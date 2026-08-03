@@ -1,0 +1,380 @@
+openapi: 3.1.0
+info:
+  title: Meeting Service Internal API
+  version: 1.0.0
+  description: >-
+    Contract called by the eCabinet BFF. Meeting Service owns runtime,
+    transcripts, minutes, exports and realtime state; it never queries the
+    eCabinet database.
+servers:
+  - url: http://meeting-service:8002
+    description: Docker internal network
+security:
+  - ServiceKey: []
+    ActorClaims: []
+paths:
+  /health/live:
+    get:
+      operationId: meetingServiceLiveness
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HealthResponse"
+  /health/ready:
+    get:
+      operationId: meetingServiceReadiness
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/HealthResponse"
+        "503":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/runtime:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    post:
+      operationId: createMeetingRuntime
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/meeting-snapshot.schema.json"
+      responses:
+        "201":
+          $ref: "#/components/responses/RuntimeResponse"
+        "200":
+          description: Existing runtime returned for the same idempotency key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Runtime"
+        "403":
+          $ref: "#/components/responses/ProblemResponse"
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+        "503":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/runtimes/{runtime_session_id}/stop:
+    parameters:
+      - $ref: "#/components/parameters/RuntimeSessionId"
+    post:
+      operationId: stopMeetingRuntime
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/RuntimeResponse"
+        "403":
+          $ref: "#/components/responses/ProblemResponse"
+        "404":
+          $ref: "#/components/responses/ProblemResponse"
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/status:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    get:
+      operationId: getMeetingRuntimeStatus
+      responses:
+        "200":
+          $ref: "#/components/responses/RuntimeResponse"
+        "404":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/snapshot:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    put:
+      operationId: updateMeetingSnapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/meeting-snapshot.schema.json"
+      responses:
+        "200":
+          $ref: "#/components/responses/RuntimeResponse"
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/tokens:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    post:
+      operationId: issueMeetingLiveKitToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [runtime_session_id, user_id, device_id]
+              properties:
+                runtime_session_id:
+                  type: string
+                  format: uuid
+                user_id:
+                  type: string
+                  format: uuid
+                device_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 160
+      responses:
+        "200":
+          description: LiveKit token. eCabinet signs the separate Socket.IO runtime token.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [runtime_session_id, livekit_url, room, identity, token, expires_at]
+                properties:
+                  runtime_session_id: {type: string, format: uuid}
+                  livekit_url: {type: string, format: uri}
+                  room: {type: string}
+                  identity: {type: string}
+                  token: {type: string}
+                  expires_at: {type: string, format: date-time}
+        "403":
+          $ref: "#/components/responses/ProblemResponse"
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/transcripts:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    get:
+      operationId: listMeetingTranscripts
+      parameters:
+        - name: after_sequence
+          in: query
+          schema: {type: integer, minimum: 0}
+      responses:
+        "200":
+          description: Persisted final transcript state.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [meeting_id, items, last_sequence]
+                properties:
+                  meeting_id: {type: string, format: uuid}
+                  items:
+                    type: array
+                    items: {type: object}
+                  last_sequence: {type: integer, minimum: 0}
+  /internal/v1/meetings/{meeting_id}/minutes:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    get:
+      operationId: getMeetingMinutes
+      responses:
+        "200":
+          $ref: "#/components/responses/MinutesResponse"
+        "404":
+          $ref: "#/components/responses/ProblemResponse"
+    patch:
+      operationId: editMeetingMinutes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [base_revision, document]
+              properties:
+                base_revision: {type: integer, minimum: 1}
+                document:
+                  $ref: "../schemas/minutes-document.schema.json"
+      responses:
+        "200":
+          $ref: "#/components/responses/MinutesResponse"
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/minutes/analyze:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    post:
+      operationId: analyzeMeetingMinutes
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Minutes generation queued.
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+        "503":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/minutes/review:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    post:
+      operationId: submitMeetingMinutesForReview
+      responses:
+        "200":
+          $ref: "#/components/responses/MinutesResponse"
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/minutes/approve:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    post:
+      operationId: approveMeetingMinutes
+      responses:
+        "200":
+          $ref: "#/components/responses/MinutesResponse"
+        "403":
+          $ref: "#/components/responses/ProblemResponse"
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/minutes/exports/docx:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    post:
+      operationId: exportMeetingMinutesDocx
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "201":
+          description: Export metadata created.
+        "403":
+          $ref: "#/components/responses/ProblemResponse"
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    delete:
+      operationId: purgeMeetingRuntimeData
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: Purge accepted or already completed.
+  /internal/v1/enrollments/{user_id}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    post:
+      operationId: enrollMeetingSpeaker
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [display_name, audio]
+              properties:
+                display_name: {type: string, minLength: 1, maxLength: 160}
+                audio: {type: string, format: binary}
+      responses:
+        "200": {description: Enrollment result.}
+        "422": {$ref: "#/components/responses/ProblemResponse"}
+    get:
+      operationId: getMeetingSpeakerEnrollment
+      responses:
+        "200": {description: Enrollment profile status.}
+        "404": {$ref: "#/components/responses/ProblemResponse"}
+    delete:
+      operationId: deleteMeetingSpeakerEnrollment
+      responses:
+        "204": {description: Profile removed or absent.}
+components:
+  securitySchemes:
+    ServiceKey:
+      type: apiKey
+      in: header
+      name: X-Service-Key
+    ActorClaims:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    MeetingId:
+      name: meeting_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    RuntimeSessionId:
+      name: runtime_session_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 8, maxLength: 160}
+  schemas:
+    Runtime:
+      type: object
+      additionalProperties: false
+      required: [schema_version, runtime_session_id, meeting_id, status, livekit_room]
+      properties:
+        schema_version: {const: 1}
+        runtime_session_id: {type: string, format: uuid}
+        meeting_id: {type: string, format: uuid}
+        status:
+          type: string
+          enum: [STARTING, READY, RECORDING, STOPPING, COMPLETED, FAILED]
+        livekit_room: {type: string}
+        started_at: {type: [string, "null"], format: date-time}
+        ended_at: {type: [string, "null"], format: date-time}
+    MinutesRevision:
+      type: object
+      additionalProperties: false
+      required: [meeting_id, revision, status, document]
+      properties:
+        meeting_id: {type: string, format: uuid}
+        revision: {type: integer, minimum: 1}
+        status: {type: string, enum: [DRAFT, REVIEWING, APPROVED, SUPERSEDED]}
+        document:
+          $ref: "../schemas/minutes-document.schema.json"
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [code, message, correlation_id]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        correlation_id: {type: string}
+        details: {type: object}
+  responses:
+    HealthResponse:
+      description: Service health.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, service]
+            properties:
+              status: {type: string, enum: [ok, degraded]}
+              service: {type: string}
+              dependencies: {type: object}
+    RuntimeResponse:
+      description: Runtime state.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Runtime"
+    MinutesResponse:
+      description: Minutes revision.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MinutesRevision"
+    ProblemResponse:
+      description: Request failed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"

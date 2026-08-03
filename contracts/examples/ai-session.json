@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "runtime_session_id": "bf3f6c7c-f7f9-4204-acf2-2be9140466fd",
+  "meeting_id": "9f1d1308-7c64-4e94-9540-67a4522bd2c1",
+  "assignment_generation": 1,
+  "livekit": {
+    "url": "wss://livekit.simplething.id.vn",
+    "room": "meeting-9f1d1308-7c64-4e94-9540-67a4522bd2c1",
+    "agent_token": "example-agent-token-not-for-production"
+  },
+  "participants": [
+    {
+      "user_id": "678eae11-dc26-468b-9afc-17b5938e2278",
+      "display_name": "Nguyễn Văn A",
+      "role": "CHAIRPERSON"
+    },
+    {
+      "user_id": "7c810d2a-7d01-4169-a834-3633ef56059c",
+      "display_name": "Trần Văn B",
+      "role": "MEMBER"
+    }
+  ],
+  "hotwords": [
+    {"term": "Nguyễn Văn A", "weight": 1.0, "source": "participant"},
+    {"term": "VNPT", "weight": 1.0, "source": "manual"}
+  ],
+  "callback": {
+    "url": "http://meeting-service:8002/internal/v1/ai-events"
+  }
+}

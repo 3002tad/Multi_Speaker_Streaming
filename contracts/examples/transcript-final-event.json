@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "event_id": "3dc6c366-75cc-4e5d-8847-cb2b582c738a",
+  "type": "transcript.final",
+  "meeting_id": "9f1d1308-7c64-4e94-9540-67a4522bd2c1",
+  "runtime_session_id": "bf3f6c7c-f7f9-4204-acf2-2be9140466fd",
+  "occurred_at": "2026-08-03T08:01:09.500Z",
+  "sequence": 12,
+  "payload": {
+    "segment_id": "seg-d5fe097914f84fbdb3177d10d7f1bc97",
+    "source_identity": "user:678eae11-dc26-468b-9afc-17b5938e2278:device:laptop-01",
+    "speaker": {
+      "user_id": "678eae11-dc26-468b-9afc-17b5938e2278",
+      "label": "Nguyễn Văn A",
+      "identity_method": "voice_profile",
+      "confidence": 0.94,
+      "margin": 0.11,
+      "consensus": 1.0
+    },
+    "raw_text": "THỐNG NHẤT TRIỂN KHAI HỆ THỐNG TRONG THÁNG TÁM",
+    "content_text": "Thống nhất triển khai hệ thống trong tháng tám.",
+    "started_at": "2026-08-03T08:01:02.100Z",
+    "ended_at": "2026-08-03T08:01:09.100Z",
+    "global_turn_id": "turn-9cc56dbbd3074f8baa4f05efb12245f2",
+    "revision": 1,
+    "quality": {
+      "signal_rms": 0.071,
+      "signal_snr_db": 31.4,
+      "clipping_ratio": 0.0,
+      "speaker_id_ms": 420,
+      "pipeline_ms": 1850
+    },
+    "pipeline_meta": {
+      "asr_frontend": "legacy",
+      "asr_enhancer": "none",
+      "phonetic_recovery_applied": false
+    }
+  }
+}

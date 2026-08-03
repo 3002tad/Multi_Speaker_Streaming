@@ -44,7 +44,7 @@ MVP là **phase 1 của quá trình tách bounded context Meeting theo strangler
 
 ### 1.3 Thứ tự ưu tiên bàn giao
 
-1. **P0 — Baseline họp realtime trong module phiên họp:** start/stop theo meeting, join LiveKit, publish/mute mic, global-turn, DPDFNet/Zipformer, speaker identity, partial/final transcript, PostgreSQL persistence, Socket.IO room, reconnect và safe shutdown. Không bắt đầu tối ưu feature ngoài phiên họp khi vertical slice này chưa pass E2E.
+1. **P0 — Baseline họp realtime trong module phiên họp:** start/stop theo meeting, join LiveKit, publish/mute mic, global-turn, legacy DSP/Zipformer, speaker identity, partial/final transcript, PostgreSQL persistence, Socket.IO room, reconnect và safe shutdown. DPDFNet/GTCRN adapter được giữ nhưng neural enhancer không active trong baseline đã khóa. Không bắt đầu tối ưu feature ngoài phiên họp khi vertical slice này chưa pass E2E.
 2. **P1 — Biên bản nằm trong phiên họp:** Qwen compose từ transcript final, revision/evidence, review/approve, xem transcript nguồn và export DOCX theo quyền. P1 không được làm chậm hoặc thay đổi thuật toán realtime P0.
 3. **Không có P2 cross-module trong sprint:** decision/action dừng ở nội dung biên bản; không ghi sang Văn bản chỉ đạo hoặc các module nghiệp vụ khác.
 
@@ -258,7 +258,7 @@ MinutesGenerator      compose(evidence, previous_document)
 SessionRuntimeStore   activate / stop / assignment / health
 ```
 
-Thuật toán DPDFNet/DSP, Zipformer, WavLM, hotword và phonetic recovery được giữ nguyên; chỉ dependency injection và lifecycle được thay đổi.
+Thuật toán legacy DSP, Zipformer, WavLM, hotword và phonetic recovery được giữ nguyên; chỉ dependency injection và lifecycle được thay đổi. DPDFNet/GTCRN adapter vẫn được di chuyển cùng source nhưng giữ `ASR_ENHANCER=none`, không được bật trong commit refactor nếu chưa có benchmark riêng.
 
 ---
 
