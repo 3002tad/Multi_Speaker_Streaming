@@ -296,6 +296,20 @@ Streaming regression, yêu cầu backend đang chạy:
 Regression kiểm tra transcript final, timestamp, global turn, speaker identity,
 cross-mic duplicate và WER/CER theo `audio/truth.csv`.
 
+Kiểm tra nhiều người nói đồng thời bằng các nguồn độc lập trong
+`audio/truth_1.csv`:
+
+```bash
+/home/ntd/meeting_runtime/venv_linux/bin/python -B \
+  scripts/concurrent_streaming_regression.py \
+  --start-demo --mics 4 \
+  --output tmp/concurrent_streaming_regression_4mic.json
+```
+
+Test chỉ pass khi từng `source_id` đều có ít nhất một transcript partial và
+một transcript final; tổng số transcript đúng nhưng thiếu một mic vẫn bị xem
+là lỗi.
+
 Hướng dẫn triển khai và benchmark chi tiết nằm trong
 [Huong_Dan_Chay_Test.md](Huong_Dan_Chay_Test.md).
 

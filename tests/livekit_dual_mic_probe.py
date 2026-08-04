@@ -127,8 +127,13 @@ async def publish_source(
     name: str,
     audio: np.ndarray,
     ready: asyncio.Event,
+    *,
+    identity_sink: dict[str, str] | None = None,
+    finalization_wait_seconds: float = 12.0,
 ) -> None:
     credentials = await get_credentials(name)
+    if identity_sink is not None:
+        identity_sink[name] = str(credentials["identity"])
     room = rtc.Room()
     source = rtc.AudioSource(SAMPLE_RATE, 1)
     track = rtc.LocalAudioTrack.create_audio_track(
@@ -161,7 +166,7 @@ async def publish_source(
             await asyncio.sleep(FRAME_SAMPLES / SAMPLE_RATE)
 
         # Keep the participant connected while VAD, WavLM and Qwen finalize.
-        await asyncio.sleep(12)
+        await asyncio.sleep(finalization_wait_seconds)
     finally:
         await room.disconnect()
 

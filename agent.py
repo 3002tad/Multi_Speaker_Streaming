@@ -184,6 +184,11 @@ async def process_track(
                 # The AI service can still be finalizing the last utterance
                 # when a participant mutes or leaves. Keep the result channel
                 # alive briefly so that final transcript is not lost.
+                print(
+                    f"[track] {display_name}: forwarded "
+                    f"{audio_sequence} frames "
+                    f"({audio_sequence * settings.audio_frame_size_ms / 1000:.2f}s)"
+                )
                 try:
                     await asyncio.wait_for(
                         asyncio.shield(result_task), timeout=20.0

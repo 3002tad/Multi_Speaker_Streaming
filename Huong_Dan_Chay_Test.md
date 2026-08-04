@@ -647,6 +647,22 @@ venv_linux/bin/python -B scripts/streaming_regression.py \
 Ngưỡng mặc định của streaming regression là `WER <= 0.65`, `CER <= 0.60`;
 có thể điều chỉnh bằng `--max-wer` và `--max-cer`.
 
+Test riêng tình huống nhiều người nói đồng thời từ các file trong
+`audio/truth_1.csv`:
+
+```bash
+venv_linux/bin/python -B scripts/concurrent_streaming_regression.py \
+  --start-demo \
+  --mics 4 \
+  --output tmp/concurrent-streaming-4mic.json
+```
+
+Có thể đổi `--mics 2`, `--mics 3` hoặc `--mics 4`. Runner theo dõi event
+WebSocket theo từng `source_id`; mỗi mic bắt buộc phải có cả
+`transcript.partial` và `transcript.final`. Runner tự dừng demo an toàn nếu
+không truyền `--keep-demo`. Log nằm tại
+`output/concurrent-streaming-demo.log`.
+
 Kiểm tra transcript đã lưu:
 
 ```bash

@@ -45,6 +45,7 @@ from backend.audio_pipeline import (
     unpack_audio_packet,
 )
 from backend.config import settings
+from backend.asr_scheduler import ZipformerDecodeScheduler
 from backend.final_turn import choose_redecode_transcript
 from backend.adaptive_dictionary import (
     AdaptiveDictionary,
@@ -154,10 +155,10 @@ topic_discovery = TopicDiscoveryWindow(
     maximum_context_chars=settings.topic_discovery_maximum_context_chars,
     maximum_window_seconds=settings.topic_discovery_maximum_window_seconds,
 )
-# sherpa streams are cheap, but the ONNX recognizer/model object is shared by
-# all microphone connections. Serialize calls into it so decoding every mic
-# continuously cannot race or corrupt another stream's state.
-zipformer_inference_lock = threading.Lock()
+# Sherpa streams are independent, but the recognizer/model object is shared by
+# every microphone. One dedicated worker preserves serialized access without
+# ever making the asyncio event loop wait on a threading.Lock.
+zipformer_scheduler = ZipformerDecodeScheduler()
 
 # ============================================================
 # 2. WavLM – Speaker Embedding
@@ -464,10 +465,9 @@ def decode_final_turn_audio(audio: np.ndarray) -> str:
     if tail.size:
         stream.accept_waveform(16000, tail)
     stream.input_finished()
-    with zipformer_inference_lock:
-        while recognizer.is_ready(stream):
-            recognizer.decode_stream(stream)
-        result = recognizer.get_result(stream)
+    while recognizer.is_ready(stream):
+        recognizer.decode_stream(stream)
+    result = recognizer.get_result(stream)
     return result.text.strip() if hasattr(result, "text") else str(result).strip()
 
 
@@ -527,7 +527,7 @@ class FinalTurnRedecodeCoordinator:
             while True:
                 audio, future, _submitted_at = await self.queue.get()
                 try:
-                    text = await heavy_work.run_final_thread(
+                    text = await zipformer_scheduler.run(
                         lambda: decode_final_turn_audio(audio)
                     )
                     if not future.done():
@@ -1320,6 +1320,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 async def shutdown_final_turn_redecode() -> None:
     """Release queued replay callers before the AI process exits."""
     await final_turn_redecode.close()
+    await zipformer_scheduler.close()
 
 @app.get("/")
 async def get_health():
@@ -1585,11 +1586,17 @@ async def websocket_endpoint(
 
     # A decoder generation stays immutable within one VAD/global turn.
     asr_recognizer = recognizer
-    asr_stream = asr_recognizer.create_stream()
+    stream_allocation_started = time.perf_counter()
+    asr_stream = await zipformer_scheduler.run(
+        asr_recognizer.create_stream
+    )
+    print(
+        f"[ASR ready] [{identity}] stream allocated in "
+        f"{(time.perf_counter() - stream_allocation_started) * 1000:.0f} ms"
+    )
     local_dictionary_generation = dictionary_generation
     turn_phonetic_lexicon = phonetic_lexicon
     vad_stream  = vad_model.stream()
-    asr_lock = asyncio.Lock()
 
     # AudioStream is pinned to 20 ms in agent.py. Keep 800 ms by sample-time,
     # not by an assumed LiveKit packet count. Silero's START event is the
@@ -1615,7 +1622,9 @@ async def websocket_endpoint(
         return min(time.time(), timestamp + audio_wall_time_offset)
     
     current_speaker = fallback_speaker
-    audio_queue = asyncio.Queue()
+    audio_queue = asyncio.Queue(
+        maxsize=settings.asr_stream_queue_max_chunks
+    )
     quality_tracker = AudioQualityTracker()
     asr_preprocessor = StreamingAsrPreprocessor(
         high_pass_hz=settings.asr_high_pass_hz,
@@ -1735,10 +1744,9 @@ async def websocket_endpoint(
         else:
             return
         if tail.size:
-            with zipformer_inference_lock:
-                asr_stream.accept_waveform(16000, tail)
-                while asr_recognizer.is_ready(asr_stream):
-                    asr_recognizer.decode_stream(asr_stream)
+            asr_stream.accept_waveform(16000, tail)
+            while asr_recognizer.is_ready(asr_stream):
+                asr_recognizer.decode_stream(asr_stream)
 
     def log_asr_frontend_telemetry() -> None:
         if guarded_frontend is not None:
@@ -1783,12 +1791,10 @@ async def websocket_endpoint(
             dtype=np.float32,
         )
         if padding.size:
-            with zipformer_inference_lock:
-                asr_stream.accept_waveform(16000, padding)
-        with zipformer_inference_lock:
-            while asr_recognizer.is_ready(asr_stream):
-                asr_recognizer.decode_stream(asr_stream)
-            result = asr_recognizer.get_result(asr_stream)
+            asr_stream.accept_waveform(16000, padding)
+        while asr_recognizer.is_ready(asr_stream):
+            asr_recognizer.decode_stream(asr_stream)
+        result = asr_recognizer.get_result(asr_stream)
         return (
             result.text.strip()
             if hasattr(result, "text")
@@ -1803,65 +1809,129 @@ async def websocket_endpoint(
     async def asr_worker():
         nonlocal current_speaker
         nonlocal last_sent_text, last_partial_sent_at
+        nonlocal asr_recognizer, asr_stream
+        nonlocal local_dictionary_generation
+
+        async def handle_command(command) -> None:
+            kind = command[0]
+            if kind == "start":
+                _, next_recognizer, next_generation, buffered = command
+
+                def start_step() -> bool:
+                    nonlocal asr_recognizer, asr_stream
+                    nonlocal local_dictionary_generation
+                    generation_changed = (
+                        next_generation != local_dictionary_generation
+                    )
+                    if generation_changed:
+                        asr_recognizer = next_recognizer
+                        asr_stream = asr_recognizer.create_stream()
+                        local_dictionary_generation = next_generation
+                    else:
+                        asr_recognizer.reset(asr_stream)
+                    reset_asr_frontend()
+                    for chunk, quality, _timestamp in buffered:
+                        prepared = prepare_asr_audio(chunk, quality)
+                        if prepared.size:
+                            asr_stream.accept_waveform(16000, prepared)
+                    return generation_changed
+
+                try:
+                    generation_changed = await zipformer_scheduler.run(
+                        start_step
+                    )
+                    if generation_changed:
+                        print(
+                            f"   [Dictionary] [{identity}] "
+                            f"generation={local_dictionary_generation}"
+                        )
+                except Exception as exc:
+                    print(
+                        f"[!] Lỗi khởi tạo ASR turn [{identity}]: {exc}"
+                    )
+                finally:
+                    audio_queue.task_done()
+                return
+
+            if kind == "finalize":
+                _, future, reset_after = command
+
+                def finalize_step() -> str:
+                    flush_asr_frontend()
+                    final_text = finalize_asr_stream_text()
+                    if reset_after:
+                        asr_recognizer.reset(asr_stream)
+                    log_asr_frontend_telemetry()
+                    if reset_after:
+                        reset_asr_frontend()
+                    return final_text
+
+                try:
+                    final_text = await zipformer_scheduler.run(finalize_step)
+                    if not future.done():
+                        future.set_result(final_text)
+                except Exception as exc:
+                    if not future.done():
+                        future.set_exception(exc)
+                finally:
+                    audio_queue.task_done()
+                return
+
+            raise ValueError(f"Unsupported ASR command: {kind}")
+
         try:
             while True:
-                first_chunk = await audio_queue.get()
-                if first_chunk is None:
+                first_item = await audio_queue.get()
+                if first_item is None:
                     audio_queue.task_done()
                     break
 
-                async def finish_segment(command):
-                    _, future = command
-                    try:
-                        async with asr_lock:
-                            flush_asr_frontend()
-                            final_text = finalize_asr_stream_text()
-                            with zipformer_inference_lock:
-                                asr_recognizer.reset(asr_stream)
-                            log_asr_frontend_telemetry()
-                            reset_asr_frontend()
-                        if not future.done():
-                            future.set_result(final_text)
-                    except Exception as exc:
-                        if not future.done():
-                            future.set_exception(exc)
-                    finally:
-                        audio_queue.task_done()
-
-                if isinstance(first_chunk, tuple):
-                    await finish_segment(first_chunk)
+                if first_item[0] != "audio":
+                    await handle_command(first_item)
                     continue
 
-                chunks = [first_chunk]
+                chunks = [first_item]
                 stop_after_batch = False
-                finalize_command = None
+                deferred_command = None
                 while len(chunks) < 10:
                     try:
-                        next_chunk = audio_queue.get_nowait()
+                        next_item = audio_queue.get_nowait()
                     except asyncio.QueueEmpty:
                         break
-                    if next_chunk is None:
+                    if next_item is None:
                         audio_queue.task_done()
                         stop_after_batch = True
                         break
-                    if isinstance(next_chunk, tuple):
-                        finalize_command = next_chunk
+                    if next_item[0] != "audio":
+                        deferred_command = next_item
                         break
-                    chunks.append(next_chunk)
-
-                audio_np = np.concatenate(chunks)
+                    chunks.append(next_item)
 
                 def decode_step():
-                    with zipformer_inference_lock:
+                    prepared_chunks = []
+                    for _kind, samples, quality in chunks:
+                        prepared = prepare_asr_audio(
+                            samples, quality
+                        )
+                        if prepared.size:
+                            prepared_chunks.append(prepared)
+                    if prepared_chunks:
+                        audio_np = np.concatenate(prepared_chunks)
                         asr_stream.accept_waveform(16000, audio_np)
-                        while asr_recognizer.is_ready(asr_stream):
-                            asr_recognizer.decode_stream(asr_stream)
-                        res = asr_recognizer.get_result(asr_stream)
-                    return res.text.strip() if hasattr(res, 'text') else str(res).strip()
+                    while asr_recognizer.is_ready(asr_stream):
+                        asr_recognizer.decode_stream(asr_stream)
+                    result = asr_recognizer.get_result(asr_stream)
+                    return (
+                        result.text.strip()
+                        if hasattr(result, "text")
+                        else str(result).strip()
+                    )
 
                 try:
-                    async with asr_lock:
-                        text = await asyncio.to_thread(decode_step)
+                    text = await zipformer_scheduler.run(decode_step)
+                except Exception as exc:
+                    text = ""
+                    print(f"[!] Lỗi decode ASR [{identity}]: {exc}")
                 finally:
                     for _ in chunks:
                         audio_queue.task_done()
@@ -1887,8 +1957,8 @@ async def websocket_endpoint(
                         await websocket.send_text(json.dumps(partial_msg, ensure_ascii=False))
                     except Exception:
                         pass
-                if finalize_command is not None:
-                    await finish_segment(finalize_command)
+                if deferred_command is not None:
+                    await handle_command(deferred_command)
                 if stop_after_batch:
                     break
         except asyncio.CancelledError:
@@ -2119,6 +2189,28 @@ async def websocket_endpoint(
 
         print(f"[✅ Đã xuất Biên Bản cho {identity}]")
 
+    async def finalize_current_asr_stream(*, reset_after: bool) -> str:
+        """Finalize in queue order without blocking the room event loop."""
+        future = asyncio.get_running_loop().create_future()
+        await audio_queue.put(("finalize", future, reset_after))
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(future),
+                timeout=settings.asr_stream_finalize_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            print(
+                f"[!] ASR finalize timeout [{identity}] sau "
+                f"{settings.asr_stream_finalize_timeout_seconds:.1f}s; "
+                "dùng partial gần nhất."
+            )
+        except Exception as exc:
+            print(
+                f"[!] ASR finalize lỗi [{identity}]: {exc}; "
+                "dùng partial gần nhất."
+            )
+        return last_sent_text
+
     async def process_vad_events():
         nonlocal is_speaking, speech_start_time, speech_audio_chunks
         nonlocal speech_quality_observations, speech_sample_count
@@ -2155,57 +2247,44 @@ async def websocket_endpoint(
                     event_chunks = [
                         chunk for chunk in event_chunks if chunk.size
                     ]
-                    async with asr_lock:
-                        with dictionary_runtime_lock:
-                            next_recognizer = recognizer
-                            next_generation = dictionary_generation
-                            next_lexicon = phonetic_lexicon
-                        with zipformer_inference_lock:
-                            if next_generation != local_dictionary_generation:
-                                asr_recognizer = next_recognizer
-                                asr_stream = asr_recognizer.create_stream()
-                                local_dictionary_generation = next_generation
-                                print(
-                                    f"   [Dictionary] [{identity}] "
-                                    f"generation={next_generation}"
-                                )
-                            else:
-                                asr_recognizer.reset(asr_stream)
-                        turn_phonetic_lexicon = next_lexicon
-                        reset_asr_frontend()
-                        buffered = (
-                            [
-                                (
-                                    chunk,
-                                    quality_tracker.measure(
-                                        chunk, speech_active=True
-                                    ),
-                                    last_audio_timestamp,
-                                )
-                                for chunk in event_chunks
-                            ]
-                            if event_chunks
-                            else list(pre_speech_buf)
+                    with dictionary_runtime_lock:
+                        next_recognizer = recognizer
+                        next_generation = dictionary_generation
+                        next_lexicon = phonetic_lexicon
+                    turn_phonetic_lexicon = next_lexicon
+                    buffered = (
+                        [
+                            (
+                                chunk,
+                                quality_tracker.measure(
+                                    chunk, speech_active=True
+                                ),
+                                last_audio_timestamp,
+                            )
+                            for chunk in event_chunks
+                        ]
+                        if event_chunks
+                        else list(pre_speech_buf)
+                    )
+                    # Preserve the same prefix that is fed to ASR so
+                    # duration, speaker embedding and transcript all
+                    # describe the same complete utterance. The worker sees
+                    # this start command before any subsequent live chunks.
+                    speech_audio_chunks = [item[0] for item in buffered]
+                    speech_quality_observations = [
+                        item[1] for item in buffered
+                    ]
+                    # Pre-roll belongs to the snapshot/ASR, but not to the
+                    # soft-split live-turn counter.
+                    speech_sample_count = 0
+                    await audio_queue.put(
+                        (
+                            "start",
+                            next_recognizer,
+                            next_generation,
+                            buffered,
                         )
-                        # Preserve the same prefix that is fed to ASR so
-                        # duration, speaker embedding and transcript all
-                        # describe the same complete utterance.
-                        speech_audio_chunks = [
-                            item[0] for item in buffered
-                        ]
-                        speech_quality_observations = [
-                            item[1] for item in buffered
-                        ]
-                        # Pre-roll belongs to the snapshot/ASR, but not to
-                        # the soft-split live-turn counter.
-                        speech_sample_count = 0
-                        for chunk, quality, timestamp in buffered:
-                            prepared = prepare_asr_audio(chunk, quality)
-                            if prepared.size:
-                                with zipformer_inference_lock:
-                                    asr_stream.accept_waveform(
-                                        16000, prepared
-                                    )
+                    )
 
                 elif (
                     evt.type == VADEventType.INFERENCE_DONE
@@ -2261,9 +2340,9 @@ async def websocket_endpoint(
                     speech_quality_observations = []
                     speech_sample_count = 0
 
-                    future = asyncio.get_running_loop().create_future()
-                    audio_queue.put_nowait(("finalize", future))
-                    raw_text = await future
+                    raw_text = await finalize_current_asr_stream(
+                        reset_after=True
+                    )
 
                     t = asyncio.create_task(
                         process_final_minute_bg(
@@ -2295,7 +2374,6 @@ async def websocket_endpoint(
                         identity, timestamp=last_audio_timestamp
                     )
                     last_speech_end_time = speech_end_time
-                    last_sent_text = ""
                     pre_speech_buf.clear()
                     print(
                         f"\n[🛑 VAD] [{identity}] ĐÃ NGỪNG NÓI "
@@ -2323,13 +2401,13 @@ async def websocket_endpoint(
                     speech_quality_observations = []
                     speech_sample_count = 0
 
-                    # Do not read the final recognizer state until every
-                    # accepted speech chunk has been decoded.
-                    await audio_queue.join()
-                    async with asr_lock:
-                        flush_asr_frontend()
-                        raw_text = finalize_asr_stream_text()
-                        log_asr_frontend_telemetry()
+                    # The finalize command is ordered after every accepted
+                    # audio chunk. It executes off-loop and has a bounded
+                    # fallback instead of waiting forever on Queue.join().
+                    raw_text = await finalize_current_asr_stream(
+                        reset_after=False
+                    )
+                    last_sent_text = ""
 
                     # Bật tác vụ ngầm chạy WavLM + LLM để luồng VAD không bao giờ bị nghẽn hay khựng!
                     t = asyncio.create_task(
@@ -2355,6 +2433,9 @@ async def websocket_endpoint(
     asr_task = asyncio.create_task(asr_worker())
 
     last_voice_time = time.time()
+    received_frame_count = 0
+    received_sample_count = 0
+    received_peak_rms = 0.0
 
     try:
         while True:
@@ -2372,6 +2453,12 @@ async def websocket_endpoint(
             audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
             frame_quality = quality_tracker.measure(
                 audio_np, speech_active=is_speaking
+            )
+            received_frame_count += 1
+            received_sample_count += len(audio_np)
+            received_peak_rms = max(
+                received_peak_rms,
+                float(frame_quality.rms),
             )
             room_timeline.note_frame(
                 identity,
@@ -2413,21 +2500,30 @@ async def websocket_endpoint(
                         identity, timestamp=captured_at
                     )
                 ):
-                    prepared = prepare_asr_audio(
-                        audio_np, frame_quality
+                    # Preprocessing and recognizer access stay on the same
+                    # per-mic command stream. This avoids racing a frontend
+                    # reset while a new VAD turn starts.
+                    await audio_queue.put(
+                        ("audio", audio_np, frame_quality)
                     )
-                    if prepared.size:
-                        audio_queue.put_nowait(prepared)
 
     except WebSocketDisconnect:
         print(f"\n[-] Client {identity} đã ngắt kết nối.")
     except Exception as e:
         print(f"\n[!] Lỗi [{identity}]: {e}")
     finally:
+        print(
+            f"[audio input] [{identity}] received={received_frame_count} "
+            f"frames/{received_sample_count / 16000:.2f}s, "
+            f"peak_rms={received_peak_rms:.5f}"
+        )
         try:
             if is_speaking:
                 vad_stream.end_input()
-                await asyncio.wait_for(vad_task, timeout=2.0)
+                await asyncio.wait_for(
+                    vad_task,
+                    timeout=settings.asr_stream_finalize_timeout_seconds,
+                )
         except Exception:
             pass
 
@@ -2438,9 +2534,9 @@ async def websocket_endpoint(
             except Exception:
                 pass
 
-        audio_queue.put_nowait(None)
         try:
-            await asyncio.wait_for(asr_task, timeout=1.0)
+            await asyncio.wait_for(audio_queue.put(None), timeout=2.0)
+            await asyncio.wait_for(asr_task, timeout=5.0)
         except Exception:
             asr_task.cancel()
 
