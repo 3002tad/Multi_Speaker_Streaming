@@ -14,8 +14,8 @@ import websockets
 from livekit import rtc
 from livekit.api import AccessToken, VideoGrants
 
-from backend.audio_pipeline import pack_audio_packet
-from backend.config import settings
+from meeting_ai.core.audio_pipeline import pack_audio_packet
+from meeting_ai.config import settings
 
 
 async def publish_event(client: httpx.AsyncClient, payload: dict) -> None:

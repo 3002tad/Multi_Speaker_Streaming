@@ -31,7 +31,7 @@ from openai import AsyncOpenAI
 from livekit import rtc
 from livekit.plugins import silero
 from livekit.agents.vad import VADEventType
-from backend.audio_pipeline import (
+from meeting_ai.core.audio_pipeline import (
     AudioQualityTracker,
     CoordinatedVadTimeline,
     DynamicEnhancementController,
@@ -44,22 +44,22 @@ from backend.audio_pipeline import (
     summarize_quality,
     unpack_audio_packet,
 )
-from backend.config import settings
-from backend.asr_scheduler import ZipformerDecodeScheduler
-from backend.final_turn import choose_redecode_transcript
-from backend.adaptive_dictionary import (
+from meeting_ai.config import settings
+from meeting_ai.core.asr_scheduler import ZipformerDecodeScheduler
+from meeting_ai.core.final_turn import choose_redecode_transcript
+from meeting_ai.core.adaptive_dictionary import (
     AdaptiveDictionary,
     HotwordArtifacts,
     build_hotword_artifacts,
 )
-from backend.topic_discovery import TopicDiscoveryWindow
-from backend.speaker_identity import (
+from meeting_ai.core.topic_discovery import TopicDiscoveryWindow
+from meeting_ai.core.speaker_identity import (
     adaptive_absolute_threshold,
     build_enrollment_profile,
     can_early_accept_speaker,
     decide_open_set_speaker,
 )
-from backend.text_refinement import (
+from meeting_ai.core.text_refinement import (
     EpitranVietnamesePhonemizer,
     G2POnnxPhonemizer,
     PanphonFeatureScorer,

@@ -24,8 +24,8 @@ from livekit.api import AccessToken, VideoGrants
 from pydantic import BaseModel, Field
 
 from backend.api.database import TranscriptRepository
-from backend.config import PROJECT_ROOT, settings
-from backend.minutes_composer import (
+from meeting_ai.config import PROJECT_ROOT, settings
+from meeting_ai.application.minutes_composer import (
     MinutesCompositionError,
     OllamaMinutesComposer,
     empty_minutes_document,
