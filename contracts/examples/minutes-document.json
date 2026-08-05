@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "meeting": {
+    "title": "Triển khai nền tảng họp không giấy",
+    "started_at": "2026-08-03T08:00:00Z"
+  },
+  "summary": [
+    {
+      "content": "Cuộc họp thống nhất triển khai hệ thống trong tháng tám.",
+      "source_segment_ids": ["seg-d5fe097914f84fbdb3177d10d7f1bc97"]
+    }
+  ],
+  "topics": [
+    {
+      "title": "Kế hoạch triển khai",
+      "details": [
+        {
+          "speaker": "Nguyễn Văn A",
+          "content": "Hệ thống được triển khai trong tháng tám.",
+          "source_segment_ids": ["seg-d5fe097914f84fbdb3177d10d7f1bc97"]
+        }
+      ],
+      "proposals": [],
+      "decisions": [
+        {
+          "speaker": "Nguyễn Văn A",
+          "content": "Thống nhất triển khai hệ thống trong tháng tám.",
+          "source_segment_ids": ["seg-d5fe097914f84fbdb3177d10d7f1bc97"]
+        }
+      ],
+      "actions": [],
+      "source_segment_ids": ["seg-d5fe097914f84fbdb3177d10d7f1bc97"]
+    }
+  ],
+  "source_segment_ids": ["seg-d5fe097914f84fbdb3177d10d7f1bc97"]
+}

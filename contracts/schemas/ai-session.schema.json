@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://simplething.id.vn/contracts/ai-session-v1.schema.json",
+  "title": "Meeting AI session assignment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "runtime_session_id",
+    "meeting_id",
+    "assignment_generation",
+    "livekit",
+    "participants",
+    "callback"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "runtime_session_id": {"type": "string", "format": "uuid"},
+    "meeting_id": {"type": "string", "format": "uuid"},
+    "assignment_generation": {"type": "integer", "minimum": 1},
+    "livekit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "room", "agent_token"],
+      "properties": {
+        "url": {"type": "string", "format": "uri"},
+        "room": {"type": "string", "minLength": 1, "maxLength": 160},
+        "agent_token": {"type": "string", "minLength": 16}
+      }
+    },
+    "participants": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/participant"}
+    },
+    "hotwords": {
+      "type": "array",
+      "default": [],
+      "items": {"$ref": "#/$defs/hotword"}
+    },
+    "callback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "url": {"type": "string", "format": "uri"}
+      }
+    }
+  },
+  "$defs": {
+    "participant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_id", "display_name"],
+      "properties": {
+        "user_id": {"type": "string", "format": "uuid"},
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 160},
+        "role": {
+          "type": ["string", "null"],
+          "enum": ["CHAIRPERSON", "SECRETARY", "ADMIN", "MEMBER", "OBSERVER", null]
+        }
+      }
+    },
+    "hotword": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["term", "source"],
+      "properties": {
+        "term": {"type": "string", "minLength": 1, "maxLength": 160},
+        "weight": {"type": "number", "minimum": 0},
+        "source": {"type": "string", "enum": ["participant", "manual", "adaptive"]}
+      }
+    }
+  }
+}

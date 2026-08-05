@@ -20,6 +20,7 @@ FRAME_SAMPLES = 320
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TURN_SECONDS = 15.0
 INTER_TURN_SILENCE_SECONDS = 1.25
+CONNECTION_WARMUP_SECONDS = 15.0
 
 
 def load_audio(filename: str) -> np.ndarray:
@@ -126,8 +127,13 @@ async def publish_source(
     name: str,
     audio: np.ndarray,
     ready: asyncio.Event,
+    *,
+    identity_sink: dict[str, str] | None = None,
+    finalization_wait_seconds: float = 12.0,
 ) -> None:
     credentials = await get_credentials(name)
+    if identity_sink is not None:
+        identity_sink[name] = str(credentials["identity"])
     room = rtc.Room()
     source = rtc.AudioSource(SAMPLE_RATE, 1)
     track = rtc.LocalAudioTrack.create_audio_track(
@@ -160,7 +166,7 @@ async def publish_source(
             await asyncio.sleep(FRAME_SAMPLES / SAMPLE_RATE)
 
         # Keep the participant connected while VAD, WavLM and Qwen finalize.
-        await asyncio.sleep(12)
+        await asyncio.sleep(finalization_wait_seconds)
     finally:
         await room.disconnect()
 
@@ -169,6 +175,7 @@ async def main(
     *,
     cross_mic_gain: float,
     inter_turn_silence_seconds: float,
+    connection_warmup_seconds: float,
 ) -> None:
     mic_a, mic_b = build_sequential_cross_mic_audio(
         load_truth_segment("thayDung_noi"),
@@ -183,7 +190,11 @@ async def main(
         asyncio.create_task(publish_source("Mic A", mic_a, ready)),
         asyncio.create_task(publish_source("Mic B", mic_b, ready)),
     ]
-    await asyncio.sleep(2)
+    # Publishing the track triggers one Zipformer stream allocation per mic.
+    # That allocation is still synchronous in the locked baseline and can
+    # take more than ten seconds on a cold CPU process. Starting fixture speech
+    # earlier measures initialization loss instead of streaming ASR quality.
+    await asyncio.sleep(connection_warmup_seconds)
     ready.set()
     await asyncio.gather(*tasks)
     print(
@@ -191,6 +202,7 @@ async def main(
         round(sample_count / SAMPLE_RATE, 2),
         f"cross_mic_gain={cross_mic_gain:.2f}",
         f"inter_turn_silence={inter_turn_silence_seconds:.2f}",
+        f"connection_warmup={connection_warmup_seconds:.2f}",
     )
 
 
@@ -208,14 +220,23 @@ if __name__ == "__main__":
         default=INTER_TURN_SILENCE_SECONDS,
         help="Silence between the fixture turns in seconds.",
     )
+    parser.add_argument(
+        "--connection-warmup",
+        type=float,
+        default=CONNECTION_WARMUP_SECONDS,
+        help="Wait after publishing tracks before sending measured speech.",
+    )
     args = parser.parse_args()
     if not 0.0 <= args.cross_mic_gain <= 1.0:
         parser.error("--cross-mic-gain phải nằm trong khoảng 0..1")
     if args.inter_turn_silence < 0.0:
         parser.error("--inter-turn-silence must not be negative")
+    if args.connection_warmup < 0.0:
+        parser.error("--connection-warmup must not be negative")
     asyncio.run(
         main(
             cross_mic_gain=args.cross_mic_gain,
             inter_turn_silence_seconds=args.inter_turn_silence,
+            connection_warmup_seconds=args.connection_warmup,
         )
     )

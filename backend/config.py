@@ -208,6 +208,16 @@ class Settings:
     asr_final_padding_seconds: float = float(
         os.getenv("ASR_FINAL_PADDING_SECONDS", "0.66")
     )
+    # Per-mic audio stays ordered, while all calls into the shared Zipformer
+    # recognizer are serialized by one worker outside the asyncio event loop.
+    # The queue applies backpressure instead of silently dropping speech.
+    asr_stream_queue_max_chunks: int = max(
+        50, int(os.getenv("ASR_STREAM_QUEUE_MAX_CHUNKS", "400"))
+    )
+    asr_stream_finalize_timeout_seconds: float = max(
+        1.0,
+        float(os.getenv("ASR_STREAM_FINALIZE_TIMEOUT_SECONDS", "20.0")),
+    )
     # The realtime stream produces the draft immediately.  After an endpoint,
     # one shared worker may replay the complete VAD turn before it is written
     # to the official timeline.  It is deliberately bounded: a busy room must
