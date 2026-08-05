@@ -39,3 +39,8 @@ Thumbs.db
 
 # Separate eCabinet repository
 /ecabinet/
+
+merge_feature_plan.md
+pre_plan_questions.md
+AGENTS.md
+.codex/
