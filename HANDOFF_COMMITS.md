@@ -11,7 +11,7 @@ delivery is a ZIP archive containing both source trees.
 | Root / Meeting AI + Meeting Service | `feature/meeting-platform-microservices` | `6dfdd7a74d6a568b5ba736a057305ee9d9351b1d` | Runtime AI lifecycle, AI callback, Socket.IO boundary and signed runtime token verification |
 | eCabinet | `feature/meeting-platform-integration` | `133aa58a8806f904e3a3c8eb0d829a1f1a7841a4` | Meeting runtime façade client |
 
-Both working trees were clean when this checkpoint was recorded. The root repository now includes the signed runtime-token checkpoint; the eCabinet repository remains local-only and unchanged.
+The root repository is clean at this checkpoint. The eCabinet repository remains local-only and was not committed or pushed; it currently has pending integration changes in the session runtime adapter/token facade and frontend meeting feature files. Review and commit those separately after validation.
 
 ## Packaging rules
 
