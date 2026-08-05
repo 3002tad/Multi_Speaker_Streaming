@@ -6,10 +6,19 @@ import socketio
 from meeting_service.app.api.internal import router as internal_router
 from meeting_service.app.api.socketio import sio
 from meeting_service.app.config import settings
+from meeting_service.app.application.runtime_service import RuntimeService
+from meeting_service.app.infrastructure.database import create_session_factory
+from meeting_service.app.infrastructure.repositories import SqlAlchemyRuntimeRepository
 
 
 app = FastAPI(title="Meeting Service", version="0.1.0")
 app.include_router(internal_router)
+if settings.persistence_enabled:
+    app.state.runtime_service = RuntimeService(
+        SqlAlchemyRuntimeRepository(create_session_factory(settings.database_url))
+    )
+else:
+    app.state.runtime_service = RuntimeService()
 
 
 @app.get("/health/live")

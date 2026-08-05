@@ -4,16 +4,17 @@ from threading import RLock
 from uuid import UUID
 
 from meeting_service.app.domain.models import RuntimeSession, RuntimeStatus
+from meeting_service.app.infrastructure.repositories import RuntimeRepository
 
 
-class InMemoryRuntimeStore:
+class InMemoryRuntimeStore(RuntimeRepository):
     """Temporary store for the skeleton; replaced by Meeting Service DB."""
 
     def __init__(self) -> None:
         self._items: dict[UUID, RuntimeSession] = {}
         self._lock = RLock()
 
-    def create(self, meeting_id: UUID) -> RuntimeSession:
+    def create(self, meeting_id: UUID, snapshot: dict | None = None) -> RuntimeSession:
         with self._lock:
             current = next((x for x in self._items.values() if x.meeting_id == meeting_id and x.status not in {RuntimeStatus.COMPLETED, RuntimeStatus.FAILED}), None)
             if current:

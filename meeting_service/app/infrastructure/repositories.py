@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+from typing import Protocol
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from meeting_service.app.domain.models import RuntimeSession, RuntimeStatus
+from meeting_service.app.infrastructure.models import RuntimeSessionRecord
+
+
+class RuntimeRepository(Protocol):
+    def create(self, meeting_id: UUID, snapshot: dict) -> RuntimeSession: ...
+    def get(self, meeting_id: UUID) -> RuntimeSession | None: ...
+    def set_status(self, runtime_id: UUID, status: RuntimeStatus) -> RuntimeSession | None: ...
+
+
+def _to_domain(record: RuntimeSessionRecord) -> RuntimeSession:
+    return RuntimeSession(
+        meeting_id=record.meeting_id,
+        runtime_session_id=record.id,
+        status=RuntimeStatus(record.status),
+        livekit_room=record.livekit_room,
+        created_at=record.created_at,
+    )
+
+
+class SqlAlchemyRuntimeRepository:
+    """Meeting-owned repository. `meeting_id` is an external ID, never an FK."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._sessions = session_factory
+
+    def create(self, meeting_id: UUID, snapshot: dict) -> RuntimeSession:
+        with self._sessions.begin() as session:
+            existing = session.scalar(select(RuntimeSessionRecord).where(RuntimeSessionRecord.meeting_id == meeting_id, RuntimeSessionRecord.status.not_in([RuntimeStatus.COMPLETED.value, RuntimeStatus.FAILED.value])))
+            if existing:
+                return _to_domain(existing)
+            record = RuntimeSessionRecord(meeting_id=meeting_id, meeting_snapshot_json=snapshot, livekit_room=f"meeting-{meeting_id}", status=RuntimeStatus.STARTING.value)
+            session.add(record)
+            session.flush()
+            return _to_domain(record)
+
+    def get(self, meeting_id: UUID) -> RuntimeSession | None:
+        with self._sessions() as session:
+            record = session.scalar(select(RuntimeSessionRecord).where(RuntimeSessionRecord.meeting_id == meeting_id).order_by(RuntimeSessionRecord.created_at.desc()))
+            return _to_domain(record) if record else None
+
+    def set_status(self, runtime_id: UUID, status: RuntimeStatus) -> RuntimeSession | None:
+        with self._sessions.begin() as session:
+            record = session.get(RuntimeSessionRecord, runtime_id)
+            if not record:
+                return None
+            record.status = status.value
+            return _to_domain(record)

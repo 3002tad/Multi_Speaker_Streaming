@@ -9,6 +9,10 @@ def _origins() -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _bool(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     service_name: str = os.getenv("MEETING_SERVICE_NAME", "meeting-service")
@@ -17,6 +21,7 @@ class Settings:
     database_url: str = os.getenv(
         "MEETING_DATABASE_URL", "postgresql://meeting:meeting@localhost:5433/meeting_service"
     )
+    persistence_enabled: bool = _bool("MEETING_PERSISTENCE_ENABLED")
     socketio_path: str = os.getenv(
         "MEETING_SOCKETIO_PATH", "meeting-runtime/socket.io"
     ).strip("/")

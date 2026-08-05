@@ -6,6 +6,9 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from meeting_service.app.main import app
+from meeting_service.app.domain.models import RuntimeStatus
+from meeting_service.app.infrastructure.database import Base, create_session_factory
+from meeting_service.app.infrastructure.repositories import SqlAlchemyRuntimeRepository
 from meeting_service.app.infrastructure.runtime_store import InMemoryRuntimeStore
 
 
@@ -34,6 +37,16 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
         session = InMemoryRuntimeStore().create(meeting_id)
         self.assertEqual(session.meeting_id, meeting_id)
         self.assertFalse(hasattr(session, "ecabinet_model"))
+
+    def test_sql_repository_persists_external_meeting_id_without_fk(self) -> None:
+        factory = create_session_factory("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(factory.kw["bind"])
+        repository = SqlAlchemyRuntimeRepository(factory)
+        meeting_id = uuid4()
+        created = repository.create(meeting_id, {"meeting_id": str(meeting_id)})
+        self.assertEqual(repository.create(meeting_id, {}).runtime_session_id, created.runtime_session_id)
+        stopped = repository.set_status(created.runtime_session_id, RuntimeStatus.COMPLETED)
+        self.assertEqual(stopped.status, RuntimeStatus.COMPLETED)
 
 
 if __name__ == "__main__":

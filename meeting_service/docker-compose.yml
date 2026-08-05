@@ -1,0 +1,74 @@
+services:
+  postgres-meeting:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: meeting
+      POSTGRES_PASSWORD: ${MEETING_DB_PASSWORD:-meeting_dev_only_change_me}
+      POSTGRES_DB: meeting_service
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - meeting_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meeting -d meeting_service"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis-meeting:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - meeting_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  migration-meeting:
+    build:
+      context: ..
+      dockerfile: meeting_service/Dockerfile
+    command: ["alembic", "-c", "/app/meeting_service/alembic.ini", "upgrade", "head"]
+    environment: &meeting_environment
+      MEETING_DATABASE_URL: postgresql://meeting:${MEETING_DB_PASSWORD:-meeting_dev_only_change_me}@postgres-meeting:5432/meeting_service
+      MEETING_PERSISTENCE_ENABLED: "true"
+      MEETING_ALLOWED_ORIGINS: ${MEETING_ALLOWED_ORIGINS:-https://meet.simplething.id.vn}
+      MEETING_SERVICE_KEY: ${MEETING_SERVICE_KEY:-replace-before-public-deploy}
+    depends_on:
+      postgres-meeting:
+        condition: service_healthy
+    restart: "no"
+
+  meeting-service:
+    build:
+      context: ..
+      dockerfile: meeting_service/Dockerfile
+    ports:
+      - "127.0.0.1:8002:8002"
+    environment:
+      <<: *meeting_environment
+      MEETING_REDIS_URL: redis://redis-meeting:6379/0
+    depends_on:
+      postgres-meeting:
+        condition: service_healthy
+      redis-meeting:
+        condition: service_healthy
+      migration-meeting:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8002/health/live').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+volumes:
+  meeting_postgres_data:
+  meeting_redis_data:
+
+networks:
+  default:
+    name: meeting_platform_internal
