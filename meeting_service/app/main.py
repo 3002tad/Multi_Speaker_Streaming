@@ -10,6 +10,7 @@ from meeting_service.app.config import settings
 from meeting_service.app.application.runtime_service import RuntimeService
 from meeting_service.app.infrastructure.database import create_session_factory
 from meeting_service.app.infrastructure.repositories import SqlAlchemyAIEventRepository, SqlAlchemyRuntimeRepository
+from meeting_service.app.infrastructure.ai_client import MeetingAIClient
 
 
 app = FastAPI(title="Meeting Service", version="0.1.0")
@@ -21,6 +22,8 @@ if settings.persistence_enabled:
     app.state.ai_event_repository = SqlAlchemyAIEventRepository(session_factory)
 else:
     app.state.runtime_service = RuntimeService()
+if settings.ai_enabled:
+    app.state.runtime_service.ai_client = MeetingAIClient(settings.ai_base_url, settings.service_key)
 
 
 @app.get("/health/live")

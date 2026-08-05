@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 class RuntimeStatus(StrEnum):
     STARTING = "STARTING"
     READY = "READY"
+    RECORDING = "RECORDING"
     STOPPING = "STOPPING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"

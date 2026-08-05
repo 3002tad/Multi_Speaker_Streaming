@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from meeting_service.app.api.socketio import sio
 from meeting_service.app.infrastructure.repositories import SqlAlchemyAIEventRepository
 
 
@@ -24,14 +25,23 @@ class AIEvent(BaseModel):
 router = APIRouter(prefix="/internal/v1")
 
 
+def _event_dict(event: AIEvent) -> dict[str, Any]:
+    model_dump = getattr(event, "model_dump", None)
+    return model_dump() if model_dump else event.dict()
+
+
 @router.post("/ai-events")
-def receive_ai_event(request: Request, event: AIEvent, x_internal_api_key: str | None = Header(default=None)) -> dict[str, str]:
+async def receive_ai_event(request: Request, event: AIEvent, x_internal_api_key: str | None = Header(default=None)) -> dict[str, str]:
     expected = os.getenv("MEETING_SERVICE_KEY", "")
     if expected and x_internal_api_key != expected:
         raise HTTPException(status_code=403, detail="invalid service key")
     repository = getattr(request.app.state, "ai_event_repository", None)
     if repository is None:
-        return {"status": "accepted"}
-    data = event.dict()
-    data = {**data, "event_id": str(event.event_id), "meeting_id": str(event.meeting_id), "runtime_session_id": str(event.runtime_session_id)}
-    return {"status": repository.accept(data)}
+        status = "accepted"
+    else:
+        data = _event_dict(event)
+        data = {**data, "event_id": str(event.event_id), "meeting_id": str(event.meeting_id), "runtime_session_id": str(event.runtime_session_id)}
+        status = repository.accept(data)
+    if status == "accepted":
+        await sio.emit(event.type, _event_dict(event), room=f"meeting:{event.meeting_id}")
+    return {"status": status}
