@@ -39,3 +39,15 @@ class IdempotencyRecord(Base):
     key: Mapped[str] = mapped_column(String(255), nullable=False)
     response_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AIEventRecord(Base):
+    __tablename__ = "meeting_ai_events"
+
+    event_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    meeting_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    runtime_session_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

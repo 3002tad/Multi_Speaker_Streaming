@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from meeting_service.app.domain.models import RuntimeSession, RuntimeStatus
-from meeting_service.app.infrastructure.models import RuntimeSessionRecord
+from meeting_service.app.infrastructure.models import AIEventRecord, RuntimeSessionRecord
 
 
 class RuntimeRepository(Protocol):
@@ -54,3 +54,20 @@ class SqlAlchemyRuntimeRepository:
                 return None
             record.status = status.value
             return _to_domain(record)
+
+
+class SqlAlchemyAIEventRepository:
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._sessions = session_factory
+
+    def accept(self, event: dict) -> str:
+        with self._sessions.begin() as session:
+            event_id = UUID(str(event["event_id"]))
+            if session.get(AIEventRecord, event_id):
+                return "duplicate"
+            runtime_id = UUID(str(event["runtime_session_id"]))
+            latest = session.scalar(select(AIEventRecord).where(AIEventRecord.runtime_session_id == runtime_id).order_by(AIEventRecord.sequence.desc()))
+            if latest and int(event["sequence"]) <= latest.sequence:
+                return "stale"
+            session.add(AIEventRecord(event_id=event_id, meeting_id=UUID(str(event["meeting_id"])), runtime_session_id=runtime_id, event_type=event["type"], sequence=int(event["sequence"]), payload=event["payload"]))
+            return "accepted"

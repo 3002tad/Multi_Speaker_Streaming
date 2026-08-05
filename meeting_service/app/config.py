@@ -27,6 +27,7 @@ class Settings:
     ).strip("/")
     allowed_origins: tuple[str, ...] = tuple(_origins())
     service_key: str = os.getenv("MEETING_SERVICE_KEY", "")
+    ai_base_url: str = os.getenv("MEETING_AI_BASE_URL", "http://meeting-ai-api:8001")
 
 
 settings = Settings()

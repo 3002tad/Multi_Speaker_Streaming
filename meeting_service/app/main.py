@@ -4,19 +4,21 @@ from fastapi import FastAPI
 import socketio
 
 from meeting_service.app.api.internal import router as internal_router
+from meeting_service.app.api.ai_events import router as ai_events_router
 from meeting_service.app.api.socketio import sio
 from meeting_service.app.config import settings
 from meeting_service.app.application.runtime_service import RuntimeService
 from meeting_service.app.infrastructure.database import create_session_factory
-from meeting_service.app.infrastructure.repositories import SqlAlchemyRuntimeRepository
+from meeting_service.app.infrastructure.repositories import SqlAlchemyAIEventRepository, SqlAlchemyRuntimeRepository
 
 
 app = FastAPI(title="Meeting Service", version="0.1.0")
 app.include_router(internal_router)
+app.include_router(ai_events_router)
 if settings.persistence_enabled:
-    app.state.runtime_service = RuntimeService(
-        SqlAlchemyRuntimeRepository(create_session_factory(settings.database_url))
-    )
+    session_factory = create_session_factory(settings.database_url)
+    app.state.runtime_service = RuntimeService(SqlAlchemyRuntimeRepository(session_factory))
+    app.state.ai_event_repository = SqlAlchemyAIEventRepository(session_factory)
 else:
     app.state.runtime_service = RuntimeService()
 
