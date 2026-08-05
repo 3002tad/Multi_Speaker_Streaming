@@ -8,10 +8,10 @@ delivery is a ZIP archive containing both source trees.
 
 | Component | Local branch | Commit | Description |
 |---|---|---|---|
-| Root / Meeting AI + Meeting Service | `feature/meeting-platform-microservices` | `a59b133522a140a5d6a31b73e8af04d005ba5739` | Runtime AI lifecycle, AI callback and Socket.IO event boundary |
+| Root / Meeting AI + Meeting Service | `feature/meeting-platform-microservices` | `6dfdd7a74d6a568b5ba736a057305ee9d9351b1d` | Runtime AI lifecycle, AI callback, Socket.IO boundary and signed runtime token verification |
 | eCabinet | `feature/meeting-platform-integration` | `133aa58a8806f904e3a3c8eb0d829a1f1a7841a4` | Meeting runtime façade client |
 
-Both working trees were clean when this checkpoint was recorded.
+Both working trees were clean when this checkpoint was recorded. The root repository now includes the signed runtime-token checkpoint; the eCabinet repository remains local-only and unchanged.
 
 ## Packaging rules
 
