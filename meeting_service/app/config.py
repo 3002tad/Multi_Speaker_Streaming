@@ -29,6 +29,10 @@ class Settings:
     service_key: str = os.getenv("MEETING_SERVICE_KEY", "")
     ai_base_url: str = os.getenv("MEETING_AI_BASE_URL", "http://meeting-ai-api:8001")
     ai_enabled: bool = _bool("MEETING_AI_ENABLED")
+    runtime_token_secret: str = os.getenv("MEETING_RUNTIME_TOKEN_SECRET", "change-me-runtime-token-secret-32bytes")
+    runtime_token_algorithm: str = os.getenv("MEETING_RUNTIME_TOKEN_ALGORITHM", "HS256")
+    runtime_token_issuer: str = os.getenv("MEETING_RUNTIME_TOKEN_ISSUER", "ecabinet")
+    runtime_token_audience: str = os.getenv("MEETING_RUNTIME_TOKEN_AUDIENCE", "meeting-service")
 
 
 settings = Settings()
