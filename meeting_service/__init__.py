@@ -1,0 +1,1 @@
+"""Meeting Service microservice boundary."""
