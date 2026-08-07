@@ -6,4 +6,5 @@ alembic==1.15.1
 psycopg2-binary==2.9.10
 PyJWT==2.8.0
 httpx==0.28.1
+python-multipart==0.0.20
 minio==7.2.15

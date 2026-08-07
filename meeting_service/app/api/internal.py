@@ -75,14 +75,15 @@ async def get_enrollment(user_id: str, request: Request) -> dict[str, object]:
         raise HTTPException(status_code=502, detail="Meeting AI enrollment unavailable") from exc
 
 
-@router.delete("/enrollments/{user_id}", status_code=204)
-async def delete_enrollment(user_id: str, request: Request) -> None:
+@router.delete("/enrollments/{user_id}", status_code=204, response_class=Response)
+async def delete_enrollment(user_id: str, request: Request) -> Response:
     try:
         await _ai_client(request).delete_enrollment(user_id)
     except Exception as exc:
         status_code = getattr(getattr(exc, "response", None), "status_code", 502)
         if status_code not in {404, 204}:
             raise HTTPException(status_code=502, detail="Meeting AI enrollment unavailable") from exc
+    return Response(status_code=204)
 
 
 @router.delete("/meetings/{meeting_id}")
