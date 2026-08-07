@@ -122,9 +122,12 @@ Validation for this working slice:
   secret. Configure these values separately before testing real audio.
 - Neither repository was pushed to a remote.
 
-## Working tree — contract normalization and MinutesEditor (not committed)
+## Contract normalization and MinutesEditor — committed locally
 
-The next merge-plan slice is currently uncommitted:
+The next merge-plan slice is now committed locally:
+
+- Root / Meeting Service: `4c63753`
+- eCabinet: `3fcabc4`
 
 - LiveKit eCabinet calls the canonical
   `/internal/v1/meetings/{meeting_id}/tokens` contract. The previous runtime
@@ -142,4 +145,4 @@ Validation for this working tree:
 - Full named unittest set: 111 tests passed.
 - Meeting Service and eCabinet backend compile passed.
 - Frontend Vite production build passed.
-- No commit or push has been performed for this slice.
+- Neither repository was pushed to a remote for this slice.
