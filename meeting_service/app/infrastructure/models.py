@@ -51,3 +51,27 @@ class AIEventRecord(Base):
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TranscriptSegmentRecord(Base):
+    __tablename__ = "meeting_transcript_segments"
+    __table_args__ = (UniqueConstraint("meeting_id", "segment_id", name="uq_meeting_transcript_segment"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    meeting_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    segment_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MinutesRevisionRecord(Base):
+    __tablename__ = "meeting_minutes_revisions"
+    __table_args__ = (UniqueConstraint("meeting_id", "revision", name="uq_meeting_minutes_revision"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    meeting_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    document_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    source_segment_ids: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

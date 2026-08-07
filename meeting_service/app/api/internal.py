@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 
 from meeting_service.app.application.runtime_service import RuntimeService
 from meeting_service.app.application.meeting_content import content_store
@@ -14,6 +14,10 @@ runtime_service = RuntimeService()
 
 def _service(request: Request) -> RuntimeService:
     return getattr(request.app.state, "runtime_service", runtime_service)
+
+
+def _content(request: Request):
+    return getattr(request.app.state, "content_store", content_store)
 
 
 @router.post("/meetings/{meeting_id}/runtime", status_code=201)
@@ -38,26 +42,26 @@ async def stop_runtime(runtime_session_id: UUID, request: Request) -> dict[str, 
 
 
 @router.get("/meetings/{meeting_id}/transcript")
-def get_transcript(meeting_id: UUID) -> dict[str, object]:
-    return {"meeting_id": str(meeting_id), "segments": content_store.transcript(meeting_id)}
+def get_transcript(meeting_id: UUID, request: Request) -> dict[str, object]:
+    return {"meeting_id": str(meeting_id), "segments": _content(request).transcript(meeting_id)}
 
 
 @router.post("/meetings/{meeting_id}/transcript", status_code=201)
-def append_transcript(meeting_id: UUID, segment: dict[str, object]) -> dict[str, object]:
-    return content_store.append_transcript(meeting_id, segment)
+def append_transcript(meeting_id: UUID, request: Request, segment: dict[str, object] = Body(...)) -> dict[str, object]:
+    return _content(request).append_transcript(meeting_id, segment)
 
 
 @router.get("/meetings/{meeting_id}/minutes")
-def get_minutes(meeting_id: UUID) -> dict[str, object]:
-    return content_store.minutes(meeting_id)
+def get_minutes(meeting_id: UUID, request: Request) -> dict[str, object]:
+    return _content(request).minutes(meeting_id)
 
 
 @router.put("/meetings/{meeting_id}/minutes")
-def update_minutes(meeting_id: UUID, payload: dict[str, object]) -> dict[str, object]:
+def update_minutes(meeting_id: UUID, request: Request, payload: dict[str, object] = Body(...)) -> dict[str, object]:
     document = payload.get("document")
     if not isinstance(document, dict):
         raise HTTPException(status_code=422, detail="document phải là object")
     status = payload.get("status")
     if status is not None and status not in {"DRAFT", "REVIEWING", "APPROVED"}:
         raise HTTPException(status_code=422, detail="status không hợp lệ")
-    return content_store.save_minutes(meeting_id, document, str(status) if status else None)
+    return _content(request).save_minutes(meeting_id, document, str(status) if status else None)
