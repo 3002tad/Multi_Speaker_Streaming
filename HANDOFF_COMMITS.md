@@ -121,3 +121,25 @@ Validation for this working slice:
   unset in this local stack; the token façade returns `503` without exposing a
   secret. Configure these values separately before testing real audio.
 - Neither repository was pushed to a remote.
+
+## Working tree — contract normalization and MinutesEditor (not committed)
+
+The next merge-plan slice is currently uncommitted:
+
+- LiveKit eCabinet calls the canonical
+  `/internal/v1/meetings/{meeting_id}/tokens` contract. The previous runtime
+  token path remains a hidden compatibility alias for older clients.
+- The token response now includes `runtime_session_id`; user/device identity
+  follows `user:{user_id}:device:{device_id}`.
+- Minutes updates accept `base_revision` and return `409` for stale edits;
+  `PATCH` is canonical while `PUT` remains compatible.
+- `MinutesEditor.jsx` replaces the raw JSON textarea with structured blocks:
+  general information, summary, topics, proposals, decisions, actions and
+  transcript evidence selection.
+
+Validation for this working tree:
+
+- Full named unittest set: 111 tests passed.
+- Meeting Service and eCabinet backend compile passed.
+- Frontend Vite production build passed.
+- No commit or push has been performed for this slice.

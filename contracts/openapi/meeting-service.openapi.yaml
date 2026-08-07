@@ -143,6 +143,10 @@ paths:
           $ref: "#/components/responses/ProblemResponse"
         "409":
           $ref: "#/components/responses/ProblemResponse"
+        "422":
+          $ref: "#/components/responses/ProblemResponse"
+        "503":
+          $ref: "#/components/responses/ProblemResponse"
   /internal/v1/meetings/{meeting_id}/transcripts:
     parameters:
       - $ref: "#/components/parameters/MeetingId"
@@ -188,13 +192,15 @@ paths:
               additionalProperties: false
               required: [base_revision, document]
               properties:
-                base_revision: {type: integer, minimum: 1}
+                base_revision: {type: integer, minimum: 0}
                 document:
                   $ref: "../schemas/minutes-document.schema.json"
       responses:
         "200":
           $ref: "#/components/responses/MinutesResponse"
         "409":
+          $ref: "#/components/responses/ProblemResponse"
+        "422":
           $ref: "#/components/responses/ProblemResponse"
   /internal/v1/meetings/{meeting_id}/minutes/analyze:
     parameters:

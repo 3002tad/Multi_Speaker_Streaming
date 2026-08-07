@@ -145,6 +145,20 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
             self.assertEqual(follow_up.status_code, 200)
             self.assertEqual(follow_up.json()["status"], "DRAFT")
 
+    def test_minutes_editor_rejects_stale_revision(self) -> None:
+        meeting_id = uuid4()
+        with TestClient(app) as client:
+            first = client.patch(
+                f"/internal/v1/meetings/{meeting_id}/minutes",
+                json={"base_revision": 0, "document": {"schema_version": 1, "meeting": {"title": "Demo", "started_at": None}, "summary": [], "topics": [], "source_segment_ids": []}},
+            )
+            self.assertEqual(first.status_code, 200)
+            stale = client.patch(
+                f"/internal/v1/meetings/{meeting_id}/minutes",
+                json={"base_revision": 0, "document": {"schema_version": 1, "meeting": {"title": "Stale", "started_at": None}, "summary": [], "topics": [], "source_segment_ids": []}},
+            )
+            self.assertEqual(stale.status_code, 409)
+
     def test_sql_repository_persists_external_meeting_id_without_fk(self) -> None:
         factory = create_session_factory("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(factory.kw["bind"])

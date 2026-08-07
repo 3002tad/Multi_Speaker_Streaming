@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 
 from meeting_service.app.application.runtime_service import RuntimeService, RuntimeStateError
 from meeting_service.app.domain.models import RuntimeStatus
-from meeting_service.app.application.meeting_content import content_store
+from meeting_service.app.application.meeting_content import MinutesRevisionConflict, content_store
 from meeting_service.app.infrastructure.livekit_tokens import LiveKitConfigurationError, issue_livekit_token
 
 
@@ -61,29 +61,76 @@ async def stop_runtime(runtime_session_id: UUID, request: Request) -> dict[str, 
     return session.as_dict()
 
 
-@router.post("/runtimes/{runtime_session_id}/livekit-token")
-def livekit_token(runtime_session_id: UUID, request: Request, payload: dict[str, object] = Body(...)) -> dict[str, object]:
+def _issue_livekit_token(
+    request: Request,
+    meeting_uuid: UUID,
+    runtime_session_id: UUID,
+    *,
+    identity: str,
+    name: str,
+    metadata: dict[str, object] | None = None,
+) -> dict[str, object]:
+    session = _service(request).status(meeting_uuid)
+    if session is None or session.runtime_session_id != runtime_session_id:
+        raise HTTPException(status_code=404, detail="runtime not found")
+    if session.status in {RuntimeStatus.COMPLETED, RuntimeStatus.FAILED}:
+        raise HTTPException(status_code=409, detail="runtime is no longer active")
+    try:
+        result = issue_livekit_token(
+            room=session.livekit_room,
+            identity=identity,
+            name=name,
+            metadata=metadata,
+        )
+        result["runtime_session_id"] = str(runtime_session_id)
+        return result
+    except LiveKitConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/meetings/{meeting_id}/tokens")
+def meeting_livekit_token(meeting_id: UUID, request: Request, payload: dict[str, object] = Body(...)) -> dict[str, object]:
+    """Issue the contract token using external user/device identifiers."""
+    try:
+        runtime_session_id = UUID(str(payload.get("runtime_session_id")))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="runtime_session_id must be a UUID") from exc
+    user_id = str(payload.get("user_id") or "")
+    device_id = str(payload.get("device_id") or "")
+    if not user_id or not device_id:
+        raise HTTPException(status_code=422, detail="user_id and device_id are required")
+    identity = f"user:{user_id}:device:{device_id}"
+    return _issue_livekit_token(
+        request,
+        meeting_id,
+        runtime_session_id,
+        identity=identity,
+        name=user_id,
+        metadata={"user_id": user_id, "device_id": device_id},
+    )
+
+
+@router.post("/runtimes/{runtime_session_id}/livekit-token", include_in_schema=False)
+def legacy_livekit_token(runtime_session_id: UUID, request: Request, payload: dict[str, object] = Body(...)) -> dict[str, object]:
+    """Compatibility alias for pre-contract eCabinet builds."""
     meeting_id = payload.get("meeting_id")
     try:
         meeting_uuid = UUID(str(meeting_id)) if meeting_id else None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="meeting_id must be a UUID") from exc
-    session = _service(request).status(meeting_uuid) if meeting_uuid else None
-    if session is None or session.runtime_session_id != runtime_session_id:
-        raise HTTPException(status_code=404, detail="runtime not found")
-    if session.status in {RuntimeStatus.COMPLETED, RuntimeStatus.FAILED}:
-        raise HTTPException(status_code=409, detail="runtime is no longer active")
+    if meeting_uuid is None:
+        raise HTTPException(status_code=422, detail="meeting_id must be a UUID")
     identity = str(payload.get("identity") or "")
-    name = str(payload.get("name") or identity)
-    try:
-        return issue_livekit_token(
-            room=session.livekit_room,
-            identity=identity,
-            name=name,
-            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
-        )
-    except LiveKitConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not identity:
+        raise HTTPException(status_code=422, detail="identity is required")
+    return _issue_livekit_token(
+        request,
+        meeting_uuid,
+        runtime_session_id,
+        identity=identity,
+        name=str(payload.get("name") or identity),
+        metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+    )
 
 
 @router.get("/meetings/{meeting_id}/transcript")
@@ -101,6 +148,7 @@ def get_minutes(meeting_id: UUID, request: Request) -> dict[str, object]:
     return _content(request).minutes(meeting_id)
 
 
+@router.patch("/meetings/{meeting_id}/minutes")
 @router.put("/meetings/{meeting_id}/minutes")
 def update_minutes(meeting_id: UUID, request: Request, payload: dict[str, object] = Body(...)) -> dict[str, object]:
     document = payload.get("document")
@@ -109,8 +157,14 @@ def update_minutes(meeting_id: UUID, request: Request, payload: dict[str, object
     status = payload.get("status")
     if status is not None and status not in {"DRAFT", "REVIEWING", "APPROVED"}:
         raise HTTPException(status_code=422, detail="status không hợp lệ")
+    base_revision = payload.get("base_revision")
+    if base_revision is not None and (isinstance(base_revision, bool) or not isinstance(base_revision, int) or base_revision < 0):
+        raise HTTPException(status_code=422, detail="base_revision không hợp lệ")
     if status == "APPROVED":
         runtime = _service(request).status(meeting_id)
         if runtime is None or runtime.status.value != "COMPLETED":
             raise HTTPException(status_code=409, detail="Minutes can only be approved after the runtime has completed")
-    return _content(request).save_minutes(meeting_id, document, str(status) if status else None)
+    try:
+        return _content(request).save_minutes(meeting_id, document, str(status) if status else None, base_revision)
+    except MinutesRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

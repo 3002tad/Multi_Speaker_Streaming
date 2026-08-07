@@ -12,6 +12,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from meeting_service.app.infrastructure.models import MinutesRevisionRecord, TranscriptSegmentRecord
 
 
+class MinutesRevisionConflict(RuntimeError):
+    """Raised when an editor saves against a stale minutes revision."""
+
+
 class MeetingContentStore:
     """In-memory implementation used when persistence is disabled."""
 
@@ -36,9 +40,18 @@ class MeetingContentStore:
         with self._lock:
             return deepcopy(self._minutes.get(meeting_id) or _default_minutes(meeting_id))
 
-    def save_minutes(self, meeting_id: UUID, document: dict[str, Any], status: str | None = None) -> dict[str, Any]:
+    def save_minutes(
+        self,
+        meeting_id: UUID,
+        document: dict[str, Any],
+        status: str | None = None,
+        base_revision: int | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
             previous = self._minutes.get(meeting_id) or _default_minutes(meeting_id)
+            current_revision = int(previous.get("revision", 0))
+            if base_revision is not None and base_revision != current_revision:
+                raise MinutesRevisionConflict(f"stale minutes revision; expected {current_revision}")
             item = {
                 "meeting_id": str(meeting_id),
                 "revision": int(previous.get("revision", 0)) + 1,
@@ -121,14 +134,23 @@ class SqlAlchemyMeetingContentRepository:
                 "updated_at": row.created_at.isoformat(),
             }
 
-    def save_minutes(self, meeting_id: UUID, document: dict[str, Any], status: str | None = None) -> dict[str, Any]:
+    def save_minutes(
+        self,
+        meeting_id: UUID,
+        document: dict[str, Any],
+        status: str | None = None,
+        base_revision: int | None = None,
+    ) -> dict[str, Any]:
         with self._sessions.begin() as session:
             previous = session.scalar(
                 select(MinutesRevisionRecord)
                 .where(MinutesRevisionRecord.meeting_id == meeting_id)
                 .order_by(MinutesRevisionRecord.revision.desc())
             )
-            revision = (previous.revision if previous else 0) + 1
+            current_revision = previous.revision if previous else 0
+            if base_revision is not None and base_revision != current_revision:
+                raise MinutesRevisionConflict(f"stale minutes revision; expected {current_revision}")
+            revision = current_revision + 1
             source_ids = [
                 str(row.segment_id)
                 for row in session.scalars(
