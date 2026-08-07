@@ -114,7 +114,7 @@ Kiểm thử checkpoint:
 
 Commit:
 
-- Root / Meeting Service: `bef5993` — `feat(meeting): add minutes DOCX export and storage`.
+- Root / Meeting Service: `2d77247` — `feat(meeting): add minutes DOCX export and storage`.
 - eCabinet: `5364ca2` — `feat(meeting): add minutes export facade and download UI`.
 
 Kiểm thử: named unittest **114 tests passed**, contract/compile backend đạt, frontend Vite build trong Docker đạt, compose Meeting Service/Postgres/Redis/MinIO healthy và migration chạy thành công.
