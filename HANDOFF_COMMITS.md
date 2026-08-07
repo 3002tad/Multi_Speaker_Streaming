@@ -82,13 +82,17 @@ running. The full pytest suite could not be rerun in the WSL runtime because
 `pytest` is not installed; Python compile and direct JSON-encoding checks
 passed. No repository was pushed to a remote.
 
-Remaining next step: manual UI verification followed by the audio/LiveKit
-wiring. The current commits do not include audio/LiveKit wiring.
+The previous checkpoints did not include audio/LiveKit wiring; that slice is
+now recorded in the local commits listed below.
 
-## Working tree handoff — Day 5 LiveKit slice (not committed)
+## Day 5 LiveKit handoff — committed locally
 
-The current working tree contains the next additive slice and must be reviewed
-before committing:
+The additive LiveKit/workspace slice is committed locally:
+
+- Root / Meeting Service: `c62bd6d`
+- eCabinet: `086b26c`
+
+Included changes:
 
 - Meeting Service LiveKit configuration and short-lived token signer in
   `meeting_service/app/infrastructure/livekit_tokens.py`.
@@ -116,4 +120,4 @@ Validation for this working slice:
   `MEETING_LIVEKIT_API_KEY` and `MEETING_LIVEKIT_API_SECRET` are intentionally
   unset in this local stack; the token façade returns `503` without exposing a
   secret. Configure these values separately before testing real audio.
-- No repository was committed or pushed for this slice.
+- Neither repository was pushed to a remote.
