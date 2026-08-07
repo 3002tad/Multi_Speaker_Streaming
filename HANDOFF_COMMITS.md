@@ -39,3 +39,28 @@ the provided `.env.example` files.
 Run the root unit/contract tests and verify both commit hashes again before
 creating the final ZIP. The eCabinet commit is intentionally local-only and
 has no required remote.
+
+## Latest handoff checkpoint (2026-08-07)
+
+The Day 4 hardening and realtime workspace slice are now committed locally:
+
+| Component | Local branch | Commit | Description |
+|---|---|---|---|
+| Root / Meeting Service | `feature/meeting-platform-microservices` | `abd0b6a` | Socket.IO room authorization bound to meeting/runtime claims, leave-room cleanup, and permission regression tests |
+| eCabinet | `feature/meeting-platform-integration` | `0515115` | Meeting Workspace token acquisition, Socket.IO join/leave lifecycle, partial/final transcript rendering, and REST rehydrate |
+
+Previous required checkpoints remain in history:
+
+- Root `de05b44`: durable transcript/minutes PostgreSQL persistence and migration `0003_transcript_minutes`.
+- Root `71564fb`: purge, runtime/minutes state guards, and transactional `transcript.final` callback persistence.
+- eCabinet `d60d7a7`: purge tombstone, migration `b7d2a1c4e9f0`, and admin retry endpoint.
+
+Validation for this checkpoint:
+
+- Root full unittest suite: 108 tests passed.
+- Meeting Service compile and contract checks passed.
+- eCabinet backend compile and Alembic migration passed.
+- Frontend Docker build and Vite production build passed.
+- No repository was pushed to a remote.
+
+Remaining next step: authenticated UI E2E through eCabinet login, runtime start, token issuance, Socket.IO join, transcript event delivery, and reload/reconnect rehydrate. The current commits do not include audio/LiveKit wiring.
