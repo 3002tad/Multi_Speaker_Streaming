@@ -31,7 +31,7 @@ Người nhận phải tự cấu hình secret từ các file `.env.example`.
 | Thành phần | Branch | Commit | Nội dung |
 |---|---|---|---|
 | Root / Meeting Service | `feature/meeting-platform-microservices` | `e3faffe` | Runtime lifecycle, runtime token và REST contract transcript/minutes |
-| eCabinet | `feature/meeting-platform-integration` | `133aa58` | Façade kết nối runtime Meeting |
+| eCabinet | `feature/meeting-platform-integration` | `b92ce1d` | Façade kết nối runtime Meeting |
 | Root | `feature/meeting-platform-microservices` | `c990709` | JSON-safe event Socket.IO |
 | eCabinet | `feature/meeting-platform-integration` | `75478a5` | Vite proxy cho REST và Socket.IO |
 | Root | `feature/meeting-platform-microservices` | `2f18d6f` | Handoff Day 5 LiveKit |
@@ -120,3 +120,23 @@ Commit:
 Kiểm thử: named unittest **114 tests passed**, contract/compile backend đạt, frontend Vite build trong Docker đạt, compose Meeting Service/Postgres/Redis/MinIO healthy và migration chạy thành công.
 
 Review theo plan: persistence/lifecycle và export đã hoàn tất; không push repository eCabinet. Bước kế tiếp là enrollment dialog, Board Display và E2E audio LiveKit với credential ngoài source.
+
+## Lịch sử cặp thay đổi code đồng thời
+
+Bảng này chỉ ghi các commit có thay đổi code tương ứng ở cả hai repository.
+Các commit chỉ cập nhật tài liệu, handoff hoặc test độc lập không đưa vào đây.
+
+| Giai đoạn | Root / Meeting Service | eCabinet | Phạm vi thay đổi |
+|---|---|---|---|
+| Runtime token và façade đầu tiên | `6dfdd7a` | `87740ba` | Xác thực runtime token và tiếp tục tích hợp façade phiên họp |
+| Transcript/minutes REST và UI workspace | `e3faffe` | `b92ce1d` | REST transcript/minutes, client façade và Meeting Workspace |
+| Persistence/lifecycle callback và purge | `71564fb` | `d60d7a7` | Lưu transcript/minutes, callback bền vững và tombstone purge |
+| Realtime workspace | `abd0b6a` | `0515115` | Socket.IO room và kết nối realtime trên UI |
+| Sửa payload realtime và proxy dev | `c990709` | `75478a5` | JSON-safe AI event và Vite proxy REST/Socket.IO |
+| LiveKit audio workspace | `c62bd6d` | `086b26c` | Token/room LiveKit, mic, playback và workspace audio |
+| Contract chuẩn và MinutesEditor | `4c63753` | `3fcabc4` | Contract token/minutes revision và editor biên bản có cấu trúc |
+| Vòng đời duyệt biên bản | `572015e` | `ca3ced1` | DRAFT → REVIEWING → APPROVED và phân quyền façade/UI |
+| Export DOCX và object storage | `2d77247` | `5364ca2` | DOCX, MinIO/filesystem storage, metadata/download và quyền tải |
+
+Các commit root/eCabinet còn lại trong lịch sử là commit tài liệu, checkpoint,
+hoặc thay đổi riêng một repository; không được xem là cặp thay đổi đồng thời.
