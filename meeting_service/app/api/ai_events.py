@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
 from meeting_service.app.api.socketio import sio
@@ -27,8 +28,12 @@ router = APIRouter(prefix="/internal/v1")
 
 
 def _event_dict(event: AIEvent) -> dict[str, Any]:
-    model_dump = getattr(event, "model_dump", None)
-    return model_dump() if model_dump else event.dict()
+    # Socket.IO serializes payloads with the stdlib JSON encoder.  Pydantic's
+    # model dump keeps UUID instances by default, which makes an otherwise
+    # valid AI event fail with a 500 while broadcasting to realtime clients.
+    # Use FastAPI's encoder so UUID/datetime values are converted to JSON-safe
+    # primitives before both persistence and Socket.IO emission.
+    return jsonable_encoder(event)
 
 
 @router.post("/ai-events")
