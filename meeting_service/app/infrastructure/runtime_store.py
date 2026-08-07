@@ -33,3 +33,10 @@ class InMemoryRuntimeStore(RuntimeRepository):
             if session:
                 session.status = status
             return session
+
+    def delete_meeting(self, meeting_id: UUID) -> int:
+        with self._lock:
+            ids = [runtime_id for runtime_id, item in self._items.items() if item.meeting_id == meeting_id]
+            for runtime_id in ids:
+                del self._items[runtime_id]
+            return len(ids)

@@ -12,6 +12,10 @@ class AIControlClient:
     async def stop_session(self, runtime_session_id: str, idempotency_key: str) -> dict: ...
 
 
+class RuntimeStateError(ValueError):
+    """Raised when the eCabinet meeting snapshot cannot start AI safely."""
+
+
 class RuntimeService:
     """Lifecycle use case; persistence will be injected in the DB slice."""
 
@@ -20,9 +24,13 @@ class RuntimeService:
         self.ai_client = ai_client
 
     async def start(self, meeting_id: UUID, snapshot: dict | None = None) -> RuntimeSession:
-        session = self.store.create(meeting_id, snapshot or {})
+        snapshot = snapshot or {}
+        meeting_status = str((snapshot.get("meeting") or {}).get("status") or "").upper()
+        if meeting_status not in {"APPROVED", "ONGOING"}:
+            raise RuntimeStateError("AI runtime chỉ được khởi động khi phiên họp APPROVED hoặc ONGOING")
+        session = self.store.create(meeting_id, snapshot)
         if self.ai_client:
-            payload = dict(snapshot or {})
+            payload = dict(snapshot)
             payload.update({"schema_version": 1, "runtime_session_id": str(session.runtime_session_id), "meeting_id": str(meeting_id), "assignment_generation": 1})
             try:
                 result = await self.ai_client.create_session(payload, str(session.runtime_session_id))
@@ -40,3 +48,7 @@ class RuntimeService:
         if self.ai_client:
             await self.ai_client.stop_session(str(runtime_session_id), str(runtime_session_id))
         return self.store.set_status(runtime_session_id, RuntimeStatus.COMPLETED)
+
+    def purge(self, meeting_id: UUID) -> int:
+        """Delete all runtime rows for a meeting; safe to retry."""
+        return self.store.delete_meeting(meeting_id)

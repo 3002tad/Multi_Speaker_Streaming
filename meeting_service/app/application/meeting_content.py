@@ -6,7 +6,7 @@ from threading import RLock
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from meeting_service.app.infrastructure.models import MinutesRevisionRecord, TranscriptSegmentRecord
@@ -42,13 +42,20 @@ class MeetingContentStore:
             item = {
                 "meeting_id": str(meeting_id),
                 "revision": int(previous.get("revision", 0)) + 1,
-                "status": status or previous.get("status", "DRAFT"),
+                "status": status or ("DRAFT" if previous.get("status") == "APPROVED" else previous.get("status", "DRAFT")),
                 "document": deepcopy(document),
                 "source_segment_ids": [str(x.get("segment_id")) for x in self._transcripts.get(meeting_id, [])],
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             self._minutes[meeting_id] = item
             return deepcopy(item)
+
+    def delete_meeting(self, meeting_id: UUID) -> int:
+        with self._lock:
+            existed = int(meeting_id in self._transcripts or meeting_id in self._minutes)
+            self._transcripts.pop(meeting_id, None)
+            self._minutes.pop(meeting_id, None)
+            return existed
 
 
 def _default_minutes(meeting_id: UUID) -> dict[str, Any]:
@@ -133,7 +140,7 @@ class SqlAlchemyMeetingContentRepository:
             row = MinutesRevisionRecord(
                 meeting_id=meeting_id,
                 revision=revision,
-                status=status or (previous.status if previous else "DRAFT"),
+                status=status or ("DRAFT" if previous and previous.status == "APPROVED" else (previous.status if previous else "DRAFT")),
                 document_json=deepcopy(document),
                 source_segment_ids=source_ids,
             )
@@ -147,6 +154,12 @@ class SqlAlchemyMeetingContentRepository:
                 "source_segment_ids": source_ids,
                 "updated_at": row.created_at.isoformat(),
             }
+
+    def delete_meeting(self, meeting_id: UUID) -> int:
+        with self._sessions.begin() as session:
+            transcript_result = session.execute(delete(TranscriptSegmentRecord).where(TranscriptSegmentRecord.meeting_id == meeting_id))
+            minutes_result = session.execute(delete(MinutesRevisionRecord).where(MinutesRevisionRecord.meeting_id == meeting_id))
+            return int((transcript_result.rowcount or 0) + (minutes_result.rowcount or 0))
 
 
 content_store = MeetingContentStore()

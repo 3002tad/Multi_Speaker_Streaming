@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from meeting_service.app.application.runtime_service import RuntimeService
+from meeting_service.app.application.runtime_service import RuntimeService, RuntimeStateError
 from meeting_service.app.application.meeting_content import content_store
 
 
@@ -20,9 +20,27 @@ def _content(request: Request):
     return getattr(request.app.state, "content_store", content_store)
 
 
+@router.delete("/meetings/{meeting_id}")
+def purge_meeting(meeting_id: UUID, request: Request) -> dict[str, object]:
+    runtime_deleted = _service(request).purge(meeting_id)
+    content_deleted = _content(request).delete_meeting(meeting_id)
+    ai_repository = getattr(request.app.state, "ai_event_repository", None)
+    ai_deleted = ai_repository.delete_meeting(meeting_id) if ai_repository else 0
+    return {
+        "meeting_id": str(meeting_id),
+        "status": "PURGED",
+        "runtime_rows_deleted": runtime_deleted,
+        "content_rows_deleted": content_deleted,
+        "ai_event_rows_deleted": ai_deleted,
+    }
+
+
 @router.post("/meetings/{meeting_id}/runtime", status_code=201)
 async def create_runtime(meeting_id: UUID, request: Request, snapshot: dict | None = None) -> dict[str, object]:
-    return (await _service(request).start(meeting_id, snapshot)).as_dict()
+    try:
+        return (await _service(request).start(meeting_id, snapshot)).as_dict()
+    except RuntimeStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/meetings/{meeting_id}/status")
@@ -64,4 +82,8 @@ def update_minutes(meeting_id: UUID, request: Request, payload: dict[str, object
     status = payload.get("status")
     if status is not None and status not in {"DRAFT", "REVIEWING", "APPROVED"}:
         raise HTTPException(status_code=422, detail="status không hợp lệ")
+    if status == "APPROVED":
+        runtime = _service(request).status(meeting_id)
+        if runtime is None or runtime.status.value != "COMPLETED":
+            raise HTTPException(status_code=409, detail="Minutes can only be approved after the runtime has completed")
     return _content(request).save_minutes(meeting_id, document, str(status) if status else None)

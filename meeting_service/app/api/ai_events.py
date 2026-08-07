@@ -8,6 +8,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from meeting_service.app.api.socketio import sio
+from meeting_service.app.application.meeting_content import content_store
 from meeting_service.app.infrastructure.repositories import SqlAlchemyAIEventRepository
 
 
@@ -36,7 +37,11 @@ async def receive_ai_event(request: Request, event: AIEvent, x_internal_api_key:
     if expected and x_internal_api_key != expected:
         raise HTTPException(status_code=403, detail="invalid service key")
     repository = getattr(request.app.state, "ai_event_repository", None)
+    if event.type == "transcript.final" and not event.payload.get("segment_id"):
+        raise HTTPException(status_code=422, detail="transcript.final requires payload.segment_id")
     if repository is None:
+        if event.type == "transcript.final":
+            getattr(request.app.state, "content_store", content_store).append_transcript(event.meeting_id, event.payload)
         status = "accepted"
     else:
         data = _event_dict(event)
