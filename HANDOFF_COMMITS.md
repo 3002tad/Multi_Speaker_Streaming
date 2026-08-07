@@ -165,3 +165,37 @@ Kiểm thử:
 
 Review theo merge plan: Voice Enrollment đã hoàn tất; không thay đổi thuật toán ASR/speaker baseline. Board Display và public E2E còn thiếu. eCabinet là repository local-only, không được push.
 Bước tiếp theo: triển khai Board Display read-only, sau đó chạy E2E login/join/record/enrollment/transcript/minutes/export bằng Edge và cập nhật Nginx/public healthcheck.
+
+## Checkpoint — MeetingRoom light và kiểm tra runtime LiveKit
+
+Đã commit cục bộ theo cặp thay đổi:
+
+- Root / Meeting Service: branch `feature/meeting-platform-microservices`, commit `e75c12a` — `fix(meeting-service): complete enrollment delete and multipart runtime`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit `f1737a7` — `feat(meeting): unify MeetingRoom light workspace`.
+
+Phạm vi thay đổi:
+
+- Bổ sung `python-multipart` cho luồng multipart enrollment.
+- Sửa endpoint xóa enrollment trả `204` đúng với FastAPI/Starlette hiện tại.
+- Chuẩn hóa route `/meetings/:id/room` thành MeetingRoom duy nhất, giữ `/workspace` làm compatibility alias.
+- Giao diện MeetingRoom dùng layout sáng của eCabinet, có transcript, MinutesEditor, playback và quyền mic theo role.
+- Ẩn các nút thêm/xóa nội dung biên bản khi người dùng ở chế độ chỉ đọc.
+- Nút từ MeetingDetail mở đúng MeetingRoom; nút bắt đầu runtime truyền `runtime_session_id`.
+
+Kiểm thử đã chạy:
+
+- Named unittest đầy đủ: **115 tests passed**.
+- Contract test nằm trong bộ trên: đạt.
+- Frontend Vite production build trong Docker: đạt; còn cảnh báo bundle JavaScript lớn hơn 500 KB.
+- Edge headless E2E: đăng nhập → danh sách phiên họp → chi tiết → MeetingRoom; transcript và biên bản persisted hiển thị đúng; playback toggle hoạt động.
+- LiveKit public diagnostic bằng PowerShell/SSH và SDK Python WSL: TLS, WebSocket, token và RTC UDP đều kết nối thành công.
+
+Giới hạn còn lại:
+
+- Runtime demo hiện có thể chuyển `FAILED` khi Meeting Service bật AI orchestration nhưng `ai_server.py` chưa cung cấp đầy đủ `/internal/v1/sessions` theo contract Meeting AI.
+- Agent hiện vẫn dùng room tĩnh và callback legacy, chưa nhận assignment room động/callback event của Meeting Service. Vì vậy chưa đánh dấu E2E audio → Agent → transcript là đạt.
+- Chưa sửa cấu hình Nginx/LiveKit trên home server; kiểm tra cho thấy hạ tầng LiveKit không phải nguyên nhân lỗi.
+
+Review theo merge plan: đã hoàn thành vertical slice UI MeetingRoom light và kiểm tra hạ tầng LiveKit; còn thiếu contract session/assignment của Meeting AI và E2E media thực sự. Không thay đổi thuật toán ASR/speaker baseline. eCabinet là repository local-only, không được push.
+
+Bước tiếp theo theo thứ tự ưu tiên: (1) triển khai/adapter API session và assignment cho Meeting AI, (2) chuyển Agent sang room động và callback Meeting Service, (3) dọn runtime FAILED theo quy trình an toàn rồi chạy E2E hai browser/mic, (4) cập nhật public healthcheck và kiểm thử lại trước checkpoint tiếp theo.
