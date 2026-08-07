@@ -227,12 +227,21 @@ def _speaker_label(point) -> str:
     return str((point.payload or {}).get("speaker_label", "")).strip()
 
 
-def _delete_speaker_profile(speaker_name: str) -> None:
-    normalized = speaker_name.strip().casefold()
+def _delete_speaker_profile(
+    speaker_name: str | None = None,
+    *,
+    profile_key: str | None = None,
+    user_id: str | None = None,
+) -> None:
+    normalized = (speaker_name or "").strip().casefold()
     point_ids = [
         point.id
         for point in _all_speaker_points()
-        if _speaker_label(point).casefold() == normalized
+        if (
+            (profile_key and str((point.payload or {}).get("profile_key", "")) == profile_key)
+            or (user_id and str((point.payload or {}).get("speaker_user_id", "")) == user_id)
+            or (speaker_name and _speaker_label(point).casefold() == normalized)
+        )
     ]
     if point_ids:
         qdrant.delete(
@@ -1400,7 +1409,14 @@ async def reload_adaptive_dictionary_api(
     return refresh_adaptive_dictionary_for_next_streams()
 
 
-async def _process_enrollment_audio(speaker_name: str, audio: np.ndarray, sr: int):
+async def _process_enrollment_audio(
+    speaker_name: str,
+    audio: np.ndarray,
+    sr: int,
+    *,
+    profile_key: str | None = None,
+    user_id: str | None = None,
+):
     if audio.ndim > 1: audio = audio.mean(axis=1)
     if sr != 16000:
         import torchaudio
@@ -1442,12 +1458,14 @@ async def _process_enrollment_audio(speaker_name: str, audio: np.ndarray, sr: in
     clean_audio = np.concatenate(speech_segments) if speech_segments else audio
 
     clean_duration = len(clean_audio) / 16000
-    if clean_duration < 6.0:
+    # The UI asks for 20–30 seconds. VAD may trim pauses, so keep a small
+    # margin while still rejecting short clips that produce unstable profiles.
+    if clean_duration < 18.0:
         return {
             "status": "error",
             "message": (
                 f"Giọng nói sạch chỉ có {clean_duration:.1f}s; "
-                "cần ít nhất 6s và nên đọc liên tục 20-30s"
+                "cần khoảng 20s và nên đọc liên tục 20-30s"
             ),
         }
 
@@ -1506,13 +1524,17 @@ async def _process_enrollment_audio(speaker_name: str, audio: np.ndarray, sr: in
         return {"status": "error", "message": str(exc)}
 
     normalized_name = speaker_name.strip()
-    _delete_speaker_profile(normalized_name)
+    profile_key = profile_key or normalized_name
+    if user_id or profile_key != normalized_name:
+        _delete_speaker_profile(profile_key=profile_key, user_id=user_id)
+    else:
+        _delete_speaker_profile(normalized_name)
     points = []
     for index, prototype in enumerate(profile.prototypes):
         point_id = str(
             uuid.uuid5(
                 uuid.NAMESPACE_DNS,
-                f"speaker-profile-v2:{normalized_name.casefold()}:{index}",
+                f"speaker-profile-v2:{profile_key}:{index}",
             )
         )
         points.append(
@@ -1521,9 +1543,11 @@ async def _process_enrollment_audio(speaker_name: str, audio: np.ndarray, sr: in
                 vector=prototype.tolist(),
                 payload={
                     "speaker_label": normalized_name,
+                    "profile_key": profile_key,
+                    "speaker_user_id": user_id,
                     "profile_version": 2,
                     "prototype_index": index,
-                    "prototype_kind": (
+                "prototype_kind": (
                         "centroid" if index == 0 else "sample"
                     ),
                 },
@@ -1545,14 +1569,87 @@ async def _process_enrollment_audio(speaker_name: str, audio: np.ndarray, sr: in
         "prototypes": len(profile.prototypes),
         "profile_consistency": round(
             profile.median_centroid_similarity, 4
-        ),
-    }
+                ),
+                "profile_consistency": round(
+                    profile.median_centroid_similarity, 4
+                ),
+            }
 
 @app.post("/enroll")
 async def enroll_speaker_api(speaker_name: str = Form(...), file: UploadFile = File(...)):
     contents = await file.read()
     audio, sr = sf.read(io.BytesIO(contents))
     return await _process_enrollment_audio(speaker_name, audio, sr)
+
+
+@app.post("/internal/v1/enrollments/{user_id}")
+async def create_internal_enrollment(
+    user_id: str,
+    display_name: str = Form(...),
+    audio: UploadFile = File(...),
+    x_internal_key: str | None = Header(default=None),
+):
+    """Create a profile owned by the authenticated eCabinet user.
+
+    The public compatibility `/enroll` endpoint remains available for local
+    tools. Production callers must use the Meeting Service internal contract.
+    """
+    _require_internal_key(x_internal_key)
+    normalized_user_id = user_id.strip()
+    normalized_name = display_name.strip()
+    if not normalized_user_id or not normalized_name:
+        raise HTTPException(status_code=422, detail="user_id and display_name are required")
+    contents = await audio.read()
+    if not contents:
+        raise HTTPException(status_code=422, detail="audio is empty")
+    try:
+        waveform, sample_rate = sf.read(io.BytesIO(contents))
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="audio format is invalid") from exc
+    result = await _process_enrollment_audio(
+        normalized_name,
+        waveform,
+        sample_rate,
+        profile_key=f"user:{normalized_user_id}",
+        user_id=normalized_user_id,
+    )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=422, detail=result.get("message", "enrollment failed"))
+    return {**result, "user_id": normalized_user_id}
+
+
+@app.get("/internal/v1/enrollments/{user_id}")
+async def get_internal_enrollment(
+    user_id: str,
+    x_internal_key: str | None = Header(default=None),
+):
+    _require_internal_key(x_internal_key)
+    normalized_user_id = user_id.strip()
+    points = [
+        point for point in _all_speaker_points()
+        if str((point.payload or {}).get("speaker_user_id", "")) == normalized_user_id
+    ]
+    if not points:
+        raise HTTPException(status_code=404, detail="voice profile not found")
+    payload = points[0].payload or {}
+    return {
+        "status": "enrolled",
+        "user_id": normalized_user_id,
+        "speaker_name": payload.get("speaker_label"),
+        "profile_version": payload.get("profile_version", 2),
+        "prototypes": len(points),
+        "profile_consistency": payload.get("profile_consistency"),
+    }
+
+
+@app.delete("/internal/v1/enrollments/{user_id}", status_code=204)
+async def delete_internal_enrollment(
+    user_id: str,
+    x_internal_key: str | None = Header(default=None),
+):
+    _require_internal_key(x_internal_key)
+    _delete_speaker_profile(user_id=user_id.strip(), profile_key=f"user:{user_id.strip()}")
+    return None
 
 @app.post("/api/quick_enroll")
 async def quick_enroll_api(data: dict = Body(...)):

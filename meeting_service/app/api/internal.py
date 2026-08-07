@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from uuid import UUID
 
-from fastapi import APIRouter, Body, HTTPException, Request, Response
+from fastapi import APIRouter, Body, File, Form, HTTPException, Request, Response, UploadFile
 
 from meeting_service.app.application.runtime_service import RuntimeService, RuntimeStateError
 from meeting_service.app.domain.models import RuntimeStatus
@@ -27,6 +27,62 @@ def _content(request: Request):
 
 def _storage(request: Request):
     return getattr(request.app.state, "object_storage", object_storage)
+
+
+def _ai_client(request: Request):
+    client = getattr(request.app.state, "ai_client", None)
+    if client is None:
+        raise HTTPException(status_code=503, detail="Meeting AI is not configured")
+    return client
+
+
+@router.post("/enrollments/{user_id}")
+async def create_enrollment(
+    user_id: str,
+    request: Request,
+    display_name: str = Form(...),
+    audio: UploadFile = File(...),
+) -> dict[str, object]:
+    content = await audio.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="audio is empty")
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="audio is too large")
+    try:
+        return await _ai_client(request).create_enrollment(
+            user_id=user_id,
+            display_name=display_name.strip(),
+            audio=content,
+            filename=audio.filename or "enrollment.wav",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        status_code = getattr(getattr(exc, "response", None), "status_code", 502)
+        if status_code in {404, 422, 503}:
+            raise HTTPException(status_code=status_code, detail="Enrollment failed") from exc
+        raise HTTPException(status_code=502, detail="Meeting AI enrollment unavailable") from exc
+
+
+@router.get("/enrollments/{user_id}")
+async def get_enrollment(user_id: str, request: Request) -> dict[str, object]:
+    try:
+        return await _ai_client(request).get_enrollment(user_id)
+    except Exception as exc:
+        status_code = getattr(getattr(exc, "response", None), "status_code", 502)
+        if status_code == 404:
+            raise HTTPException(status_code=404, detail="voice profile not found") from exc
+        raise HTTPException(status_code=502, detail="Meeting AI enrollment unavailable") from exc
+
+
+@router.delete("/enrollments/{user_id}", status_code=204)
+async def delete_enrollment(user_id: str, request: Request) -> None:
+    try:
+        await _ai_client(request).delete_enrollment(user_id)
+    except Exception as exc:
+        status_code = getattr(getattr(exc, "response", None), "status_code", 502)
+        if status_code not in {404, 204}:
+            raise HTTPException(status_code=502, detail="Meeting AI enrollment unavailable") from exc
 
 
 @router.delete("/meetings/{meeting_id}")
