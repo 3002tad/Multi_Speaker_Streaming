@@ -84,3 +84,36 @@ passed. No repository was pushed to a remote.
 
 Remaining next step: manual UI verification followed by the audio/LiveKit
 wiring. The current commits do not include audio/LiveKit wiring.
+
+## Working tree handoff — Day 5 LiveKit slice (not committed)
+
+The current working tree contains the next additive slice and must be reviewed
+before committing:
+
+- Meeting Service LiveKit configuration and short-lived token signer in
+  `meeting_service/app/infrastructure/livekit_tokens.py`.
+- Internal runtime LiveKit token endpoint and eCabinet public façade/client.
+- Meeting Workspace `livekit-client` integration: Room connect/cleanup, mic
+  mute/unmute and playback opt-in (playback remains off by default).
+- Meeting Workspace transcript reducer handles final/update/retraction events,
+  deduplicates by `segment_id` and rehydrates transcript only after a socket
+  reconnect without overwriting an unsaved minutes draft.
+- Same-origin Vite proxy/API configuration and an external
+  `meeting_platform_internal` network declaration for the eCabinet API.
+- Additive `can_view_meeting` permission helper so an authenticated attendee
+  can obtain the LiveKit/socket token and read transcript/minutes without
+  gaining start/stop/edit control.
+- `tests/test_livekit_token_service.py` covering missing configuration and
+  room join/publish/subscribe claims.
+
+Validation for this working slice:
+
+- Meeting Service compile plus the full named unittest set (109 tests) passed.
+- eCabinet Vite production build passed; Playwright Edge smoke reached the
+  workspace, loaded transcript/minutes and exercised the mic control. Headless
+  browser microphone permission was denied as expected.
+- LiveKit media was not connected because `MEETING_LIVEKIT_URL`,
+  `MEETING_LIVEKIT_API_KEY` and `MEETING_LIVEKIT_API_SECRET` are intentionally
+  unset in this local stack; the token façade returns `503` without exposing a
+  secret. Configure these values separately before testing real audio.
+- No repository was committed or pushed for this slice.

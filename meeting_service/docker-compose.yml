@@ -37,6 +37,10 @@ services:
       MEETING_PERSISTENCE_ENABLED: "true"
       MEETING_ALLOWED_ORIGINS: ${MEETING_ALLOWED_ORIGINS:-https://meet.simplething.id.vn}
       MEETING_SERVICE_KEY: ${MEETING_SERVICE_KEY:-replace-before-public-deploy}
+      MEETING_LIVEKIT_URL: ${MEETING_LIVEKIT_URL:-}
+      MEETING_LIVEKIT_API_KEY: ${MEETING_LIVEKIT_API_KEY:-}
+      MEETING_LIVEKIT_API_SECRET: ${MEETING_LIVEKIT_API_SECRET:-}
+      MEETING_LIVEKIT_TOKEN_TTL_SECONDS: ${MEETING_LIVEKIT_TOKEN_TTL_SECONDS:-900}
     depends_on:
       postgres-meeting:
         condition: service_healthy

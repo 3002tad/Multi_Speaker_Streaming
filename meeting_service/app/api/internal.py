@@ -5,7 +5,9 @@ from uuid import UUID
 from fastapi import APIRouter, Body, HTTPException, Request
 
 from meeting_service.app.application.runtime_service import RuntimeService, RuntimeStateError
+from meeting_service.app.domain.models import RuntimeStatus
 from meeting_service.app.application.meeting_content import content_store
+from meeting_service.app.infrastructure.livekit_tokens import LiveKitConfigurationError, issue_livekit_token
 
 
 router = APIRouter(prefix="/internal/v1")
@@ -57,6 +59,31 @@ async def stop_runtime(runtime_session_id: UUID, request: Request) -> dict[str, 
     if session is None:
         raise HTTPException(status_code=404, detail="runtime not found")
     return session.as_dict()
+
+
+@router.post("/runtimes/{runtime_session_id}/livekit-token")
+def livekit_token(runtime_session_id: UUID, request: Request, payload: dict[str, object] = Body(...)) -> dict[str, object]:
+    meeting_id = payload.get("meeting_id")
+    try:
+        meeting_uuid = UUID(str(meeting_id)) if meeting_id else None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="meeting_id must be a UUID") from exc
+    session = _service(request).status(meeting_uuid) if meeting_uuid else None
+    if session is None or session.runtime_session_id != runtime_session_id:
+        raise HTTPException(status_code=404, detail="runtime not found")
+    if session.status in {RuntimeStatus.COMPLETED, RuntimeStatus.FAILED}:
+        raise HTTPException(status_code=409, detail="runtime is no longer active")
+    identity = str(payload.get("identity") or "")
+    name = str(payload.get("name") or identity)
+    try:
+        return issue_livekit_token(
+            room=session.livekit_room,
+            identity=identity,
+            name=name,
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+        )
+    except LiveKitConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/meetings/{meeting_id}/transcript")
