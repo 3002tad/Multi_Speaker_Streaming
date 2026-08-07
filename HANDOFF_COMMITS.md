@@ -46,8 +46,15 @@ The Day 4 hardening and realtime workspace slice are now committed locally:
 
 | Component | Local branch | Commit | Description |
 |---|---|---|---|
-| Root / Meeting Service | `feature/meeting-platform-microservices` | `abd0b6a` | Socket.IO room authorization bound to meeting/runtime claims, leave-room cleanup, and permission regression tests |
-| eCabinet | `feature/meeting-platform-integration` | `0515115` | Meeting Workspace token acquisition, Socket.IO join/leave lifecycle, partial/final transcript rendering, and REST rehydrate |
+| Root / Meeting Service | `feature/meeting-platform-microservices` | `c990709` | JSON-safe AI event encoding for Socket.IO broadcasts; UUID fields no longer cause realtime event HTTP 500 |
+| eCabinet | `feature/meeting-platform-integration` | `7d70646` | Vite development proxy for eCabinet REST and Meeting Service Socket.IO paths |
+
+The preceding realtime checkpoints remain in history:
+
+- Root `abd0b6a`: Socket.IO room authorization bound to meeting/runtime claims,
+  leave-room cleanup, and permission regression tests.
+- eCabinet `0515115`: Meeting Workspace token acquisition, Socket.IO join/leave
+  lifecycle, partial/final transcript rendering, and REST rehydrate.
 
 Previous required checkpoints remain in history:
 
@@ -63,4 +70,17 @@ Validation for this checkpoint:
 - Frontend Docker build and Vite production build passed.
 - No repository was pushed to a remote.
 
-Remaining next step: authenticated UI E2E through eCabinet login, runtime start, token issuance, Socket.IO join, transcript event delivery, and reload/reconnect rehydrate. The current commits do not include audio/LiveKit wiring.
+UI E2E checkpoint completed with Playwright Edge headless against the local
+Docker stack: login, DRAFT start rejection (409), APPROVED runtime start,
+token issuance, Socket.IO join, partial/final transcript delivery, REST
+rehydrate after reload, and minutes revision save (200). Screenshot:
+`output/playwright/meeting-workspace-smoke.png`.
+
+The automated run left the demo meeting `hop test` in an active runtime with
+synthetic transcript/minutes data for manual inspection. Services remain
+running. The full pytest suite could not be rerun in the WSL runtime because
+`pytest` is not installed; Python compile and direct JSON-encoding checks
+passed. No repository was pushed to a remote.
+
+Remaining next step: manual UI verification followed by the audio/LiveKit
+wiring. The current commits do not include audio/LiveKit wiring.
