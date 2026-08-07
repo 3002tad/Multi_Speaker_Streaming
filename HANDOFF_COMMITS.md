@@ -140,3 +140,28 @@ Các commit chỉ cập nhật tài liệu, handoff hoặc test độc lập kh�
 
 Các commit root/eCabinet còn lại trong lịch sử là commit tài liệu, checkpoint,
 hoặc thay đổi riêng một repository; không được xem là cặp thay đổi đồng thời.
+
+## Checkpoint — Voice Enrollment
+
+Đã triển khai và commit cục bộ phần ghi danh giọng nói theo merge plan:
+
+- Root / Meeting Service / AI: branch `feature/meeting-platform-microservices`, commit `ed38b29` — `feat(meeting): add voice enrollment internal contract`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit `4f62af4` — `feat(meeting): add voice enrollment dialog`.
+
+Phạm vi thay đổi:
+
+- AI có API nội bộ `POST/GET/DELETE /internal/v1/enrollments/{user_id}`; profile được khóa theo user ID, vẫn giữ endpoint `/enroll` cũ làm compatibility.
+- Meeting Service nhận multipart audio, proxy tới AI và kiểm tra kích thước/AI availability.
+- eCabinet chỉ cho user hiện tại ghi danh, xem trạng thái và xóa profile của chính mình.
+- UI có nút `Ghi danh giọng nói` trong sidebar và dialog ghi WAV từ microphone, preview, gửi, ghi lại và xóa profile.
+- Đoạn mẫu có 125 từ, yêu cầu UI tối thiểu 20 giây; backend chấp nhận từ 18 giây giọng sạch sau VAD để chừa khoảng ngắt tự nhiên.
+
+Kiểm thử:
+
+- Named unittest đầy đủ: **114 tests passed**.
+- Contract test, compile backend/AI/eCabinet và frontend Vite production build: đạt.
+- Headless Edge smoke test trên frontend eCabinet: mở layout, mở dialog, kiểm tra nội dung mẫu/nút và xử lý `Permission denied` khi browser không cấp microphone: đạt.
+- Chưa chạy enrollment E2E thật qua Meeting AI/Qdrant vì local stack chưa bật đầy đủ auth, AI và microphone permission.
+
+Review theo merge plan: Voice Enrollment đã hoàn tất; không thay đổi thuật toán ASR/speaker baseline. Board Display và public E2E còn thiếu. eCabinet là repository local-only, không được push.
+Bước tiếp theo: triển khai Board Display read-only, sau đó chạy E2E login/join/record/enrollment/transcript/minutes/export bằng Edge và cập nhật Nginx/public healthcheck.
