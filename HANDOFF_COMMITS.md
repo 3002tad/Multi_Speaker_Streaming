@@ -83,9 +83,12 @@ Sau khi commit lifecycle bên dưới, triển khai quyền export và DOCX/MinI
 đó triển khai enrollment dialog, Board Display và E2E audio LiveKit với
 credential được cấu hình riêng ngoài source.
 
-## Working tree — minutes lifecycle (chưa commit)
+## Minutes lifecycle — đã commit cục bộ
 
-Đã triển khai phần lifecycle tiếp theo, đang chờ review/commit:
+Đã triển khai và commit phần lifecycle tiếp theo:
+
+- Root / Meeting Service: `572015e`
+- eCabinet: `ca3ced1`
 
 - Meeting Service có endpoint `minutes/review` và `minutes/approve`.
 - Chỉ cho phép `DRAFT → REVIEWING → APPROVED`; transition sai trả `409`.
@@ -94,8 +97,9 @@ credential được cấu hình riêng ngoài source.
   gửi rà soát.
 - `MinutesEditor` hiển thị nút gửi rà soát/duyệt theo trạng thái hiện tại.
 
-Kiểm thử working tree:
+Kiểm thử checkpoint:
 
 - Named unittest: **112 tests passed**.
 - Contract test, compile backend và frontend Vite build: đạt.
 - Chưa triển khai DOCX/MinIO export trong slice này.
+- Không repository nào được push lên remote.
