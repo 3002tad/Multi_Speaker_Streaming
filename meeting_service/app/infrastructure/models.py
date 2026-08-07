@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import Uuid
 
@@ -74,4 +74,22 @@ class MinutesRevisionRecord(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     document_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     source_segment_ids: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MinutesExportRecord(Base):
+    __tablename__ = "meeting_minutes_exports"
+    __table_args__ = (UniqueConstraint("meeting_id", "minutes_revision", "format", name="uq_meeting_minutes_export"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    meeting_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    minutes_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    minutes_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    format: Mapped[str] = mapped_column(String(20), nullable=False, default="docx")
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(160), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(160), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

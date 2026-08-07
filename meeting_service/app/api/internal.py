@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request, Response
 
 from meeting_service.app.application.runtime_service import RuntimeService, RuntimeStateError
 from meeting_service.app.domain.models import RuntimeStatus
 from meeting_service.app.application.meeting_content import MinutesRevisionConflict, MinutesStateConflict, content_store
 from meeting_service.app.infrastructure.livekit_tokens import LiveKitConfigurationError, issue_livekit_token
+from meeting_service.app.application.docx_export import CONTENT_TYPE, render_minutes_docx
+from meeting_service.app.infrastructure.object_storage import object_storage
 
 
 router = APIRouter(prefix="/internal/v1")
@@ -22,9 +25,23 @@ def _content(request: Request):
     return getattr(request.app.state, "content_store", content_store)
 
 
+def _storage(request: Request):
+    return getattr(request.app.state, "object_storage", object_storage)
+
+
 @router.delete("/meetings/{meeting_id}")
 def purge_meeting(meeting_id: UUID, request: Request) -> dict[str, object]:
     runtime_deleted = _service(request).purge(meeting_id)
+    exports = _content(request).list_exports(meeting_id)
+    export_storage_deleted = 0
+    export_storage_cleanup_failed = 0
+    for export in exports:
+        try:
+            _storage(request).delete(export["storage_key"])
+            export_storage_deleted += 1
+        except Exception:
+            # Metadata is still removed below; report the orphan for retry/operations.
+            export_storage_cleanup_failed += 1
     content_deleted = _content(request).delete_meeting(meeting_id)
     ai_repository = getattr(request.app.state, "ai_event_repository", None)
     ai_deleted = ai_repository.delete_meeting(meeting_id) if ai_repository else 0
@@ -34,6 +51,8 @@ def purge_meeting(meeting_id: UUID, request: Request) -> dict[str, object]:
         "runtime_rows_deleted": runtime_deleted,
         "content_rows_deleted": content_deleted,
         "ai_event_rows_deleted": ai_deleted,
+        "export_objects_deleted": export_storage_deleted,
+        "export_objects_cleanup_failed": export_storage_cleanup_failed,
     }
 
 
@@ -188,3 +207,70 @@ def review_minutes(meeting_id: UUID, request: Request) -> dict[str, object]:
 @router.post("/meetings/{meeting_id}/minutes/approve")
 def approve_minutes(meeting_id: UUID, request: Request) -> dict[str, object]:
     return _transition_minutes(meeting_id, request, "APPROVED")
+
+
+@router.post("/meetings/{meeting_id}/minutes/exports/docx", status_code=201)
+def export_minutes_docx(meeting_id: UUID, request: Request, payload: dict[str, object] | None = Body(default=None)) -> dict[str, object]:
+    payload = payload or {}
+    minutes = _content(request).minutes(meeting_id)
+    revision = int(payload.get("revision") or minutes.get("revision", 0))
+    if revision != int(minutes.get("revision", 0)):
+        raise HTTPException(status_code=404, detail="minutes revision not found")
+    status = str(minutes.get("status", "DRAFT"))
+    if status != "APPROVED" and not bool(payload.get("allow_draft")):
+        raise HTTPException(status_code=403, detail="draft export is not allowed")
+    export_format = "docx"
+    existing = _content(request).find_export(meeting_id, revision, export_format)
+    if existing:
+        return existing
+    official = status == "APPROVED"
+    content = render_minutes_docx(minutes.get("document") or {}, official=official)
+    filename = f"Bien_ban_{meeting_id}_{'CHINH_THUC' if official else 'DU_THAO'}_v{revision}.docx"
+    storage_key = f"meeting-minutes/{meeting_id}/{revision}.docx"
+    metadata = {
+        "meeting_id": str(meeting_id),
+        "minutes_revision": revision,
+        "minutes_status": status,
+        "format": export_format,
+        "storage_key": storage_key,
+        "filename": filename,
+        "content_type": CONTENT_TYPE,
+        "size_bytes": len(content),
+        "checksum": hashlib.sha256(content).hexdigest(),
+        "created_by": str(payload.get("created_by")) if payload.get("created_by") else None,
+    }
+    try:
+        _storage(request).put(storage_key, content, CONTENT_TYPE)
+        try:
+            return _content(request).create_export(metadata)
+        except Exception:
+            _storage(request).delete(storage_key)
+            raise
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="minutes export storage unavailable") from exc
+
+
+@router.get("/meetings/{meeting_id}/minutes/exports/{export_id}")
+def download_minutes_export(meeting_id: UUID, export_id: UUID, request: Request) -> Response:
+    metadata = _content(request).get_export(meeting_id, export_id)
+    if metadata is None:
+        raise HTTPException(status_code=404, detail="export not found")
+    try:
+        content = _storage(request).get(metadata["storage_key"])
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="minutes export storage unavailable") from exc
+    return Response(
+        content=content,
+        media_type=metadata["content_type"],
+        headers={"Content-Disposition": f'attachment; filename="{metadata["filename"]}"', "X-Meeting-Export-Id": str(metadata["id"])},
+    )
+
+
+@router.get("/meetings/{meeting_id}/minutes/exports/{export_id}/metadata")
+def minutes_export_metadata(meeting_id: UUID, export_id: UUID, request: Request) -> dict[str, object]:
+    metadata = _content(request).get_export(meeting_id, export_id)
+    if metadata is None:
+        raise HTTPException(status_code=404, detail="export not found")
+    return metadata

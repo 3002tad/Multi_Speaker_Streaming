@@ -12,6 +12,7 @@ from meeting_service.app.application.meeting_content import MeetingContentStore,
 from meeting_service.app.infrastructure.database import create_session_factory
 from meeting_service.app.infrastructure.repositories import SqlAlchemyAIEventRepository, SqlAlchemyRuntimeRepository
 from meeting_service.app.infrastructure.ai_client import MeetingAIClient
+from meeting_service.app.infrastructure.object_storage import build_object_storage
 
 
 app = FastAPI(title="Meeting Service", version="0.1.0")
@@ -25,6 +26,7 @@ if settings.persistence_enabled:
 else:
     app.state.runtime_service = RuntimeService()
     app.state.content_store = MeetingContentStore()
+app.state.object_storage = build_object_storage()
 if settings.ai_enabled:
     app.state.runtime_service.ai_client = MeetingAIClient(settings.ai_base_url, settings.service_key)
 

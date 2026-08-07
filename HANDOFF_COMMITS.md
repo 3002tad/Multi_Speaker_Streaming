@@ -1,4 +1,4 @@
-# Nhật ký bàn giao và checkpoint
+﻿# Nhật ký bàn giao và checkpoint
 
 Workspace này gồm hai Git repository cục bộ:
 
@@ -103,3 +103,20 @@ Kiểm thử checkpoint:
 - Contract test, compile backend và frontend Vite build: đạt.
 - Chưa triển khai DOCX/MinIO export trong slice này.
 - Không repository nào được push lên remote.
+## Checkpoint — DOCX/MinIO export
+
+Đã triển khai và commit cục bộ theo merge plan:
+
+- Meeting Service có `MinutesExportRecord`, migration `0004_minutes_exports.py`, renderer DOCX và object storage filesystem/MinIO.
+- Export, metadata, download binary, idempotency và dọn object khi purge đã được nối vào Meeting Service.
+- eCabinet façade kiểm tra quyền và UI `MinutesEditor` có nút Xuất DOCX tự tải file.
+- OpenAPI đã mô tả request/response export, metadata và download.
+
+Commit:
+
+- Root / Meeting Service: `bef5993` — `feat(meeting): add minutes DOCX export and storage`.
+- eCabinet: `5364ca2` — `feat(meeting): add minutes export facade and download UI`.
+
+Kiểm thử: named unittest **114 tests passed**, contract/compile backend đạt, frontend Vite build trong Docker đạt, compose Meeting Service/Postgres/Redis/MinIO healthy và migration chạy thành công.
+
+Review theo plan: persistence/lifecycle và export đã hoàn tất; không push repository eCabinet. Bước kế tiếp là enrollment dialog, Board Display và E2E audio LiveKit với credential ngoài source.

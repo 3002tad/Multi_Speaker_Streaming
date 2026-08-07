@@ -37,6 +37,12 @@ class Settings:
     livekit_api_key: str = os.getenv("MEETING_LIVEKIT_API_KEY", "")
     livekit_api_secret: str = os.getenv("MEETING_LIVEKIT_API_SECRET", "")
     livekit_token_ttl_seconds: int = int(os.getenv("MEETING_LIVEKIT_TOKEN_TTL_SECONDS", "900"))
+    minio_endpoint: str = os.getenv("MEETING_MINIO_ENDPOINT", "")
+    minio_access_key: str = os.getenv("MEETING_MINIO_ACCESS_KEY", "")
+    minio_secret_key: str = os.getenv("MEETING_MINIO_SECRET_KEY", "")
+    minio_bucket: str = os.getenv("MEETING_MINIO_BUCKET", "meeting-minutes")
+    minio_secure: bool = os.getenv("MEETING_MINIO_SECURE", "false").lower() == "true"
+    export_root: str = os.getenv("MEETING_EXPORT_ROOT", "/tmp/meeting-exports")
 
 
 settings = Settings()

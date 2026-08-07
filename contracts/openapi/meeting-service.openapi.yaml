@@ -245,13 +245,58 @@ paths:
       operationId: exportMeetingMinutesDocx
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                revision: {type: integer, minimum: 1}
+                allow_draft: {type: boolean, default: false}
+                created_by: {type: string, maxLength: 160}
       responses:
         "201":
           description: Export metadata created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MinutesExport"}
         "403":
           $ref: "#/components/responses/ProblemResponse"
         "409":
           $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/minutes/exports/{export_id}:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+      - name: export_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: downloadMeetingMinutesExport
+      responses:
+        "200":
+          description: DOCX export binary.
+          content:
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema: {type: string, format: binary}
+        "404": {$ref: "#/components/responses/ProblemResponse"}
+  /internal/v1/meetings/{meeting_id}/minutes/exports/{export_id}/metadata:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+      - name: export_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getMeetingMinutesExportMetadata
+      responses:
+        "200":
+          description: DOCX export metadata.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MinutesExport"}
+        "404": {$ref: "#/components/responses/ProblemResponse"}
   /internal/v1/meetings/{meeting_id}:
     parameters:
       - $ref: "#/components/parameters/MeetingId"
@@ -345,6 +390,23 @@ components:
         status: {type: string, enum: [DRAFT, REVIEWING, APPROVED, SUPERSEDED]}
         document:
           $ref: "../schemas/minutes-document.schema.json"
+    MinutesExport:
+      type: object
+      additionalProperties: false
+      required: [id, meeting_id, minutes_revision, minutes_status, format, storage_key, filename, content_type, size_bytes, checksum, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        meeting_id: {type: string, format: uuid}
+        minutes_revision: {type: integer, minimum: 1}
+        minutes_status: {type: string, enum: [DRAFT, REVIEWING, APPROVED, SUPERSEDED]}
+        format: {type: string, enum: [docx]}
+        storage_key: {type: string}
+        filename: {type: string}
+        content_type: {type: string}
+        size_bytes: {type: integer, minimum: 0}
+        checksum: {type: string}
+        created_by: {type: [string, "null"]}
+        created_at: {type: string, format: date-time}
     Problem:
       type: object
       additionalProperties: false
