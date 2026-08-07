@@ -5,7 +5,7 @@ from typing import Any
 import socketio
 
 from meeting_service.app.config import settings
-from meeting_service.app.domain.permissions import claims_can_join
+from meeting_service.app.domain.permissions import claims_can_join, claims_match_runtime
 from meeting_service.app.infrastructure.token_verifier import RuntimeTokenVerifier
 
 
@@ -36,10 +36,22 @@ async def disconnect(sid: str) -> None:
 @sio.event
 async def join_meeting_room(sid: str, data: dict[str, Any]) -> dict[str, str]:
     meeting_id = str(data.get("meeting_id", ""))
+    runtime_session_id = str(data.get("runtime_session_id", ""))
     session = await sio.get_session(sid)
     claims = session.get("claims", {})
-    if not claims_can_join(claims, meeting_id):
+    if not claims_can_join(claims, meeting_id) or not claims_match_runtime(claims, runtime_session_id):
         raise ConnectionRefusedError("meeting claim does not permit room join")
     room = f"meeting:{meeting_id}"
     await sio.enter_room(sid, room)
-    return {"room": room, "status": "joined"}
+    await sio.save_session(sid, {"claims": claims, "meeting_id": meeting_id, "runtime_session_id": runtime_session_id})
+    return {"room": room, "status": "joined", "runtime_session_id": runtime_session_id}
+
+
+@sio.event
+async def leave_meeting_room(sid: str, data: dict[str, Any]) -> dict[str, str]:
+    meeting_id = str(data.get("meeting_id", ""))
+    session = await sio.get_session(sid)
+    if session.get("meeting_id") != meeting_id:
+        raise ConnectionRefusedError("meeting claim does not permit room leave")
+    await sio.leave_room(sid, f"meeting:{meeting_id}")
+    return {"room": f"meeting:{meeting_id}", "status": "left"}

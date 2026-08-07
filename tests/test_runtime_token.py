@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 
 from meeting_service.app.infrastructure.token_verifier import RuntimeTokenVerifier
+from meeting_service.app.domain.permissions import claims_can_join, claims_match_runtime
 
 
 class RuntimeTokenVerifierTests(unittest.TestCase):
@@ -41,6 +42,13 @@ class RuntimeTokenVerifierTests(unittest.TestCase):
     def test_keeps_internal_claim_adapter_for_unit_callers(self) -> None:
         claims = self.verifier.verify({"sub": "user-1", "meeting_id": "meeting-1"})
         self.assertEqual(claims["sub"], "user-1")
+
+    def test_join_claim_requires_permission_and_runtime_binding(self) -> None:
+        claims = {"sub": "user-1", "meeting_id": "meeting-1", "runtime_session_id": "runtime-1", "permissions": ["JOIN", "VIEW"]}
+        self.assertTrue(claims_can_join(claims, "meeting-1"))
+        self.assertTrue(claims_match_runtime(claims, "runtime-1"))
+        self.assertFalse(claims_match_runtime(claims, "runtime-2"))
+        self.assertFalse(claims_can_join({**claims, "permissions": ["VIEW"]}, "meeting-1"))
 
 
 if __name__ == "__main__":
