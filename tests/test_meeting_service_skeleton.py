@@ -159,6 +159,26 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
             )
             self.assertEqual(stale.status_code, 409)
 
+    def test_minutes_review_and_approval_follow_lifecycle(self) -> None:
+        meeting_id = uuid4()
+        with TestClient(app) as client:
+            created = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "APPROVED"}},
+            )
+            self.assertEqual(created.status_code, 201)
+            runtime_id = created.json()["runtime_session_id"]
+            stopped = client.post(f"/internal/v1/runtimes/{runtime_id}/stop")
+            self.assertEqual(stopped.status_code, 200)
+            reviewed = client.post(f"/internal/v1/meetings/{meeting_id}/minutes/review")
+            self.assertEqual(reviewed.status_code, 200)
+            self.assertEqual(reviewed.json()["status"], "REVIEWING")
+            approved = client.post(f"/internal/v1/meetings/{meeting_id}/minutes/approve")
+            self.assertEqual(approved.status_code, 200)
+            self.assertEqual(approved.json()["status"], "APPROVED")
+            repeated = client.post(f"/internal/v1/meetings/{meeting_id}/minutes/approve")
+            self.assertEqual(repeated.status_code, 409)
+
     def test_sql_repository_persists_external_meeting_id_without_fk(self) -> None:
         factory = create_session_factory("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(factory.kw["bind"])

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 
 from meeting_service.app.application.runtime_service import RuntimeService, RuntimeStateError
 from meeting_service.app.domain.models import RuntimeStatus
-from meeting_service.app.application.meeting_content import MinutesRevisionConflict, content_store
+from meeting_service.app.application.meeting_content import MinutesRevisionConflict, MinutesStateConflict, content_store
 from meeting_service.app.infrastructure.livekit_tokens import LiveKitConfigurationError, issue_livekit_token
 
 
@@ -168,3 +168,23 @@ def update_minutes(meeting_id: UUID, request: Request, payload: dict[str, object
         return _content(request).save_minutes(meeting_id, document, str(status) if status else None, base_revision)
     except MinutesRevisionConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _transition_minutes(meeting_id: UUID, request: Request, target_status: str) -> dict[str, object]:
+    runtime = _service(request).status(meeting_id)
+    if runtime is None or runtime.status != RuntimeStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Minutes can only transition after the runtime has completed")
+    try:
+        return _content(request).transition_minutes(meeting_id, target_status)
+    except MinutesStateConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/meetings/{meeting_id}/minutes/review")
+def review_minutes(meeting_id: UUID, request: Request) -> dict[str, object]:
+    return _transition_minutes(meeting_id, request, "REVIEWING")
+
+
+@router.post("/meetings/{meeting_id}/minutes/approve")
+def approve_minutes(meeting_id: UUID, request: Request) -> dict[str, object]:
+    return _transition_minutes(meeting_id, request, "APPROVED")

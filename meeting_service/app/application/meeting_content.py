@@ -16,6 +16,10 @@ class MinutesRevisionConflict(RuntimeError):
     """Raised when an editor saves against a stale minutes revision."""
 
 
+class MinutesStateConflict(RuntimeError):
+    """Raised when a minutes lifecycle transition is invalid."""
+
+
 class MeetingContentStore:
     """In-memory implementation used when persistence is disabled."""
 
@@ -69,6 +73,22 @@ class MeetingContentStore:
             self._transcripts.pop(meeting_id, None)
             self._minutes.pop(meeting_id, None)
             return existed
+
+    def transition_minutes(self, meeting_id: UUID, target_status: str) -> dict[str, Any]:
+        with self._lock:
+            previous = self._minutes.get(meeting_id) or _default_minutes(meeting_id)
+            current_status = previous.get("status", "DRAFT")
+            expected = {"REVIEWING": "DRAFT", "APPROVED": "REVIEWING"}.get(target_status)
+            if expected is None or current_status != expected:
+                raise MinutesStateConflict(f"cannot transition minutes from {current_status} to {target_status}")
+            item = {
+                **deepcopy(previous),
+                "revision": int(previous.get("revision", 0)) + 1,
+                "status": target_status,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._minutes[meeting_id] = item
+            return deepcopy(item)
 
 
 def _default_minutes(meeting_id: UUID) -> dict[str, Any]:
@@ -182,6 +202,44 @@ class SqlAlchemyMeetingContentRepository:
             transcript_result = session.execute(delete(TranscriptSegmentRecord).where(TranscriptSegmentRecord.meeting_id == meeting_id))
             minutes_result = session.execute(delete(MinutesRevisionRecord).where(MinutesRevisionRecord.meeting_id == meeting_id))
             return int((transcript_result.rowcount or 0) + (minutes_result.rowcount or 0))
+
+    def transition_minutes(self, meeting_id: UUID, target_status: str) -> dict[str, Any]:
+        with self._sessions.begin() as session:
+            previous = session.scalar(
+                select(MinutesRevisionRecord)
+                .where(MinutesRevisionRecord.meeting_id == meeting_id)
+                .order_by(MinutesRevisionRecord.revision.desc())
+            )
+            current_status = previous.status if previous else "DRAFT"
+            expected = {"REVIEWING": "DRAFT", "APPROVED": "REVIEWING"}.get(target_status)
+            if expected is None or current_status != expected:
+                raise MinutesStateConflict(f"cannot transition minutes from {current_status} to {target_status}")
+            revision = (previous.revision if previous else 0) + 1
+            source_ids = [
+                str(row.segment_id)
+                for row in session.scalars(
+                    select(TranscriptSegmentRecord)
+                    .where(TranscriptSegmentRecord.meeting_id == meeting_id)
+                    .order_by(TranscriptSegmentRecord.created_at)
+                ).all()
+            ]
+            row = MinutesRevisionRecord(
+                meeting_id=meeting_id,
+                revision=revision,
+                status=target_status,
+                document_json=deepcopy(previous.document_json if previous else _default_minutes(meeting_id)["document"]),
+                source_segment_ids=source_ids,
+            )
+            session.add(row)
+            session.flush()
+            return {
+                "meeting_id": str(meeting_id),
+                "revision": revision,
+                "status": target_status,
+                "document": deepcopy(row.document_json),
+                "source_segment_ids": source_ids,
+                "updated_at": row.created_at.isoformat(),
+            }
 
 
 content_store = MeetingContentStore()
