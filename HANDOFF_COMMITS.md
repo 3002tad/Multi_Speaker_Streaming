@@ -47,7 +47,7 @@ The Day 4 hardening and realtime workspace slice are now committed locally:
 | Component | Local branch | Commit | Description |
 |---|---|---|---|
 | Root / Meeting Service | `feature/meeting-platform-microservices` | `c990709` | JSON-safe AI event encoding for Socket.IO broadcasts; UUID fields no longer cause realtime event HTTP 500 |
-| eCabinet | `feature/meeting-platform-integration` | `7d70646` | Vite development proxy for eCabinet REST and Meeting Service Socket.IO paths |
+| eCabinet | `feature/meeting-platform-integration` | `75478a5` | Vite development proxy for eCabinet REST and Meeting Service Socket.IO paths |
 
 The preceding realtime checkpoints remain in history:
 
