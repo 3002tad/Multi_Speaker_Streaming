@@ -29,21 +29,32 @@ class LiveKitTokenServiceTests(unittest.TestCase):
         object.__setattr__(settings, "livekit_api_key", "api-key")
         secret = "api-secret-0123456789-0123456789-012345"
         object.__setattr__(settings, "livekit_api_secret", secret)
-        result = issue_livekit_token(room="meeting-demo", identity="ecabinet-user", name="User")
+        result = issue_livekit_token(room="meeting-demo", identity="ecabinet-user", name="User", can_publish=True)
         claims = jwt.decode(result["token"], secret, algorithms=["HS256"], options={"verify_exp": False})
         self.assertEqual(result["livekit_url"], "wss://livekit.example.test")
+        self.assertTrue(result["can_publish"])
         self.assertEqual(claims["sub"], "ecabinet-user")
         self.assertTrue(claims["video"]["roomJoin"])
         self.assertTrue(claims["video"]["canPublish"])
         self.assertTrue(claims["video"]["canSubscribe"])
         self.assertGreater(claims["exp"], int(datetime.now(timezone.utc).timestamp()))
 
+    def test_token_defaults_to_non_publishing(self) -> None:
+        object.__setattr__(settings, "livekit_url", "wss://livekit.example.test")
+        object.__setattr__(settings, "livekit_api_key", "api-key")
+        secret = "api-secret-0123456789-0123456789-012345"
+        object.__setattr__(settings, "livekit_api_secret", secret)
+        result = issue_livekit_token(room="meeting-demo", identity="observer", name="Observer")
+        claims = jwt.decode(result["token"], secret, algorithms=["HS256"], options={"verify_exp": False})
+        self.assertFalse(claims["video"]["canPublish"])
+        self.assertFalse(result["can_publish"])
+
     def test_contract_endpoint_uses_meeting_and_runtime_ids(self) -> None:
         object.__setattr__(settings, "livekit_url", "wss://livekit.example.test")
         object.__setattr__(settings, "livekit_api_key", "api-key")
         object.__setattr__(settings, "livekit_api_secret", "api-secret-0123456789-0123456789-012345")
         meeting_id = uuid4()
-        with TestClient(app) as client:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
             created = client.post(f"/internal/v1/meetings/{meeting_id}/runtime", json={"meeting": {"status": "APPROVED"}})
             self.assertEqual(created.status_code, 201)
             runtime_id = created.json()["runtime_session_id"]

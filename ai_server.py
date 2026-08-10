@@ -1869,13 +1869,14 @@ async def create_internal_enrollment(
     display_name: str = Form(...),
     audio: UploadFile = File(...),
     x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
 ):
     """Create a profile owned by the authenticated eCabinet user.
 
     The public compatibility `/enroll` endpoint remains available for local
     tools. Production callers must use the Meeting Service internal contract.
     """
-    _require_internal_key(x_internal_key)
+    _require_service_key(x_internal_key, x_service_key)
     normalized_user_id = user_id.strip()
     normalized_name = display_name.strip()
     if not normalized_user_id or not normalized_name:
@@ -1903,8 +1904,9 @@ async def create_internal_enrollment(
 async def get_internal_enrollment(
     user_id: str,
     x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
 ):
-    _require_internal_key(x_internal_key)
+    _require_service_key(x_internal_key, x_service_key)
     normalized_user_id = user_id.strip()
     points = [
         point for point in _all_speaker_points()
@@ -1927,8 +1929,9 @@ async def get_internal_enrollment(
 async def delete_internal_enrollment(
     user_id: str,
     x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
 ):
-    _require_internal_key(x_internal_key)
+    _require_service_key(x_internal_key, x_service_key)
     _delete_speaker_profile(user_id=user_id.strip(), profile_key=f"user:{user_id.strip()}")
     return None
 

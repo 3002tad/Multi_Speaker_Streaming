@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
 from meeting_service.app.api.socketio import sio
 from meeting_service.app.application.meeting_content import content_store
 from meeting_service.app.infrastructure.repositories import SqlAlchemyAIEventRepository
+from meeting_service.app.api.security import require_service_key
 
 
 class AIEvent(BaseModel):
@@ -36,11 +36,8 @@ def _event_dict(event: AIEvent) -> dict[str, Any]:
     return jsonable_encoder(event)
 
 
-@router.post("/ai-events")
-async def receive_ai_event(request: Request, event: AIEvent, x_internal_api_key: str | None = Header(default=None)) -> dict[str, str]:
-    expected = os.getenv("MEETING_SERVICE_KEY", "")
-    if expected and x_internal_api_key != expected:
-        raise HTTPException(status_code=403, detail="invalid service key")
+@router.post("/ai-events", dependencies=[Depends(require_service_key)])
+async def receive_ai_event(request: Request, event: AIEvent) -> dict[str, str]:
     repository = getattr(request.app.state, "ai_event_repository", None)
     if event.type == "transcript.final" and not event.payload.get("segment_id"):
         raise HTTPException(status_code=422, detail="transcript.final requires payload.segment_id")

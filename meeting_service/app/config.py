@@ -26,7 +26,8 @@ class Settings:
         "MEETING_SOCKETIO_PATH", "meeting-runtime/socket.io"
     ).strip("/")
     allowed_origins: tuple[str, ...] = tuple(_origins())
-    service_key: str = os.getenv("MEETING_SERVICE_KEY", "")
+    # Local development still uses a key; deployments must override it via ENV.
+    service_key: str = os.getenv("MEETING_SERVICE_KEY", "local-meeting-service-key")
     ai_base_url: str = os.getenv("MEETING_AI_BASE_URL", "http://meeting-ai-api:8001")
     ai_enabled: bool = _bool("MEETING_AI_ENABLED")
     ai_callback_url: str = os.getenv(

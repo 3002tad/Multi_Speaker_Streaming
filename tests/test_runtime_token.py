@@ -21,8 +21,10 @@ class RuntimeTokenVerifierTests(unittest.TestCase):
             "runtime_session_id": "runtime-1",
             "iss": "ecabinet",
             "aud": "meeting-service",
+            "permissions": ["VIEW", "JOIN"],
             "iat": datetime.now(timezone.utc),
             "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+            "jti": "token-1",
         }
         claims.update(overrides)
         return jwt.encode(claims, self.key, algorithm="HS256")
@@ -39,9 +41,15 @@ class RuntimeTokenVerifierTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.verifier.verify(self._token(exp=datetime.now(timezone.utc) - timedelta(seconds=1)))
 
-    def test_keeps_internal_claim_adapter_for_unit_callers(self) -> None:
-        claims = self.verifier.verify({"sub": "user-1", "meeting_id": "meeting-1"})
-        self.assertEqual(claims["sub"], "user-1")
+    def test_rejects_unsigned_claims_object(self) -> None:
+        with self.assertRaises(ValueError):
+            self.verifier.verify({"sub": "user-1", "meeting_id": "meeting-1"})
+
+    def test_rejects_token_without_jti_or_permissions(self) -> None:
+        with self.assertRaises(ValueError):
+            self.verifier.verify(self._token(jti=None))
+        with self.assertRaises(ValueError):
+            self.verifier.verify(self._token(permissions=None))
 
     def test_join_claim_requires_permission_and_runtime_binding(self) -> None:
         claims = {"sub": "user-1", "meeting_id": "meeting-1", "runtime_session_id": "runtime-1", "permissions": ["JOIN", "VIEW"]}

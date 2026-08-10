@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from uuid import UUID
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile
 
 from meeting_service.app.application.runtime_service import RuntimeService, RuntimeStateError
 from meeting_service.app.domain.models import RuntimeStatus
@@ -11,9 +11,10 @@ from meeting_service.app.application.meeting_content import MinutesRevisionConfl
 from meeting_service.app.infrastructure.livekit_tokens import LiveKitConfigurationError, issue_livekit_token
 from meeting_service.app.application.docx_export import CONTENT_TYPE, render_minutes_docx
 from meeting_service.app.infrastructure.object_storage import object_storage
+from meeting_service.app.api.security import require_service_key
 
 
-router = APIRouter(prefix="/internal/v1")
+router = APIRouter(prefix="/internal/v1", dependencies=[Depends(require_service_key)])
 runtime_service = RuntimeService()
 
 
@@ -157,6 +158,9 @@ def _issue_livekit_token(
             identity=identity,
             name=name,
             metadata=metadata,
+            can_publish="PUBLISH_AUDIO" in {
+                str(item).upper() for item in (metadata or {}).get("permissions", [])
+            },
         )
         result["runtime_session_id"] = str(runtime_session_id)
         return result
@@ -182,7 +186,11 @@ def meeting_livekit_token(meeting_id: UUID, request: Request, payload: dict[str,
         runtime_session_id,
         identity=identity,
         name=user_id,
-        metadata={"user_id": user_id, "device_id": device_id},
+        metadata={
+            "user_id": user_id,
+            "device_id": device_id,
+            "permissions": payload.get("permissions", []),
+        },
     )
 
 

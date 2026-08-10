@@ -19,6 +19,7 @@ def issue_livekit_token(
     identity: str,
     name: str,
     metadata: dict[str, Any] | None = None,
+    can_publish: bool = False,
 ) -> dict[str, Any]:
     if not settings.livekit_url or not settings.livekit_api_key or not settings.livekit_api_secret:
         raise LiveKitConfigurationError("LiveKit token service is not configured")
@@ -36,7 +37,7 @@ def issue_livekit_token(
         "video": {
             "roomJoin": True,
             "room": room,
-            "canPublish": True,
+            "canPublish": bool(can_publish),
             "canSubscribe": True,
             "canPublishData": True,
         },
@@ -55,6 +56,7 @@ def issue_livekit_token(
         "livekit_url": settings.livekit_url,
         "room": room,
         "identity": identity,
+        "can_publish": bool(can_publish),
         "token": token,
         "expires_at": expires_at.isoformat(),
     }

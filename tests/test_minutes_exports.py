@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from meeting_service.app.application.docx_export import render_minutes_docx
 from meeting_service.app.main import app
+from meeting_service.app.config import settings
 
 
 class MinutesExportTests(unittest.TestCase):
@@ -24,7 +25,7 @@ class MinutesExportTests(unittest.TestCase):
 
     def test_approved_minutes_can_be_exported_and_downloaded(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app) as client:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
             created = client.post(f"/internal/v1/meetings/{meeting_id}/runtime", json={"meeting": {"status": "APPROVED"}})
             self.assertEqual(created.status_code, 201)
             stopped = client.post(f"/internal/v1/runtimes/{created.json()['runtime_session_id']}/stop")

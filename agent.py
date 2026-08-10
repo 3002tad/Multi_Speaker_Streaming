@@ -84,10 +84,7 @@ class EventPublisher:
             "sequence": self.sequence,
             "payload": {key: value for key, value in payload.items() if key != "type"},
         }
-        headers = {
-            "X-Internal-Api-Key": settings.meeting_service_key,
-            "X-Service-Key": settings.meeting_service_key,
-        }
+        headers = {"X-Service-Key": settings.meeting_service_key}
         response = await client.post(
             callback_url,
             headers=headers,
@@ -378,10 +375,7 @@ async def _poll_assignment(client: httpx.AsyncClient, after_generation: int) -> 
     response = await client.get(
         f"{settings.ai_server_http_url.rstrip('/')}/internal/v1/agent/assignment",
         params={"after_generation": after_generation},
-        headers={
-            "X-Service-Key": settings.internal_api_key,
-            "X-Internal-Api-Key": settings.internal_api_key,
-        },
+        headers={"X-Service-Key": settings.internal_api_key},
     )
     response.raise_for_status()
     return response.json()
@@ -403,10 +397,7 @@ async def _post_agent_status(
     try:
         response = await client.post(
             f"{settings.ai_server_http_url.rstrip('/')}/internal/v1/agent/status",
-            headers={
-                "X-Service-Key": settings.internal_api_key,
-                "X-Internal-Api-Key": settings.internal_api_key,
-            },
+            headers={"X-Service-Key": settings.internal_api_key},
             json=payload,
         )
         response.raise_for_status()

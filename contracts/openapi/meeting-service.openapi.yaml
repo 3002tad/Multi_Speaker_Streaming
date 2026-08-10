@@ -97,6 +97,9 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 160
+                permissions:
+                  type: array
+                  items: {type: string}
       responses:
         "200":
           description: LiveKit token. eCabinet signs the separate Socket.IO runtime token.
@@ -105,12 +108,13 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [runtime_session_id, livekit_url, room, identity, token, expires_at]
+                required: [runtime_session_id, livekit_url, room, identity, can_publish, token, expires_at]
                 properties:
                   runtime_session_id: {type: string, format: uuid}
                   livekit_url: {type: string, format: uri}
                   room: {type: string}
                   identity: {type: string}
+                  can_publish: {type: boolean}
                   token: {type: string}
                   expires_at: {type: string, format: date-time}
         "403":

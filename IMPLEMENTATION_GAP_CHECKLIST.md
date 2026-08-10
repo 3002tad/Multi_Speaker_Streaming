@@ -46,6 +46,10 @@ vào contract session này.
 
 ### P0-02 — Bảo vệ internal API và Socket.IO
 
+**Cập nhật 2026-08-10:** `[-]` — bắt đầu chuẩn hóa `X-Service-Key`, bảo vệ
+toàn bộ internal Meeting Service API và loại bỏ đường tắt verify JWT bằng claims
+đã parse sẵn. Chưa thay đổi quyền LiveKit (thuộc P0-03).
+
 - [ ] Áp dụng service authentication cho toàn bộ internal Meeting Service API.
 - [ ] Chuẩn hóa `X-Service-Key`; alias cũ chỉ giữ có test/deadline loại bỏ.
 - [ ] Xóa bypass chấp nhận object claims không ký ở `RuntimeTokenVerifier`.
@@ -57,12 +61,15 @@ permission matrix pass.
 
 ### P0-03 — Permission server-side cho mic và minutes
 
-- [ ] LiveKit token cấp `canPublish` theo signed claim, không luôn `true`.
-- [ ] Observer/viewer không thể publish bằng UI lẫn SDK trực tiếp.
-- [ ] `_runtime_snapshot()` không hard-code `CONTROL` cho mọi role.
-- [ ] Chuẩn hóa và dùng `can_view_meeting`, `can_manage_meeting`,
+  **Cập nhật 2026-08-10:** `[x]` — đã đối chiếu và acceptance role/permission từ eCabinet
+với LiveKit token và runtime snapshot. Không thay đổi thuật toán audio.
+
+  - [x] LiveKit token cấp `canPublish` theo signed claim, không luôn `true`.
+  - [x] Observer/viewer không thể publish bằng UI lẫn SDK trực tiếp.
+  - [x] `_runtime_snapshot()` không hard-code `CONTROL` cho mọi role.
+  - [x] Chuẩn hóa và dùng `can_view_meeting`, `can_manage_meeting`,
   `can_control_ai`, `can_edit_minutes`, `can_approve_minutes`.
-- [ ] UI chỉ dùng permission server/claim, không lấy `localStorage` làm nguồn
+  - [x] UI chỉ dùng permission server/claim, không lấy `localStorage` làm nguồn
   quyết định quyền.
 
 **Điều kiện đạt:** outsider `403`; member/observer không leo quyền;
@@ -234,3 +241,70 @@ chứng test.
 | Ngày | ID task | Bằng chứng/thay đổi | Test và kết quả | Commit root / eCabinet | Trạng thái |
 |---|---|---|---|---|---|
 | 2026-08-07 | Baseline checkpoint | Dynamic E2E một nguồn audio đã persist transcript; chưa phải acceptance multi-mic/container. | 115 named unit tests pass; runtime probe có 2 segment. | Chưa commit batch hiện tại. | `[-]` |
+
+### Cập nhật P0-02 — 2026-08-10
+
+- Đã áp dụng `X-Service-Key` bắt buộc cho toàn bộ route `/internal/v1` của
+  Meeting Service và callback `/internal/v1/ai-events`; health vẫn public.
+- Meeting Service gọi AI, Agent gọi AI/Meeting Service và eCabinet BFF gọi
+  Meeting Service bằng header chuẩn. AI Core vẫn giữ alias
+  `X-Internal-Api-Key` tạm thời để compatibility wrapper, nhưng caller mới
+  không còn dùng alias này.
+- `RuntimeTokenVerifier` chỉ nhận JWT dạng chuỗi, kiểm tra chữ ký, issuer,
+  audience, hạn dùng, `jti`, permissions và từ chối claims object chưa ký.
+- Kiểm thử: full unit suite **120 pass**; kiểm thử contract nằm trong suite và
+  pass; test riêng verifier/auth route pass. Chưa chạy streaming regression vì
+  thay đổi chỉ ở auth/contract, không thay đổi audio.
+- Trạng thái: `[x]` cho gate P0-02 hiện tại. Việc loại bỏ alias cũ khỏi
+  compatibility wrapper phải hoàn tất trước public production.
+
+| 2026-08-10 | P0-02 | Bảo vệ internal API bằng `X-Service-Key`, chuẩn hóa caller, JWT strict verification. | Full unit + contract: 120 pass; auth route và unsigned claims đều bị từ chối. Chưa chạy streaming regression. | Chưa commit batch hiện tại; eCabinet local-only, không push. | `[x]` |
+
+### Cập nhật P0-03 — 2026-08-10
+
+- LiveKit token không còn mặc định `canPublish=true`; quyền được suy ra từ
+  permission signed bởi eCabinet (`PUBLISH_AUDIO`). Observer chỉ nhận token
+  subscribe, còn member/chair/secretary/admin được publish khi là thành viên
+  hợp lệ.
+- Runtime snapshot và Socket.IO token không còn hard-code `CONTROL`; actor
+  permissions được tạo từ các helper `can_view_meeting`,
+  `can_manage_meeting`, `can_control_ai`, `can_edit_minutes` và
+  `can_approve_minutes`.
+- Contract token bổ sung `permissions` request và `can_publish` response.
+- Kiểm thử: full unit suite **121 pass**, contract và LiveKit token tests pass;
+  đã kiểm tra token observer không publish. Chưa chạy browser/LiveKit server
+  acceptance với role thật.
+  - Trạng thái: `[x]` — acceptance role Member/Observer đã đạt trong cùng runtime
+  qua LiveKit SDK và kiểm tra UI không thể publish khi thiếu quyền.
+
+| 2026-08-10 | P0-03 | Permission matrix được chuyển vào eCabinet snapshot/token và LiveKit JWT; observer bị khóa publish mặc định. | Full unit + contract: 121 pass; browser role E2E đã bổ sung sau khi nạp cấu hình LiveKit. | Chưa commit batch hiện tại; eCabinet local-only, không push. | `[x]` |
+
+### Bổ sung kiểm thử tích hợp — 2026-08-10
+
+- Build Docker thành công cho Meeting Service, eCabinet backend và frontend;
+  production Vite build thành công (129 modules).
+- Smoke test Meeting Service create → status → stop → purge thành công với
+  `X-Service-Key`; browser E2E đăng nhập → mở meeting → start runtime → tải
+  Transcript/Minutes → Socket.IO join thành công.
+- Đã phát hiện CORS origin local làm Socket.IO 403; xử lý ở cấu hình runtime
+  test bằng cách thêm `http://127.0.0.1:3000`/`http://localhost:3000`, sau đó
+  WebSocket được Meeting Service accept. Không thay đổi source production.
+  - LiveKit token vẫn 503 trong local smoke vì không nạp URL/API key LiveKit;
+    do đó chưa thể hoàn tất role E2E publish/observer bằng SDK thật.
+  - Đã nạp cấu hình LiveKit local/remote từ runtime WSL (không lưu secret vào source),
+    recreate Meeting Service và eCabinet API. E2E Chủ trì: đăng nhập → mở phiên →
+    bắt đầu phòng → Room kết nối LiveKit thành công, UI hiển thị trạng thái đã kết
+    nối và quyền bật micro. Console không có lỗi ứng dụng. Còn thiếu acceptance
+    độc lập cho Member/Observer với LiveKit SDK thật; mục này đã được chạy lại ở
+    acceptance role bên dưới.
+  - Chạy lại E2E lần 2 trên Edge headless: đăng nhập admin → mở phiên `hop test` →
+    bắt đầu phòng với runtime LiveKit đã cấu hình; kết quả Room kết nối thành công,
+    hiển thị transcript nguồn, biên bản có cấu trúc và nút `Bật micro`, console không
+    có lỗi ứng dụng. Full unit/contract suite: **121 pass**. Acceptance độc lập
+    Member/Observer đạt: Member publish được, Observer chỉ subscribe; P0-03 đã đóng.
+  - Acceptance role lần này: Member và Observer đăng nhập bằng hai browser context,
+    truy cập cùng `runtime_session_id`. Member nhận response `can_publish=true`, JWT
+    `video.canPublish=true` và UI có nút `Bật micro`; Observer nhận
+    `can_publish=false`, JWT `video.canPublish=false`, `video.canSubscribe=true` và
+    UI không có nút micro. Hai tài khoản tạm đã được gỡ khỏi attendee; do ràng buộc
+    dữ liệu lịch sử, tài khoản được vô hiệu hóa mềm (`is_active=false`).

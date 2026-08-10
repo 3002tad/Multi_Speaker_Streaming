@@ -10,7 +10,7 @@ class MeetingAIClient:
 
     def __init__(self, base_url: str, service_key: str, timeout: float = 10.0) -> None:
         self.base_url = base_url.rstrip("/")
-        self.headers = {"X-Internal-Api-Key": service_key}
+        self.headers = {"X-Service-Key": service_key}
         self.timeout = timeout
 
     async def create_session(self, payload: dict[str, Any], idempotency_key: str) -> dict[str, Any]:

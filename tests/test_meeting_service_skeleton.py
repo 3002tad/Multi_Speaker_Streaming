@@ -13,9 +13,23 @@ from meeting_service.app.infrastructure.repositories import SqlAlchemyAIEventRep
 from meeting_service.app.application.meeting_content import SqlAlchemyMeetingContentRepository
 from meeting_service.app.infrastructure.runtime_store import InMemoryRuntimeStore
 from meeting_service.app.application.runtime_service import RuntimeService
+from meeting_service.app.config import settings
 
 
 class MeetingServiceSkeletonTests(unittest.TestCase):
+    def test_internal_api_requires_service_key(self) -> None:
+        meeting_id = uuid4()
+        with TestClient(app) as client:
+            self.assertEqual(client.get(f"/internal/v1/meetings/{meeting_id}/status").status_code, 401)
+            self.assertEqual(
+                client.get(
+                    f"/internal/v1/meetings/{meeting_id}/status",
+                    headers={"X-Service-Key": "wrong-key"},
+                ).status_code,
+                401,
+            )
+            self.assertEqual(client.get("/health/live").status_code, 200)
+
     def test_runtime_lifecycle_calls_ai_control_client(self) -> None:
         class FakeAI:
             def __init__(self) -> None:
@@ -69,13 +83,13 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
         asyncio.run(scenario())
 
     def test_health_endpoints(self) -> None:
-        with TestClient(app) as client:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
             self.assertEqual(client.get("/health/live").status_code, 200)
             self.assertEqual(client.get("/health/ready").json()["status"], "ok")
 
     def test_runtime_and_empty_minutes_follow_contract_response_shapes(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app) as client:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
             created = client.post(
                 f"/internal/v1/meetings/{meeting_id}/runtime",
                 json={"meeting": {"status": "APPROVED"}},
@@ -94,7 +108,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_runtime_lifecycle_is_service_local(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app) as client:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
             created = client.post(f"/internal/v1/meetings/{meeting_id}/runtime", json={"meeting": {"status": "ONGOING"}})
             self.assertEqual(created.status_code, 201)
             payload = created.json()
@@ -114,7 +128,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_meeting_purge_is_idempotent(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app) as client:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
             created = client.post(f"/internal/v1/meetings/{meeting_id}/runtime", json={"meeting": {"status": "ONGOING"}})
             self.assertEqual(created.status_code, 201)
             appended = client.post(
@@ -132,7 +146,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_transcript_contract_uses_the_canonical_singular_route(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app) as client:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
             appended = client.post(
                 f"/internal/v1/meetings/{meeting_id}/transcript",
                 json={"segment_id": "contract-1", "text": "canonical"},
@@ -149,7 +163,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_state_guard_blocks_invalid_runtime_start_and_early_minutes_approval(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app) as client:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
             rejected_start = client.post(
                 f"/internal/v1/meetings/{meeting_id}/runtime",
                 json={"meeting": {"status": "DRAFT"}},
@@ -183,7 +197,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_minutes_editor_rejects_stale_revision(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app) as client:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
             first = client.patch(
                 f"/internal/v1/meetings/{meeting_id}/minutes",
                 json={"base_revision": 0, "document": {"schema_version": 1, "meeting": {"title": "Demo", "started_at": None}, "summary": [], "topics": [], "source_segment_ids": []}},
@@ -197,7 +211,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_minutes_review_and_approval_follow_lifecycle(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app) as client:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
             created = client.post(
                 f"/internal/v1/meetings/{meeting_id}/runtime",
                 json={"meeting": {"status": "APPROVED"}},
