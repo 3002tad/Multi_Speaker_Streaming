@@ -357,3 +357,35 @@ Giới hạn còn lại:
 - Chưa chạy fault injection PostgreSQL/Redis/MinIO hoặc LiveKit outage production.
 
 Đối chiếu merge plan: P0-06 đạt đúng phạm vi additive. P0-07/P0-08 vẫn mở và đã được cập nhật evidence trong checklist; không có sai lệch kiến trúc. Bước tiếp theo là tạo hai fixture overlap, thiết kế gate global-turn theo correlation/identity rồi chạy lại 2/4 mic acceptance. Handoff tài liệu được commit cục bộ ngay sau checkpoint code; không push.
+
+## Checkpoint — Hoàn tất P0-08: phân biệt crosstalk và true overlap
+
+Đã commit cục bộ theo cặp trạng thái repository:
+
+- Root / Meeting AI: branch `feature/meeting-platform-microservices`, commit `26e78b8` — `feat(global-turn): complete crosstalk overlap arbitration`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit hiện tại `0ba851d` — không có thay đổi trong checkpoint này.
+- eCabinet là repository local-only và không được push.
+
+Phạm vi thay đổi:
+
+- Đưa speaker profile đã được WavLM chấp nhận vào candidate trước global-turn arbitration. Hai candidate có profile khác nhau được giữ lại để bảo toàn true overlap.
+- Với speaker chưa ghi danh, gate chỉ gộp khi đồng thời có bằng chứng chồng thời gian, envelope âm học và tương đồng transcript; quy tắc mic yếu/crosstalk vẫn được giữ.
+- Global turn so sánh candidate qua cả các `turn_id` lệch nhau để không tạo tail transcript khi VAD cắt cùng một tiếng nói ở hai mic khác thời điểm.
+- Bổ sung fixture xác định cho crosstalk tuần tự và true overlap, cùng các unit test cho profile xung đột, unknown source và turn ID lệch.
+- Không thay đổi tuning Zipformer, VAD, DSP, ngưỡng speaker identification, LiveKit contract hoặc module nghiệp vụ eCabinet.
+
+Kiểm thử đã chạy:
+
+- Full unit/contract suite trong WSL: **152 passed**, 5 warnings, 6 subtests passed.
+- Targeted audio fixture/backend smoke: **32 passed**, 5 warnings.
+- `compileall` cho Agent, Meeting AI, scripts và tests: đạt; `git diff --check`: đạt trước commit.
+- LiveKit crosstalk regression: đạt, dual-mic probe `33.25s`, transcript count `4`, không có tail transcript sau cross-turn arbitration.
+- LiveKit true overlap 2 mic: `2/2` nguồn có partial/final, không duplicate; WER/CER `0.3702/0.3370`.
+- LiveKit true overlap 4 mic: `4/4` nguồn có partial/final, không duplicate; WER/CER `0.4810/0.4332`. Cần warmup `45s` do decoder thứ tư cold-start.
+
+Giới hạn còn lại:
+
+- P0-07 vẫn mở do quality ASR chưa đạt locked baseline khi true overlap 4 mic; không thực hiện thay đổi tuning trong checkpoint này.
+- Chưa fault-injection PostgreSQL/Redis/MinIO production hoặc LiveKit outage production.
+
+Đối chiếu merge plan: P0-08 đã đạt gate về điều phối crosstalk/true overlap, đúng phạm vi additive. Không có sai lệch kiến trúc. Bước tiếp theo theo ưu tiên là xử lý P0-07: phân tích quality/độ trễ multi-mic mà không làm suy giảm baseline và chạy lại regression 2/4 mic.
