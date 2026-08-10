@@ -6,6 +6,7 @@
     {"$ref": "#/$defs/session_status_event"},
     {"$ref": "#/$defs/speaker_active_event"},
     {"$ref": "#/$defs/transcript_partial_event"},
+    {"$ref": "#/$defs/transcript_updated_event"},
     {"$ref": "#/$defs/transcript_final_event"},
     {"$ref": "#/$defs/transcript_retracted_event"},
     {"$ref": "#/$defs/minutes_updated_event"},
@@ -34,6 +35,7 @@
             "session.status",
             "speaker.active",
             "transcript.partial",
+            "transcript.updated",
             "transcript.final",
             "transcript.retracted",
             "minutes.updated",
@@ -137,6 +139,24 @@
         "pipeline_meta": {"type": "object"}
       }
     },
+    "transcript_updated_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segment_id", "content_text", "revision"],
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1, "maxLength": 160},
+        "source_identity": {"type": "string", "minLength": 1, "maxLength": 255},
+        "speaker": {"$ref": "#/$defs/speaker"},
+        "raw_text": {"type": "string"},
+        "content_text": {"type": "string"},
+        "started_at": {"type": "string", "format": "date-time"},
+        "ended_at": {"type": "string", "format": "date-time"},
+        "global_turn_id": {"type": ["string", "null"], "maxLength": 160},
+        "revision": {"type": "integer", "minimum": 1},
+        "quality": {"$ref": "#/$defs/quality"},
+        "pipeline_meta": {"type": "object"}
+      }
+    },
     "transcript_retracted_payload": {
       "type": "object",
       "additionalProperties": false,
@@ -185,6 +205,12 @@
       "allOf": [
         {"$ref": "#/$defs/envelope"},
         {"properties": {"type": {"const": "transcript.partial"}, "payload": {"$ref": "#/$defs/transcript_partial_payload"}}}
+      ]
+    },
+    "transcript_updated_event": {
+      "allOf": [
+        {"$ref": "#/$defs/envelope"},
+        {"properties": {"type": {"const": "transcript.updated"}, "payload": {"$ref": "#/$defs/transcript_updated_payload"}}}
       ]
     },
     "transcript_final_event": {

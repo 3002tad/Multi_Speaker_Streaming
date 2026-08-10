@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import json
 import signal
 import time
@@ -60,20 +61,183 @@ class EventPublisher:
             self.assignment.get("runtime_session_id") or ""
         )
         self.meeting_id = str(self.assignment.get("meeting_id") or "")
+        self._spool: deque[dict] = deque()
+        self._max_spool = 256
+        self._max_attempts = 5
+        self._wake = asyncio.Event()
+        self._worker_task: asyncio.Task | None = None
+        self._closing = False
+        self.dropped = 0
+        self._segment_revisions: dict[str, int] = {}
 
-    async def publish(self, client: httpx.AsyncClient, payload: dict) -> None:
+    @staticmethod
+    def _iso_timestamp(value: object) -> str:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(float(value), timezone.utc).isoformat()
+        text = str(value or "").strip()
+        if text:
+            return text
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _speaker(value: object, payload: dict) -> dict:
+        if isinstance(value, dict):
+            speaker = dict(value)
+        else:
+            speaker = {"label": str(value or "Unknown")}
+        speaker.setdefault("label", "Unknown")
+        speaker.setdefault("identity_method", payload.get("identity_method", "mic_fallback"))
+        # ``speaker_id`` from the baseline is often a display label (for
+        # example ``Dat``), not the external eCabinet UUID required by the
+        # event contract. Only forward a UUID-shaped value as user_id.
+        candidate_user_id = payload.get("speaker_user_id") or payload.get("user_id")
+        if candidate_user_id and "user_id" not in speaker:
+            try:
+                speaker["user_id"] = str(uuid.UUID(str(candidate_user_id)))
+            except (ValueError, AttributeError):
+                pass
+        if "user_id" in speaker:
+            try:
+                speaker["user_id"] = str(uuid.UUID(str(speaker["user_id"])))
+            except (ValueError, AttributeError):
+                speaker.pop("user_id", None)
+        return speaker
+
+    def _canonical_payload(self, event_type: str, payload: dict) -> dict:
+        if event_type not in {
+            "transcript.partial",
+            "transcript.updated",
+            "transcript.final",
+            "transcript.retracted",
+        }:
+            return {key: value for key, value in payload.items() if key != "type"}
+        canonical = {
+            "segment_id": str(payload.get("segment_id") or f"seg-{uuid.uuid4().hex}"),
+            "source_identity": str(payload.get("source_identity") or payload.get("source_id") or "unknown"),
+            "speaker": self._speaker(payload.get("speaker"), payload),
+            "content_text": str(payload.get("content_text") or payload.get("text") or ""),
+            "revision": int(payload.get("revision") or 1),
+        }
+        if event_type == "transcript.retracted":
+            canonical["reason"] = str(payload.get("reason") or "retracted by AI pipeline")
+            return canonical
+        if event_type in {"transcript.final", "transcript.updated"}:
+            canonical.update(
+                {
+                    "raw_text": str(payload.get("raw_text") or payload.get("text") or ""),
+                    "started_at": self._iso_timestamp(payload.get("started_at", payload.get("start_time"))),
+                    "ended_at": self._iso_timestamp(payload.get("ended_at", payload.get("end_time"))),
+                }
+            )
+        if payload.get("global_turn_id") is not None:
+            canonical["global_turn_id"] = payload.get("global_turn_id")
+        # Partial callbacks are intentionally small: they are realtime draft
+        # evidence and must remain valid against transcript.partial's strict
+        # contract (quality/pipeline metadata belongs to final/updated).
+        if event_type == "transcript.partial":
+            return canonical
+        if isinstance(payload.get("quality"), dict):
+            canonical["quality"] = dict(payload["quality"])
+        else:
+            canonical["quality"] = {
+                key: payload[key]
+                for key in ("signal_rms", "signal_snr_db", "clipping_ratio", "speaker_id_ms", "pipeline_ms")
+                if payload.get(key) is not None
+            }
+        canonical["pipeline_meta"] = {
+            key: payload[key]
+            for key in (
+                "final_asr_text",
+                "final_turn_redecode",
+                "phonetic_recovered_text",
+                "phonetic_recovery_applied",
+                "phonetic_replacements",
+                "refinement",
+                "refinement_ms",
+                "refinement_pending",
+                "discovered_topic",
+            )
+            if payload.get(key) is not None
+        }
+        return canonical
+
+    async def start(self, client: httpx.AsyncClient) -> None:
+        if self._worker_task is None:
+            self._closing = False
+            self._worker_task = asyncio.create_task(self._retry_worker(client))
+
+    async def _send(self, client: httpx.AsyncClient, item: dict) -> None:
         callback_url = str(self.callback.get("url") or "").strip()
         if not callback_url or not self.runtime_session_id or not self.meeting_id:
             response = await client.post(
                 settings.backend_internal_url,
                 headers={"X-Internal-Api-Key": settings.internal_api_key},
-                json={"payload": payload},
+                json={"payload": item["legacy_payload"]},
             )
             response.raise_for_status()
             return
+        headers = {"X-Service-Key": settings.meeting_service_key}
+        response = await client.post(
+            callback_url,
+            headers=headers,
+            json=item["event"],
+            timeout=5.0,
+        )
+        response.raise_for_status()
 
+    def _enqueue(self, item: dict) -> None:
+        if len(self._spool) >= self._max_spool:
+            self._spool.popleft()
+            self.dropped += 1
+        self._spool.append(item)
+        self._wake.set()
+
+    async def _retry_worker(self, client: httpx.AsyncClient) -> None:
+        while not self._closing or self._spool:
+            if not self._spool:
+                self._wake.clear()
+                try:
+                    await asyncio.wait_for(self._wake.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                continue
+            item = self._spool.popleft()
+            attempts = int(item.get("attempts") or 0)
+            try:
+                await self._send(client, item)
+            except Exception:
+                attempts += 1
+                if attempts < self._max_attempts:
+                    item["attempts"] = attempts
+                    await asyncio.sleep(min(2.0, 0.1 * (2 ** (attempts - 1))))
+                    self._enqueue(item)
+                else:
+                    self.dropped += 1
+
+    async def publish(self, client: httpx.AsyncClient, payload: dict) -> None:
+        if self._worker_task is None:
+            await self.start(client)
+        event_type = (
+            "transcript.updated"
+            if payload.get("is_refinement_update")
+            else str(payload.get("type") or "transcript.partial")
+        )
+        segment_id = str(payload.get("segment_id") or "")
+        payload_for_event = dict(payload)
+        if segment_id and event_type in {
+            "transcript.partial",
+            "transcript.updated",
+            "transcript.final",
+            "transcript.retracted",
+        }:
+            requested_revision = int(payload_for_event.get("revision") or 1)
+            revision = max(
+                requested_revision,
+                self._segment_revisions.get(segment_id, 0) + 1,
+            )
+            payload_for_event["revision"] = revision
+            self._segment_revisions[segment_id] = revision
         self.sequence += 1
-        event_type = str(payload.get("type") or "transcript.partial")
         event = {
             "schema_version": 1,
             "event_id": str(uuid.uuid4()),
@@ -82,15 +246,25 @@ class EventPublisher:
             "runtime_session_id": self.runtime_session_id,
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "sequence": self.sequence,
-            "payload": {key: value for key, value in payload.items() if key != "type"},
+            "payload": self._canonical_payload(event_type, payload_for_event),
         }
-        headers = {"X-Service-Key": settings.meeting_service_key}
-        response = await client.post(
-            callback_url,
-            headers=headers,
-            json=event,
-        )
-        response.raise_for_status()
+        item = {"event": event, "legacy_payload": payload, "attempts": 0}
+        try:
+            await self._send(client, item)
+        except Exception:
+            self._enqueue(item)
+
+    async def close(self, timeout: float = 5.0) -> None:
+        self._closing = True
+        self._wake.set()
+        if self._worker_task is not None:
+            try:
+                await asyncio.wait_for(self._worker_task, timeout=timeout)
+            except asyncio.TimeoutError:
+                self._worker_task.cancel()
+                await asyncio.gather(self._worker_task, return_exceptions=True)
+            finally:
+                self._worker_task = None
 
 
 async def process_track(
@@ -227,6 +401,7 @@ async def process_track(
                             "refinement_pending": result.get(
                                 "refinement_pending", False
                             ),
+                            "is_refinement_update": is_refinement_update,
                             "revision": result.get("revision", 1),
                             "timestamp": now,
                         }
@@ -294,6 +469,8 @@ async def main() -> None:
         loop.add_signal_handler(shutdown_signal, request_shutdown)
 
     async with httpx.AsyncClient(timeout=10.0) as client:
+        publisher = EventPublisher()
+        await publisher.start(client)
 
         @room.on("track_subscribed")
         def on_track_subscribed(
@@ -307,7 +484,7 @@ async def main() -> None:
             if previous:
                 previous.cancel()
             track_tasks[publication.sid] = asyncio.create_task(
-                process_track(track, participant, client)
+                process_track(track, participant, client, publisher)
             )
 
         @room.on("track_unsubscribed")
@@ -369,6 +546,8 @@ async def main() -> None:
             except Exception as exc:
                 print(f"[worker] LiveKit đã đóng với cảnh báo: {exc}")
             print("[worker] Đã dừng hoàn toàn.")
+
+            await publisher.close()
 
 
 async def _poll_assignment(client: httpx.AsyncClient, after_generation: int) -> dict:
@@ -470,6 +649,7 @@ async def _run_assignment(
     print(f"[worker] Kết nối {livekit_url} / {room_name}")
     await _post_agent_status(client, assignment, "CONNECTING")
     try:
+        await publisher.start(client)
         await room.connect(livekit_url, token)
         await _post_agent_status(client, assignment, "READY")
         print("[worker] Sẵn sàng nhận các luồng microphone.")
@@ -547,6 +727,7 @@ async def _run_assignment(
             print("[worker] LiveKit disconnect quá hạn; buộc kết thúc.")
         except Exception as exc:
             print(f"[worker] LiveKit đóng với cảnh báo: {exc}")
+        await publisher.close()
         await _post_agent_status(client, assignment, "STOPPED")
         print("[worker] Đã dừng assignment.")
 

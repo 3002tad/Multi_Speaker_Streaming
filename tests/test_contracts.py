@@ -208,6 +208,16 @@ class ContractSchemaTests(unittest.TestCase):
         with self.assertRaises(ContractValidationError):
             validate_contract(value, _load_json(SCHEMA_ROOT / "ai-event.schema.json"))
 
+    def test_transcript_updated_event_is_valid(self) -> None:
+        value = _load_json(EXAMPLE_ROOT / "transcript-final-event.json")
+        value["type"] = "transcript.updated"
+        value["payload"] = {
+            "segment_id": value["payload"]["segment_id"],
+            "content_text": "Nội dung đã hiệu chỉnh.",
+            "revision": 2,
+        }
+        validate_contract(value, _load_json(SCHEMA_ROOT / "ai-event.schema.json"))
+
     def test_final_event_requires_external_runtime_id(self) -> None:
         value = _load_json(EXAMPLE_ROOT / "transcript-final-event.json")
         value["runtime_session_id"] = "paperless-demo"

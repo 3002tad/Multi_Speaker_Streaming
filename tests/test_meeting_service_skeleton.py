@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import unittest
 import asyncio
+import tempfile
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
@@ -76,7 +77,16 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
             runtime_session_id=uuid4(),
             occurred_at="2026-08-05T00:00:00Z",
             sequence=1,
-            payload={"segment_id": "seg-1"},
+            payload={
+                "segment_id": "seg-1",
+                "source_identity": "mic-a",
+                "speaker": {"label": "Dat", "identity_method": "mic_fallback"},
+                "raw_text": "xin chao",
+                "content_text": "Xin chào.",
+                "started_at": "2026-08-05T00:00:00Z",
+                "ended_at": "2026-08-05T00:00:02Z",
+                "revision": 1,
+            },
         )
 
         async def scenario() -> None:
@@ -88,6 +98,162 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
         import asyncio
         asyncio.run(scenario())
+
+    def test_p0_05_callback_upserts_revisions_and_retraction(self) -> None:
+        meeting_id = uuid4()
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
+            created = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "ONGOING"}},
+            )
+            self.assertEqual(created.status_code, 201)
+            runtime_id = created.json()["runtime_session_id"]
+            callback_headers = {"X-Service-Key": settings.service_key}
+            base = {
+                "schema_version": 1,
+                "event_id": str(uuid4()),
+                "meeting_id": str(meeting_id),
+                "runtime_session_id": runtime_id,
+                "occurred_at": "2026-08-10T01:00:00Z",
+            }
+
+            def send(event_type: str, sequence: int, revision: int, payload: dict) -> dict:
+                event = {
+                    **base,
+                    "event_id": str(uuid4()),
+                    "type": event_type,
+                    "sequence": sequence,
+                    "payload": {"segment_id": "p0-05", "revision": revision, **payload},
+                }
+                response = client.post(
+                    "/internal/v1/ai-events",
+                    headers=callback_headers,
+                    json=event,
+                )
+                self.assertEqual(response.status_code, 200)
+                return response.json()
+
+            partial = send(
+                "transcript.partial",
+                1,
+                1,
+                {
+                    "source_identity": "mic-a",
+                    "speaker": {"label": "Dat", "identity_method": "mic_fallback"},
+                    "content_text": "bản nháp",
+                },
+            )
+            self.assertEqual(partial, {"status": "accepted"})
+            final_payload = {
+                "source_identity": "mic-a",
+                "speaker": {"label": "Dat", "identity_method": "mic_fallback"},
+                "raw_text": "ban nhap",
+                "content_text": "Bản nháp.",
+                "started_at": "2026-08-10T01:00:00Z",
+                "ended_at": "2026-08-10T01:00:02Z",
+            }
+            final = send("transcript.final", 2, 2, final_payload)
+            self.assertEqual(final, {"status": "accepted"})
+            updated = send(
+                "transcript.updated",
+                3,
+                3,
+                {"content_text": "Bản nháp đã hiệu chỉnh."},
+            )
+            self.assertEqual(updated, {"status": "accepted"})
+            hydrated = client.get(
+                f"/internal/v1/meetings/{meeting_id}/transcript",
+                headers=callback_headers,
+            )
+            self.assertEqual(hydrated.status_code, 200)
+            self.assertEqual(
+                hydrated.json()["segments"][0]["content_text"],
+                "Bản nháp đã hiệu chỉnh.",
+            )
+
+            # Retrying the exact envelope is idempotent even after a client
+            # lost the response. Rebuild the same event to exercise the API
+            # duplicate path rather than merely sending a stale sequence.
+            duplicate_event = {
+                **base,
+                "event_id": str(uuid4()),
+                "type": "transcript.final",
+                "sequence": 4,
+                "payload": {"segment_id": "p0-05", "revision": 4, **final_payload},
+            }
+            response = client.post(
+                "/internal/v1/ai-events",
+                headers=callback_headers,
+                json=duplicate_event,
+            )
+            self.assertEqual(response.json(), {"status": "accepted"})
+            duplicate_retry = client.post(
+                "/internal/v1/ai-events",
+                headers=callback_headers,
+                json=duplicate_event,
+            )
+            self.assertEqual(duplicate_retry.json(), {"status": "duplicate"})
+
+            stale = send(
+                "transcript.updated",
+                3,
+                5,
+                {"content_text": "không được nhận"},
+            )
+            self.assertEqual(stale, {"status": "stale"})
+            retracted = send(
+                "transcript.retracted",
+                5,
+                5,
+                {"reason": "segment bị thay thế"},
+            )
+            self.assertEqual(retracted, {"status": "accepted"})
+            transcript = client.get(
+                f"/internal/v1/meetings/{meeting_id}/transcript",
+                headers=callback_headers,
+            )
+            self.assertEqual(transcript.status_code, 200)
+            self.assertEqual(transcript.json()["segments"], [])
+
+    def test_p0_05_callback_rejects_unknown_or_terminal_runtime(self) -> None:
+        meeting_id = uuid4()
+        callback_headers = {"X-Service-Key": settings.service_key}
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
+            event = {
+                "schema_version": 1,
+                "event_id": str(uuid4()),
+                "type": "transcript.final",
+                "meeting_id": str(meeting_id),
+                "runtime_session_id": str(uuid4()),
+                "occurred_at": "2026-08-10T01:00:00Z",
+                "sequence": 1,
+                "payload": {
+                    "segment_id": "unknown-runtime",
+                    "source_identity": "mic-a",
+                    "speaker": {"label": "Dat", "identity_method": "mic_fallback"},
+                    "raw_text": "raw",
+                    "content_text": "final",
+                    "started_at": "2026-08-10T01:00:00Z",
+                    "ended_at": "2026-08-10T01:00:01Z",
+                    "revision": 1,
+                },
+            }
+            response = client.post("/internal/v1/ai-events", headers=callback_headers, json=event)
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.json()["code"], "HTTP_404")
+
+            created = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "ONGOING"}},
+            )
+            runtime_id = created.json()["runtime_session_id"]
+            stopped = client.post(f"/internal/v1/runtimes/{runtime_id}/stop")
+            self.assertEqual(stopped.status_code, 200)
+            event["event_id"] = str(uuid4())
+            event["runtime_session_id"] = runtime_id
+            response = client.post("/internal/v1/ai-events", headers=callback_headers, json=event)
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()["code"], "HTTP_409")
 
     def test_health_endpoints(self) -> None:
         with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
@@ -313,6 +479,74 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
         self.assertEqual(content.transcript(meeting_id)[0]["segment_id"], "final-1")
         self.assertEqual(events.accept(event), "duplicate")
         self.assertEqual(len(content.transcript(meeting_id)), 1)
+
+    def test_p0_05_sql_callback_persists_before_emit_and_survives_reopen(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_url = f"sqlite+pysqlite:///{directory}/meeting.db"
+            factory = create_session_factory(database_url)
+            Base.metadata.create_all(factory.kw["bind"])
+            meeting_id = uuid4()
+            runtime_repo = SqlAlchemyRuntimeRepository(factory)
+            runtime = runtime_repo.create(meeting_id, {"meeting": {"status": "ONGOING"}})
+            events = SqlAlchemyAIEventRepository(factory)
+            content = SqlAlchemyMeetingContentRepository(factory)
+            event = {
+                "schema_version": 1,
+                "event_id": str(uuid4()),
+                "type": "transcript.final",
+                "meeting_id": str(meeting_id),
+                "runtime_session_id": str(runtime.runtime_session_id),
+                "sequence": 1,
+                "occurred_at": "2026-08-10T01:00:00Z",
+                "payload": {
+                    "segment_id": "durable-final",
+                    "source_identity": "mic-a",
+                    "speaker": {"label": "Dat", "identity_method": "mic_fallback"},
+                    "raw_text": "raw",
+                    "content_text": "Persist trước emit.",
+                    "started_at": "2026-08-10T01:00:00Z",
+                    "ended_at": "2026-08-10T01:00:01Z",
+                    "revision": 1,
+                },
+            }
+            from meeting_service.app.api.ai_events import AIEvent, receive_ai_event
+
+            request = type(
+                "Request",
+                (),
+                {
+                    "app": type(
+                        "App",
+                        (),
+                        {
+                            "state": type(
+                                "State",
+                                (),
+                                {
+                                    "runtime_service": RuntimeService(runtime_repo),
+                                    "ai_event_repository": events,
+                                    "content_store": content,
+                                },
+                            )(),
+                        },
+                    )(),
+                },
+            )()
+
+            async def emit_after_persist(*args, **kwargs) -> None:
+                self.assertEqual(content.transcript(meeting_id)[0]["segment_id"], "durable-final")
+
+            async def scenario() -> None:
+                with patch("meeting_service.app.api.ai_events.sio.emit", new=emit_after_persist):
+                    result = await receive_ai_event(request, AIEvent(**event))
+                    self.assertEqual(result, {"status": "accepted"})
+
+            asyncio.run(scenario())
+            reopened_factory = create_session_factory(database_url)
+            reopened_content = SqlAlchemyMeetingContentRepository(reopened_factory)
+            reopened_events = SqlAlchemyAIEventRepository(reopened_factory)
+            self.assertEqual(reopened_content.transcript(meeting_id)[0]["content_text"], "Persist trước emit.")
+            self.assertTrue(reopened_events.has_event(UUID(event["event_id"])))
 
     def test_p0_04_concurrent_start_calls_one_ai_side_effect(self) -> None:
         class SlowAI:

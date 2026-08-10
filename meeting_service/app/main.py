@@ -14,7 +14,7 @@ from meeting_service.app.config import settings
 from meeting_service.app.application.runtime_service import RuntimeService
 from meeting_service.app.application.meeting_content import MeetingContentStore, SqlAlchemyMeetingContentRepository
 from meeting_service.app.infrastructure.database import create_session_factory
-from meeting_service.app.infrastructure.repositories import SqlAlchemyAIEventRepository, SqlAlchemyRuntimeRepository
+from meeting_service.app.infrastructure.repositories import InMemoryAIEventRepository, SqlAlchemyAIEventRepository, SqlAlchemyRuntimeRepository
 from meeting_service.app.infrastructure.ai_client import MeetingAIClient
 from meeting_service.app.infrastructure.object_storage import build_object_storage
 
@@ -60,11 +60,12 @@ app.include_router(ai_events_router)
 if settings.persistence_enabled:
     session_factory = create_session_factory(settings.database_url)
     app.state.runtime_service = RuntimeService(SqlAlchemyRuntimeRepository(session_factory))
-    app.state.ai_event_repository = SqlAlchemyAIEventRepository(session_factory)
     app.state.content_store = SqlAlchemyMeetingContentRepository(session_factory)
+    app.state.ai_event_repository = SqlAlchemyAIEventRepository(session_factory)
 else:
     app.state.runtime_service = RuntimeService()
     app.state.content_store = MeetingContentStore()
+    app.state.ai_event_repository = InMemoryAIEventRepository(app.state.content_store)
 app.state.object_storage = build_object_storage()
 if settings.ai_enabled:
     app.state.runtime_service.ai_client = MeetingAIClient(settings.ai_base_url, settings.service_key)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
@@ -208,6 +208,10 @@ class SqlAlchemyAIEventRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._sessions = session_factory
 
+    def has_event(self, event_id: UUID) -> bool:
+        with self._sessions() as session:
+            return session.get(AIEventRecord, event_id) is not None
+
     def accept(self, event: dict) -> str:
         with self._sessions.begin() as session:
             event_id = UUID(str(event["event_id"]))
@@ -217,7 +221,12 @@ class SqlAlchemyAIEventRepository:
             latest = session.scalar(select(AIEventRecord).where(AIEventRecord.runtime_session_id == runtime_id).order_by(AIEventRecord.sequence.desc()))
             if latest and int(event["sequence"]) <= latest.sequence:
                 return "stale"
-            if event["type"] == "transcript.final":
+            if event["type"] in {
+                "transcript.partial",
+                "transcript.final",
+                "transcript.updated",
+                "transcript.retracted",
+            }:
                 payload = dict(event["payload"])
                 segment_id = str(payload["segment_id"])
                 existing_segment = session.scalar(
@@ -226,8 +235,20 @@ class SqlAlchemyAIEventRepository:
                         TranscriptSegmentRecord.segment_id == segment_id,
                     )
                 )
+                current_payload = dict(existing_segment.payload or {}) if existing_segment else {}
+                current_revision = int(current_payload.get("revision") or 0)
+                incoming_revision = int(payload.get("revision") or 1)
+                if existing_segment is not None and incoming_revision <= current_revision:
+                    return "stale"
+                payload = {
+                    **current_payload,
+                    **payload,
+                    "_event_type": event["type"],
+                }
+                payload.setdefault("created_at", event["occurred_at"])
+                if event["type"] == "transcript.retracted":
+                    payload["retracted"] = True
                 if existing_segment is None:
-                    payload.setdefault("created_at", event["occurred_at"])
                     session.add(
                         TranscriptSegmentRecord(
                             meeting_id=UUID(str(event["meeting_id"])),
@@ -235,6 +256,8 @@ class SqlAlchemyAIEventRepository:
                             payload=payload,
                         )
                     )
+                else:
+                    existing_segment.payload = payload
             session.add(AIEventRecord(event_id=event_id, meeting_id=UUID(str(event["meeting_id"])), runtime_session_id=runtime_id, event_type=event["type"], sequence=int(event["sequence"]), payload=event["payload"]))
             return "accepted"
 
@@ -242,3 +265,56 @@ class SqlAlchemyAIEventRepository:
         with self._sessions.begin() as session:
             result = session.execute(delete(AIEventRecord).where(AIEventRecord.meeting_id == meeting_id))
             return int(result.rowcount or 0)
+
+
+class InMemoryAIEventRepository:
+    """In-memory callback repository used when Meeting persistence is disabled."""
+
+    def __init__(self, content_store: Any) -> None:
+        from threading import RLock
+
+        self._content_store = content_store
+        self._events: dict[UUID, dict[str, Any]] = {}
+        self._latest_sequence: dict[UUID, int] = {}
+        self._lock = RLock()
+
+    def has_event(self, event_id: UUID) -> bool:
+        with self._lock:
+            return event_id in self._events
+
+    def accept(self, event: dict) -> str:
+        event_id = UUID(str(event["event_id"]))
+        runtime_id = UUID(str(event["runtime_session_id"]))
+        with self._lock:
+            if event_id in self._events:
+                return "duplicate"
+            latest = self._latest_sequence.get(runtime_id)
+            if latest is not None and int(event["sequence"]) <= latest:
+                return "stale"
+            event_type = str(event["type"])
+            if event_type in {
+                "transcript.partial",
+                "transcript.final",
+                "transcript.updated",
+                "transcript.retracted",
+            }:
+                status, _ = self._content_store.apply_transcript_event(
+                    UUID(str(event["meeting_id"])),
+                    event_type,
+                    dict(event["payload"]),
+                )
+                if status != "accepted":
+                    return status
+            self._events[event_id] = dict(event)
+            self._latest_sequence[runtime_id] = int(event["sequence"])
+            return "accepted"
+
+    def delete_meeting(self, meeting_id: UUID) -> int:
+        with self._lock:
+            ids = [event_id for event_id, event in self._events.items() if UUID(str(event["meeting_id"])) == meeting_id]
+            for event_id in ids:
+                self._events.pop(event_id, None)
+            for runtime_id, sequence in list(self._latest_sequence.items()):
+                if not any(UUID(str(event["runtime_session_id"])) == runtime_id for event in self._events.values()):
+                    self._latest_sequence.pop(runtime_id, None)
+            return len(ids)

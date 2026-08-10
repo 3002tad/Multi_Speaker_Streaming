@@ -101,6 +101,9 @@ class RuntimeService:
     def status(self, meeting_id: UUID) -> RuntimeSession | None:
         return self.store.get(meeting_id)
 
+    def runtime(self, runtime_session_id: UUID) -> RuntimeSession | None:
+        return self.store.get_by_id(runtime_session_id)
+
     def update_snapshot(self, meeting_id: UUID, snapshot: dict) -> dict:
         return self.store.update_snapshot(meeting_id, snapshot)
 

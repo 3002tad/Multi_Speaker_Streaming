@@ -115,16 +115,32 @@ và truyền `Idempotency-Key` từ eCabinet BFF; các test concurrent/retry/sto
 
 ### P0-05 — Callback persistence, ordering và retry
 
-- [ ] Validate callback runtime tồn tại, đúng meeting và ở trạng thái hợp lệ.
-- [ ] Final transcript commit DB trước Socket.IO emit.
-- [ ] Persist/emit đầy đủ partial, final, updated, retracted; retraction sửa
+**Cập nhật 2026-08-10:** `[x]` — đã hoàn tất callback validation theo runtime,
+upsert transcript theo revision, persistence trước Socket.IO và bounded retry spool.
+Đã bổ sung test duplicate/stale/retraction, callback failure recovery và reopen
+database để mô phỏng khôi phục sau restart.
+
+- [x] Validate callback runtime tồn tại, đúng meeting và ở trạng thái hợp lệ.
+- [x] Final transcript commit DB trước Socket.IO emit.
+- [x] Persist/emit đầy đủ partial, final, updated, retracted; retraction sửa
   persisted state, không chỉ UI reducer.
-- [ ] Xử lý accepted/duplicate/stale theo event ID, sequence và revision.
-- [ ] Tách callback publisher, thêm bounded spool, retry/backoff/timeout và
+- [x] Xử lý accepted/duplicate/stale theo event ID, sequence và revision.
+- [x] Tách callback publisher, thêm bounded spool, retry/backoff/timeout và
   graceful flush khi Agent dừng.
 
-**Điều kiện đạt:** tắt Meeting Service tạm thời rồi khôi phục vẫn nhận final
-transcript đúng một lần; REST rehydrate đúng sau update/retraction.
+**Bằng chứng và giới hạn:** targeted P0-05/contract/publisher **39 pass**; full
+unit/contract suite **136 pass**; compileall và `git diff --check` đạt. Test SQLite
+đóng/reopen xác nhận transcript final và event ID được khôi phục đúng một lần,
+đồng thời test emit xác nhận DB commit xảy ra trước Socket.IO. Chưa chạy fault
+injection trên PostgreSQL/Redis/MinIO production hoặc outage mạng LiveKit thật;
+spool hiện là process-local bounded queue và sequence không được khôi phục qua
+AI process restart (phần này thuộc P0-06 assignment recovery).
+
+**Đối chiếu merge plan:** P0-05 đã đạt gate, chỉ thay đổi event contract,
+Meeting Service persistence và Agent callback transport; không thay đổi ASR/DSP,
+speaker ID hoặc LiveKit baseline, không xâm lấn module eCabinet. eCabinet là
+repository local-only, không push. Bước tiếp theo theo thứ tự ưu tiên: P0-06
+Agent assignment recovery, sau đó P0-07 multi-mic streaming regression.
 
 ### P0-06 — Agent assignment recovery
 

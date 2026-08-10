@@ -31,7 +31,13 @@ class MeetingContentStore:
 
     def transcript(self, meeting_id: UUID) -> list[dict[str, Any]]:
         with self._lock:
-            return deepcopy(self._transcripts.get(meeting_id, []))
+            return deepcopy(
+                [
+                    item
+                    for item in self._transcripts.get(meeting_id, [])
+                    if not item.get("retracted") and item.get("_event_type") != "transcript.partial"
+                ]
+            )
 
     def append_transcript(self, meeting_id: UUID, segment: dict[str, Any]) -> dict[str, Any]:
         item = dict(segment)
@@ -40,6 +46,34 @@ class MeetingContentStore:
             item.setdefault("created_at", datetime.now(timezone.utc).isoformat())
             self._transcripts.setdefault(meeting_id, []).append(item)
             return deepcopy(item)
+
+    def apply_transcript_event(
+        self,
+        meeting_id: UUID,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        segment_id = str(payload["segment_id"])
+        incoming_revision = int(payload.get("revision") or 1)
+        with self._lock:
+            items = self._transcripts.setdefault(meeting_id, [])
+            existing_index = next(
+                (index for index, item in enumerate(items) if str(item.get("segment_id")) == segment_id),
+                None,
+            )
+            existing = items[existing_index] if existing_index is not None else None
+            current_revision = int((existing or {}).get("revision") or 0)
+            if existing is not None and incoming_revision <= current_revision:
+                return "stale", deepcopy(existing)
+            item = {**(existing or {}), **deepcopy(payload), "_event_type": event_type}
+            item.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+            if event_type == "transcript.retracted":
+                item["retracted"] = True
+            if existing_index is None:
+                items.append(item)
+            else:
+                items[existing_index] = item
+            return "accepted", deepcopy(item)
 
     def minutes(self, meeting_id: UUID) -> dict[str, Any]:
         with self._lock:
@@ -150,7 +184,11 @@ class SqlAlchemyMeetingContentRepository:
                 .where(TranscriptSegmentRecord.meeting_id == meeting_id)
                 .order_by(TranscriptSegmentRecord.created_at, TranscriptSegmentRecord.id)
             ).all()
-            return [deepcopy(row.payload) for row in rows]
+            return [
+                deepcopy(row.payload)
+                for row in rows
+                if not row.payload.get("retracted") and row.payload.get("_event_type") != "transcript.partial"
+            ]
 
     def append_transcript(self, meeting_id: UUID, segment: dict[str, Any]) -> dict[str, Any]:
         item = dict(segment)
@@ -171,6 +209,41 @@ class SqlAlchemyMeetingContentRepository:
                 return deepcopy(existing.payload)
             session.add(TranscriptSegmentRecord(meeting_id=meeting_id, segment_id=str(item["segment_id"]), payload=item))
             return deepcopy(item)
+
+    def apply_transcript_event(
+        self,
+        meeting_id: UUID,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        segment_id = str(payload["segment_id"])
+        incoming_revision = int(payload.get("revision") or 1)
+        with self._sessions.begin() as session:
+            existing = session.scalar(
+                select(TranscriptSegmentRecord).where(
+                    TranscriptSegmentRecord.meeting_id == meeting_id,
+                    TranscriptSegmentRecord.segment_id == segment_id,
+                )
+            )
+            current_payload = dict(existing.payload or {}) if existing else {}
+            current_revision = int(current_payload.get("revision") or 0)
+            if existing is not None and incoming_revision <= current_revision:
+                return "stale", deepcopy(current_payload)
+            item = {**current_payload, **deepcopy(payload), "_event_type": event_type}
+            item.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+            if event_type == "transcript.retracted":
+                item["retracted"] = True
+            if existing is None:
+                session.add(
+                    TranscriptSegmentRecord(
+                        meeting_id=meeting_id,
+                        segment_id=segment_id,
+                        payload=item,
+                    )
+                )
+            else:
+                existing.payload = item
+            return "accepted", deepcopy(item)
 
     def minutes(self, meeting_id: UUID) -> dict[str, Any]:
         with self._sessions() as session:
