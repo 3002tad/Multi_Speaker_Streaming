@@ -37,6 +37,13 @@ def _ai_client(request: Request):
     return client
 
 
+def _idempotency_key(request: Request) -> str:
+    key = (request.headers.get("Idempotency-Key") or "").strip()
+    if not key or len(key) < 8 or len(key) > 160:
+        raise HTTPException(status_code=422, detail="Idempotency-Key must be 8-160 characters")
+    return key
+
+
 @router.post("/enrollments/{user_id}")
 async def create_enrollment(
     user_id: str,
@@ -89,7 +96,10 @@ async def delete_enrollment(user_id: str, request: Request) -> Response:
 
 @router.delete("/meetings/{meeting_id}")
 def purge_meeting(meeting_id: UUID, request: Request) -> dict[str, object]:
-    runtime_deleted = _service(request).purge(meeting_id)
+    try:
+        runtime_deleted = _service(request).purge(meeting_id, _idempotency_key(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     exports = _content(request).list_exports(meeting_id)
     export_storage_deleted = 0
     export_storage_cleanup_failed = 0
@@ -117,8 +127,10 @@ def purge_meeting(meeting_id: UUID, request: Request) -> dict[str, object]:
 @router.post("/meetings/{meeting_id}/runtime", status_code=201)
 async def create_runtime(meeting_id: UUID, request: Request, snapshot: dict | None = None) -> dict[str, object]:
     try:
-        return (await _service(request).start(meeting_id, snapshot)).as_dict()
+        return (await _service(request).start(meeting_id, snapshot, _idempotency_key(request))).as_dict()
     except RuntimeStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
@@ -145,7 +157,10 @@ def update_runtime_snapshot(meeting_id: UUID, request: Request, snapshot: dict[s
 
 @router.post("/runtimes/{runtime_session_id}/stop")
 async def stop_runtime(runtime_session_id: UUID, request: Request) -> dict[str, object]:
-    session = await _service(request).stop(runtime_session_id)
+    try:
+        session = await _service(request).stop(runtime_session_id, _idempotency_key(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if session is None:
         raise HTTPException(status_code=404, detail="runtime not found")
     return session.as_dict()

@@ -54,8 +54,11 @@ class LiveKitTokenServiceTests(unittest.TestCase):
         object.__setattr__(settings, "livekit_api_key", "api-key")
         object.__setattr__(settings, "livekit_api_secret", "api-secret-0123456789-0123456789-012345")
         meeting_id = uuid4()
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
-            created = client.post(f"/internal/v1/meetings/{meeting_id}/runtime", json={"meeting": {"status": "APPROVED"}})
+        with TestClient(app, headers={"X-Service-Key": settings.service_key, "Idempotency-Key": "test-livekit-runtime"}) as client:
+            created = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "APPROVED"}},
+            )
             self.assertEqual(created.status_code, 201)
             runtime_id = created.json()["runtime_session_id"]
             response = client.post(

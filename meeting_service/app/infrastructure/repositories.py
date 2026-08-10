@@ -3,16 +3,21 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from meeting_service.app.domain.models import RuntimeSession, RuntimeStatus
-from meeting_service.app.infrastructure.models import AIEventRecord, RuntimeSessionRecord, TranscriptSegmentRecord
+from meeting_service.app.infrastructure.models import AIEventRecord, IdempotencyRecord, RuntimeSessionRecord, TranscriptSegmentRecord
 
 
 class RuntimeRepository(Protocol):
     def create(self, meeting_id: UUID, snapshot: dict) -> RuntimeSession: ...
     def get(self, meeting_id: UUID) -> RuntimeSession | None: ...
+    def get_by_id(self, runtime_id: UUID) -> RuntimeSession | None: ...
+    def claim_stop(self, runtime_id: UUID) -> tuple[RuntimeSession | None, bool]: ...
+    def get_idempotency(self, operation: str, key: str, request_hash: str) -> dict | None: ...
+    def put_idempotency(self, operation: str, key: str, request_hash: str, response: dict) -> dict: ...
     def update_snapshot(self, meeting_id: UUID, snapshot: dict) -> dict: ...
     def set_status(self, runtime_id: UUID, status: RuntimeStatus) -> RuntimeSession | None: ...
     def delete_meeting(self, meeting_id: UUID) -> int: ...
@@ -59,14 +64,105 @@ class SqlAlchemyRuntimeRepository:
                 session.flush()
                 return _to_domain(terminal)
             record = RuntimeSessionRecord(meeting_id=meeting_id, meeting_snapshot_json=snapshot, livekit_room=f"meeting-{meeting_id}", status=RuntimeStatus.STARTING.value)
-            session.add(record)
-            session.flush()
+            try:
+                # Keep the unique active-meeting constraint inside a savepoint
+                # so a concurrent loser can still read and return the winner.
+                with session.begin_nested():
+                    session.add(record)
+                    session.flush()
+            except IntegrityError:
+                existing = session.scalar(
+                    select(RuntimeSessionRecord).where(
+                        RuntimeSessionRecord.meeting_id == meeting_id,
+                        RuntimeSessionRecord.status.not_in(
+                            [RuntimeStatus.COMPLETED.value, RuntimeStatus.FAILED.value]
+                        ),
+                    )
+                )
+                if existing is None:
+                    raise
+                return _to_domain(existing)
             return _to_domain(record)
 
     def get(self, meeting_id: UUID) -> RuntimeSession | None:
         with self._sessions() as session:
             record = session.scalar(select(RuntimeSessionRecord).where(RuntimeSessionRecord.meeting_id == meeting_id).order_by(RuntimeSessionRecord.created_at.desc()))
             return _to_domain(record) if record else None
+
+    def get_by_id(self, runtime_id: UUID) -> RuntimeSession | None:
+        with self._sessions() as session:
+            record = session.get(RuntimeSessionRecord, runtime_id)
+            return _to_domain(record) if record else None
+
+    def claim_stop(self, runtime_id: UUID) -> tuple[RuntimeSession | None, bool]:
+        """Atomically claim an active runtime for the single stop side effect."""
+        with self._sessions.begin() as session:
+            result = session.execute(
+                update(RuntimeSessionRecord)
+                .where(
+                    RuntimeSessionRecord.id == runtime_id,
+                    RuntimeSessionRecord.status.in_(
+                        [
+                            RuntimeStatus.STARTING.value,
+                            RuntimeStatus.READY.value,
+                            RuntimeStatus.RECORDING.value,
+                        ]
+                    ),
+                )
+                .values(status=RuntimeStatus.STOPPING.value)
+            )
+            record = session.get(RuntimeSessionRecord, runtime_id)
+            return (_to_domain(record) if record else None, bool(result.rowcount))
+
+    def get_idempotency(self, operation: str, key: str, request_hash: str) -> dict | None:
+        with self._sessions() as session:
+            record = session.scalar(
+                select(IdempotencyRecord).where(
+                    IdempotencyRecord.operation == operation,
+                    IdempotencyRecord.key == key,
+                )
+            )
+            if record is None:
+                return None
+            if record.request_hash and record.request_hash != request_hash:
+                raise ValueError("idempotency key was reused with a different request")
+            return dict(record.response_json)
+
+    def put_idempotency(self, operation: str, key: str, request_hash: str, response: dict) -> dict:
+        with self._sessions.begin() as session:
+            existing = session.scalar(
+                select(IdempotencyRecord).where(
+                    IdempotencyRecord.operation == operation,
+                    IdempotencyRecord.key == key,
+                )
+            )
+            if existing is not None:
+                if existing.request_hash and existing.request_hash != request_hash:
+                    raise ValueError("idempotency key was reused with a different request")
+                return dict(existing.response_json)
+            record = IdempotencyRecord(
+                operation=operation,
+                key=key,
+                request_hash=request_hash,
+                response_json=dict(response),
+            )
+            try:
+                with session.begin_nested():
+                    session.add(record)
+                    session.flush()
+            except IntegrityError:
+                existing = session.scalar(
+                    select(IdempotencyRecord).where(
+                        IdempotencyRecord.operation == operation,
+                        IdempotencyRecord.key == key,
+                    )
+                )
+                if existing is None:
+                    raise
+                if existing.request_hash and existing.request_hash != request_hash:
+                    raise ValueError("idempotency key was reused with a different request")
+                return dict(existing.response_json)
+            return dict(response)
 
     def update_snapshot(self, meeting_id: UUID, snapshot: dict) -> dict:
         with self._sessions.begin() as session:

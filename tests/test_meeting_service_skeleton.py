@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import asyncio
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -14,6 +15,12 @@ from meeting_service.app.application.meeting_content import SqlAlchemyMeetingCon
 from meeting_service.app.infrastructure.runtime_store import InMemoryRuntimeStore
 from meeting_service.app.application.runtime_service import RuntimeService
 from meeting_service.app.config import settings
+
+
+IDEMPOTENCY_HEADERS = {
+    "X-Service-Key": settings.service_key,
+    "Idempotency-Key": "test-idempotency-key",
+}
 
 
 class MeetingServiceSkeletonTests(unittest.TestCase):
@@ -83,13 +90,13 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
         asyncio.run(scenario())
 
     def test_health_endpoints(self) -> None:
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
             self.assertEqual(client.get("/health/live").status_code, 200)
             self.assertEqual(client.get("/health/ready").json()["status"], "ok")
 
     def test_runtime_and_empty_minutes_follow_contract_response_shapes(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
             created = client.post(
                 f"/internal/v1/meetings/{meeting_id}/runtime",
                 json={"meeting": {"status": "APPROVED"}},
@@ -108,7 +115,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_runtime_lifecycle_is_service_local(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
             created = client.post(f"/internal/v1/meetings/{meeting_id}/runtime", json={"meeting": {"status": "ONGOING"}})
             self.assertEqual(created.status_code, 201)
             payload = created.json()
@@ -128,7 +135,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_meeting_purge_is_idempotent(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
             created = client.post(f"/internal/v1/meetings/{meeting_id}/runtime", json={"meeting": {"status": "ONGOING"}})
             self.assertEqual(created.status_code, 201)
             appended = client.post(
@@ -146,7 +153,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_transcript_contract_uses_the_canonical_singular_route(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
             appended = client.post(
                 f"/internal/v1/meetings/{meeting_id}/transcript",
                 json={"segment_id": "contract-1", "text": "canonical"},
@@ -172,7 +179,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
             "participants": [],
             "hotwords": [],
         }
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
             created = client.post(f"/internal/v1/meetings/{meeting_id}/runtime", json=base)
             self.assertEqual(created.status_code, 201)
             updated = {**base, "snapshot_revision": 2, "participants": [{"user_id": str(uuid4()), "display_name": "Member", "role": "MEMBER"}]}
@@ -186,7 +193,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
             self.assertEqual(stale.json()["code"], "HTTP_409")
 
     def test_internal_errors_follow_problem_contract(self) -> None:
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
             response = client.get(f"/internal/v1/meetings/{uuid4()}/status")
             self.assertEqual(response.status_code, 404)
             self.assertEqual(response.headers["content-type"], "application/problem+json")
@@ -198,7 +205,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_state_guard_blocks_invalid_runtime_start_and_early_minutes_approval(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
             rejected_start = client.post(
                 f"/internal/v1/meetings/{meeting_id}/runtime",
                 json={"meeting": {"status": "DRAFT"}},
@@ -232,7 +239,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_minutes_editor_rejects_stale_revision(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
             first = client.patch(
                 f"/internal/v1/meetings/{meeting_id}/minutes",
                 json={"base_revision": 0, "document": {"schema_version": 1, "meeting": {"title": "Demo", "started_at": None}, "summary": [], "topics": [], "source_segment_ids": []}},
@@ -246,7 +253,7 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
 
     def test_minutes_review_and_approval_follow_lifecycle(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
             created = client.post(
                 f"/internal/v1/meetings/{meeting_id}/runtime",
                 json={"meeting": {"status": "APPROVED"}},
@@ -274,6 +281,19 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
         stopped = repository.set_status(created.runtime_session_id, RuntimeStatus.COMPLETED)
         self.assertEqual(stopped.status, RuntimeStatus.COMPLETED)
 
+    def test_sql_repository_persists_idempotency_and_rejects_hash_reuse(self) -> None:
+        factory = create_session_factory("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(factory.kw["bind"])
+        repository = SqlAlchemyRuntimeRepository(factory)
+        response = {"runtime_session_id": str(uuid4()), "status": "STARTING"}
+        self.assertEqual(
+            repository.put_idempotency("start:meeting", "sql-key-1", "hash-a", response),
+            response,
+        )
+        self.assertEqual(repository.get_idempotency("start:meeting", "sql-key-1", "hash-a"), response)
+        with self.assertRaises(ValueError):
+            repository.get_idempotency("start:meeting", "sql-key-1", "hash-b")
+
     def test_final_callback_commits_transcript_before_socket_emit(self) -> None:
         factory = create_session_factory("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(factory.kw["bind"])
@@ -293,6 +313,117 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
         self.assertEqual(content.transcript(meeting_id)[0]["segment_id"], "final-1")
         self.assertEqual(events.accept(event), "duplicate")
         self.assertEqual(len(content.transcript(meeting_id)), 1)
+
+    def test_p0_04_concurrent_start_calls_one_ai_side_effect(self) -> None:
+        class SlowAI:
+            def __init__(self) -> None:
+                self.created = 0
+
+            async def create_session(self, payload: dict, idempotency_key: str) -> dict:
+                self.created += 1
+                await asyncio.sleep(0.01)
+                return {"status": "READY"}
+
+            async def stop_session(self, runtime_session_id: str, idempotency_key: str) -> dict:
+                return {"status": "COMPLETED"}
+
+        async def scenario() -> None:
+            ai = SlowAI()
+            service = RuntimeService(ai_client=ai)
+            meeting_id = uuid4()
+            results = await asyncio.gather(
+                service.start(meeting_id, {"meeting": {"status": "ONGOING"}}, "start-key-a"),
+                service.start(meeting_id, {"meeting": {"status": "ONGOING"}}, "start-key-b"),
+            )
+            self.assertEqual(results[0].runtime_session_id, results[1].runtime_session_id)
+            self.assertEqual(ai.created, 1)
+
+        asyncio.run(scenario())
+
+    def test_p0_04_retry_after_ai_timeout_reuses_runtime_and_can_succeed(self) -> None:
+        class FlakyAI:
+            def __init__(self) -> None:
+                self.created = 0
+
+            async def create_session(self, payload: dict, idempotency_key: str) -> dict:
+                self.created += 1
+                if self.created == 1:
+                    raise TimeoutError("simulated AI timeout")
+                return {"status": "READY"}
+
+            async def stop_session(self, runtime_session_id: str, idempotency_key: str) -> dict:
+                return {"status": "COMPLETED"}
+
+        async def scenario() -> None:
+            ai = FlakyAI()
+            service = RuntimeService(ai_client=ai)
+            meeting_id = uuid4()
+            with self.assertRaises(TimeoutError):
+                await service.start(meeting_id, {"meeting": {"status": "ONGOING"}}, "retry-key-1")
+            retried = await service.start(meeting_id, {"meeting": {"status": "ONGOING"}}, "retry-key-1")
+            self.assertEqual(retried.status, RuntimeStatus.READY)
+            self.assertEqual(ai.created, 2)
+
+        asyncio.run(scenario())
+
+    def test_p0_04_repeated_stop_does_not_call_ai_twice(self) -> None:
+        class StopAI:
+            def __init__(self) -> None:
+                self.stopped = 0
+
+            async def create_session(self, payload: dict, idempotency_key: str) -> dict:
+                return {"status": "READY"}
+
+            async def stop_session(self, runtime_session_id: str, idempotency_key: str) -> dict:
+                self.stopped += 1
+                await asyncio.sleep(0.01)
+                return {"status": "COMPLETED"}
+
+        async def scenario() -> None:
+            ai = StopAI()
+            service = RuntimeService(ai_client=ai)
+            session = await service.start(uuid4(), {"meeting": {"status": "ONGOING"}}, "start-stop-key")
+            stopped = await asyncio.gather(
+                service.stop(session.runtime_session_id, "stop-key-a"),
+                service.stop(session.runtime_session_id, "stop-key-b"),
+            )
+            self.assertEqual(ai.stopped, 1)
+            self.assertEqual({item.status for item in stopped}, {RuntimeStatus.COMPLETED})
+            replay = await service.stop(session.runtime_session_id, "stop-key-a")
+            self.assertEqual(replay.status, RuntimeStatus.COMPLETED)
+            self.assertEqual(ai.stopped, 1)
+
+        asyncio.run(scenario())
+
+    def test_p0_04_internal_key_required_and_reuse_conflict_is_rejected(self) -> None:
+        meeting_id = uuid4()
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+            missing = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "ONGOING"}},
+            )
+            self.assertEqual(missing.status_code, 422)
+            self.assertEqual(missing.json()["code"], "HTTP_422")
+            key = "p0-04-start-key"
+            first = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "ONGOING"}},
+                headers={"Idempotency-Key": key},
+            )
+            replay = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "ONGOING"}},
+                headers={"Idempotency-Key": key},
+            )
+            self.assertEqual(first.status_code, 201)
+            self.assertEqual(replay.status_code, 201)
+            self.assertEqual(replay.json(), first.json())
+            conflict = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "APPROVED"}},
+                headers={"Idempotency-Key": key},
+            )
+            self.assertEqual(conflict.status_code, 409)
 
 
 if __name__ == "__main__":

@@ -25,8 +25,11 @@ class MinutesExportTests(unittest.TestCase):
 
     def test_approved_minutes_can_be_exported_and_downloaded(self) -> None:
         meeting_id = uuid4()
-        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
-            created = client.post(f"/internal/v1/meetings/{meeting_id}/runtime", json={"meeting": {"status": "APPROVED"}})
+        with TestClient(app, headers={"X-Service-Key": settings.service_key, "Idempotency-Key": "test-minutes-runtime"}) as client:
+            created = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "APPROVED"}},
+            )
             self.assertEqual(created.status_code, 201)
             stopped = client.post(f"/internal/v1/runtimes/{created.json()['runtime_session_id']}/stop")
             self.assertEqual(stopped.status_code, 200)

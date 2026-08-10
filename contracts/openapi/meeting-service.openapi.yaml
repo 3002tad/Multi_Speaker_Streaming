@@ -36,6 +36,8 @@ paths:
       - $ref: "#/components/parameters/MeetingId"
     post:
       operationId: createMeetingRuntime
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -56,6 +58,8 @@ paths:
       - $ref: "#/components/parameters/RuntimeSessionId"
     post:
       operationId: stopMeetingRuntime
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           $ref: "#/components/responses/RuntimeResponse"
@@ -284,8 +288,20 @@ paths:
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       responses:
-        "204":
-          description: Purge accepted or already completed.
+        "200":
+          description: Purge completed or already applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [meeting_id, status]
+                properties:
+                  meeting_id: {type: string, format: uuid}
+                  status: {type: string, enum: [PURGED]}
+                  runtime_rows_deleted: {type: integer, minimum: 0}
+                  content_rows_deleted: {type: integer, minimum: 0}
+                  ai_event_rows_deleted: {type: integer, minimum: 0}
   /internal/v1/enrollments/{user_id}:
     parameters:
       - $ref: "#/components/parameters/UserId"
@@ -339,6 +355,11 @@ components:
       in: path
       required: true
       schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 8, maxLength: 160}
   schemas:
     Runtime:
       type: object

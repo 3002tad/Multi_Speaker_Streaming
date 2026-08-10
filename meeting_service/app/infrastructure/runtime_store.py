@@ -13,13 +13,26 @@ class InMemoryRuntimeStore(RuntimeRepository):
     def __init__(self) -> None:
         self._items: dict[UUID, RuntimeSession] = {}
         self._snapshots: dict[UUID, dict] = {}
+        self._idempotency: dict[tuple[str, str], tuple[str, dict]] = {}
         self._lock = RLock()
 
     def create(self, meeting_id: UUID, snapshot: dict | None = None) -> RuntimeSession:
         with self._lock:
-            current = next((x for x in self._items.values() if x.meeting_id == meeting_id and x.status not in {RuntimeStatus.COMPLETED, RuntimeStatus.FAILED}), None)
+            current = next(
+                (
+                    x
+                    for x in reversed(list(self._items.values()))
+                    if x.meeting_id == meeting_id and x.status not in {RuntimeStatus.COMPLETED, RuntimeStatus.FAILED}
+                ),
+                None,
+            )
             if current:
                 return current
+            terminal = next((x for x in reversed(list(self._items.values())) if x.meeting_id == meeting_id), None)
+            if terminal:
+                terminal.status = RuntimeStatus.STARTING
+                self._snapshots[terminal.runtime_session_id] = dict(snapshot or {})
+                return terminal
             session = RuntimeSession(meeting_id=meeting_id, livekit_room=f"meeting-{meeting_id}")
             self._items[session.runtime_session_id] = session
             self._snapshots[session.runtime_session_id] = dict(snapshot or {})
@@ -27,7 +40,42 @@ class InMemoryRuntimeStore(RuntimeRepository):
 
     def get(self, meeting_id: UUID) -> RuntimeSession | None:
         with self._lock:
-            return next((x for x in self._items.values() if x.meeting_id == meeting_id), None)
+            return next((x for x in reversed(list(self._items.values())) if x.meeting_id == meeting_id), None)
+
+    def get_by_id(self, runtime_id: UUID) -> RuntimeSession | None:
+        with self._lock:
+            return self._items.get(runtime_id)
+
+    def claim_stop(self, runtime_id: UUID) -> tuple[RuntimeSession | None, bool]:
+        with self._lock:
+            session = self._items.get(runtime_id)
+            if session is None:
+                return None, False
+            if session.status in {RuntimeStatus.STARTING, RuntimeStatus.READY, RuntimeStatus.RECORDING}:
+                session.status = RuntimeStatus.STOPPING
+                return session, True
+            return session, False
+
+    def get_idempotency(self, operation: str, key: str, request_hash: str) -> dict | None:
+        with self._lock:
+            stored = self._idempotency.get((operation, key))
+            if stored is None:
+                return None
+            stored_hash, response = stored
+            if stored_hash and stored_hash != request_hash:
+                raise ValueError("idempotency key was reused with a different request")
+            return dict(response)
+
+    def put_idempotency(self, operation: str, key: str, request_hash: str, response: dict) -> dict:
+        with self._lock:
+            stored = self._idempotency.get((operation, key))
+            if stored is not None:
+                stored_hash, existing = stored
+                if stored_hash and stored_hash != request_hash:
+                    raise ValueError("idempotency key was reused with a different request")
+                return dict(existing)
+            self._idempotency[(operation, key)] = (request_hash, dict(response))
+            return dict(response)
 
     def set_status(self, runtime_id: UUID, status: RuntimeStatus) -> RuntimeSession | None:
         with self._lock:

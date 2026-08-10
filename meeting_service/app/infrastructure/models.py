@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, DateTime, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Index, Integer, JSON, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import Uuid
 
@@ -16,6 +16,18 @@ def utcnow() -> datetime:
 
 class RuntimeSessionRecord(Base):
     __tablename__ = "meeting_runtime_sessions"
+    __table_args__ = (
+        # One non-terminal runtime per meeting.  The index is enforced by
+        # PostgreSQL and SQLite; the repository handles the concurrent insert
+        # race by returning the winner row.
+        Index(
+            "uq_meeting_runtime_active_meeting",
+            "meeting_id",
+            unique=True,
+            postgresql_where=text("status NOT IN ('COMPLETED', 'FAILED')"),
+            sqlite_where=text("status NOT IN ('COMPLETED', 'FAILED')"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     meeting_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
@@ -37,6 +49,7 @@ class IdempotencyRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     operation: Mapped[str] = mapped_column(String(100), nullable=False)
     key: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     response_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

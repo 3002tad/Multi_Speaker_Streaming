@@ -279,6 +279,17 @@ class OpenApiContractTests(unittest.TestCase):
                 elif isinstance(item, list):
                     stack.extend(item)
 
+    def test_meeting_lifecycle_requires_idempotency_key(self) -> None:
+        document = yaml.safe_load((CONTRACT_ROOT / "openapi" / "meeting-service.openapi.yaml").read_text(encoding="utf-8"))
+        for path, method in (
+            ("/internal/v1/meetings/{meeting_id}/runtime", "post"),
+            ("/internal/v1/runtimes/{runtime_session_id}/stop", "post"),
+            ("/internal/v1/meetings/{meeting_id}", "delete"),
+        ):
+            parameters = document["paths"][path][method]["parameters"]
+            self.assertIn("#/components/parameters/IdempotencyKey", [item["$ref"] for item in parameters])
+        self.assertTrue(document["components"]["parameters"]["IdempotencyKey"]["required"])
+
 
 class BaselineManifestTests(unittest.TestCase):
     def test_manifest_locks_actual_active_frontend(self) -> None:

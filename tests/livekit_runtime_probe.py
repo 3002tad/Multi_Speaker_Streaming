@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import time
 import uuid
 from pathlib import Path
@@ -80,6 +81,7 @@ async def main() -> None:
     meeting_id = str(uuid.uuid4())
     user_id = str(uuid.uuid4())
     service_url = "http://127.0.0.1:8002"
+    service_headers = {"X-Service-Key": os.getenv("MEETING_SERVICE_KEY", "local-meeting-service-key")}
     async with httpx.AsyncClient(timeout=30.0) as client:
         runtime = await client.post(
             f"{service_url}/internal/v1/meetings/{meeting_id}/runtime",
@@ -87,6 +89,7 @@ async def main() -> None:
                 "meeting": {"status": "APPROVED", "title": "Runtime probe"},
                 "participants": [{"user_id": user_id, "display_name": "Audio Probe"}],
             },
+            headers={**service_headers, "Idempotency-Key": f"probe-start-{meeting_id}"},
         )
         runtime.raise_for_status()
         runtime_payload = runtime.json()
@@ -120,7 +123,8 @@ async def main() -> None:
         )
 
         stopped = await client.post(
-            f"{service_url}/internal/v1/runtimes/{runtime_id}/stop"
+            f"{service_url}/internal/v1/runtimes/{runtime_id}/stop",
+            headers={**service_headers, "Idempotency-Key": f"probe-stop-{runtime_id}"},
         )
         stopped.raise_for_status()
         await asyncio.sleep(1.0)

@@ -79,11 +79,39 @@ chair/secretary/admin đúng ma trận plan.
 
 ### P0-04 — Active-session lock và idempotency thật
 
-- [ ] Dùng Redis lock hoặc DB transaction/constraint nguyên tử cho start/stop.
-- [ ] Dùng bảng idempotency cho start, stop và purge.
-- [ ] Test concurrent start, retry timeout và stop lặp.
+**Cập nhật 2026-08-10:** `[x]` — đã triển khai khóa active runtime bằng
+constraint/transaction của Meeting Service, idempotency record cho start/stop/purge
+và truyền `Idempotency-Key` từ eCabinet BFF; các test concurrent/retry/stop lặp đã đạt.
+
+- [x] Dùng DB partial unique constraint cho một active runtime/meeting và atomic
+  stop claim; service lock chống duplicate side effect trong cùng worker.
+- [x] Dùng bảng idempotency với operation/key/request fingerprint/response cho
+  start, stop và purge.
+- [x] Test concurrent start, retry timeout và stop lặp.
 
 **Điều kiện đạt:** không tạo hai runtime active hoặc state DB mâu thuẫn.
+
+### Nhật ký thực thi — P0-04 — 2026-08-10
+
+- Trạng thái: `[x]`.
+- Meeting Service có partial unique index `uq_meeting_runtime_active_meeting` cho
+  một runtime chưa terminal trên mỗi `meeting_id`; `claim_stop` chuyển sang
+  `STOPPING` nguyên tử trước khi gọi AI.
+- Bảng `meeting_idempotency_records` được mở rộng request fingerprint; start,
+  stop và purge lưu/replay response, từ chối dùng lại key với payload khác.
+- OpenAPI yêu cầu `Idempotency-Key` cho start/stop/purge; eCabinet BFF truyền key
+  từ caller hoặc sinh fallback phù hợp cho UI cũ, không thay schema nghiệp vụ.
+- Kiểm thử: targeted P0-04 + contract **38 pass**; full unit/contract suite
+  **129 pass**; compile Meeting Service, tests và eCabinet session BFF đạt;
+  `git diff --check` đạt.
+- Giới hạn: chưa chạy contention test trên PostgreSQL/Redis production thật;
+  SQLite metadata test và InMemory concurrent test đã pass. Retry purge qua
+  eCabinet tombstone dùng key `purge:{meeting_id}` ổn định.
+- Đối chiếu merge plan: P0-04 đã đạt gate, không thay đổi ASR/DSP/LiveKit
+  baseline và không xâm lấn module eCabinet ngoài session façade. Batch chưa
+  commit; eCabinet là repository local-only, không push.
+- Bước tiếp theo: P0-05 callback persistence/ordering/retry, sau đó P0-06
+  participant assignment động và P0-07 regression nhiều mic.
 
 ### P0-05 — Callback persistence, ordering và retry
 
