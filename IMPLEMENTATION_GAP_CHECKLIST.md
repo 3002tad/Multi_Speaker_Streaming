@@ -193,7 +193,7 @@ transcript, metric và tài nguyên.
 - [x] Chạy 2 rồi 4 track đồng thời từ `truth_1` theo frame production.
 - [x] Kiểm tra không track nào đứng, callback final đủ, không duplicate
   cross-mic.
-- [ ] Phân biệt global-turn crosstalk (cùng người vọng qua nhiều mic) với
+- [x] Phân biệt global-turn crosstalk (cùng người vọng qua nhiều mic) với
   nhiều người thực sự phát biểu chồng nhau.
 - [ ] Lưu WER/CER/RTF/CPU/RAM; không kém baseline quá 0.01 tuyệt đối.
 
@@ -269,27 +269,27 @@ thrashing kéo dài.
   cả 6 run đều có partial/final cho mọi nguồn và không duplicate. Chưa đạt
   tolerance WER +0.01 và chưa có bằng chứng crosstalk/true-overlap riêng.
 
-**Gap còn lại:** fair scheduling đã loại trừ nghẽn shared Zipformer, nhưng
-chưa có control streaming lặp đủ mẫu để tách degradation do concurrency khỏi
-dao động LiveKit/VAD. Song song đó, global-turn vẫn cần phân biệt rõ duplicate
-crosstalk và overlap nhiều speaker trước EventSink. Không tự ý đổi tuning
-Zipformer, VAD hoặc speaker threshold trong checkpoint này.
+**Gap còn lại:** control streaming lặp đã đủ mẫu và P0-08 đã tách được
+crosstalk khỏi true overlap trước EventSink. P0-07 còn riêng quality ASR đa
+mic: WER/CER vẫn vượt locked baseline; không tự ý đổi tuning Zipformer, VAD
+hoặc speaker threshold trong checkpoint này.
 
 ### P0-08 — Control streaming lặp và phân biệt overlap đa speaker
 
-**Cập nhật 2026-08-10:** `[-]` — đã triển khai harness control có pre-roll silence
-và readiness polling; còn thiếu đủ ba lần lặp và fixture crosstalk/true overlap.
+**Cập nhật 2026-08-10:** `[x]` — đã đủ ba cặp control/concurrent 2 mic, có
+readiness pre-roll, fixture chuyên biệt và gate crosstalk/true-overlap trước
+EventSink; P0-07 vẫn mở riêng cho quality ASR đa mic.
 
 - [x] Chạy control `truth_1` tuần tự và concurrent tối thiểu ba lần/2 mic;
   báo cáo median per-source WER/CER và scheduler wait để xác định delta thật.
-- [ ] Thiết kế gate theo tương quan/nội dung/identity để chỉ gộp mic khi có
+- [x] Thiết kế gate theo tương quan/nội dung/identity để chỉ gộp mic khi có
   bằng chứng là cùng nguồn giọng; giữ các stream khác speaker độc lập.
-- [ ] Bổ sung fixture: cùng một audio phát qua nhiều mic (crosstalk) và nhiều
+- [x] Bổ sung fixture: cùng một audio phát qua nhiều mic (crosstalk) và nhiều
   audio khác nhau phát cùng lúc (true overlap).
 - [x] Chạy 2/4 mic acceptance, so sánh per-source WER/CER với baseline khóa;
   xác nhận không duplicate transcript và không làm đứng track.
 
-**Điều kiện đạt:** global-turn không triệt transcript của speaker độc lập,
+**Điều kiện đạt:** `[x]` global-turn không triệt transcript của speaker độc lập,
 nhưng vẫn khử duplicate khi cùng người vọng sang nhiều mic.
 
 **Nhật ký chạy P0-08 — 2026-08-10:**
@@ -312,9 +312,20 @@ nhưng vẫn khử duplicate khi cùng người vọng sang nhiều mic.
   decoder đầu tiên `3.172 s`, decoder thứ hai `85 ms`, không có lợi thế chất
   lượng trong mẫu hiện tại. Đây chỉ là A/B, chưa thay đổi baseline và chưa
   được chọn làm kiến trúc mặc định.
-- Giới hạn: mới có một cặp control/concurrent và một run isolated; chưa đủ
-  ba lần lặp, chưa có fixture cùng audio qua nhiều mic và true overlap, chưa
-  chạy acceptance 4 mic sau readiness fix. P0-08 chưa đạt gate.
+- Gate mới chạy sau WavLM identity: hai accepted voice profile khác nhau luôn
+  được giữ; speaker chưa enroll chỉ bị khử khi có time overlap, acoustic envelope
+  và text cùng khớp, hoặc là bản vọng yếu rõ ràng. Candidate từ global-turn ID
+  lệch vẫn được so sánh qua cùng gate để xử lý VAD split không đồng bộ.
+- Fixture crosstalk dùng `build_sequential_cross_mic_audio`: cùng tín hiệu qua
+  hai mic với gain khác nhau; true-overlap dùng hai recording khác nhau từ
+  `truth_1`. Unit fixture/gate pass.
+- E2E crosstalk LiveKit (`truth.csv`) pass toàn bộ check; transcript count trở
+  về `4`, không còn fragment vọng thừa sau cross-turn arbitration. True-overlap
+  2 mic pass 2/2 partial/final, WER/CER `0.3702/0.3370`; true-overlap 4 mic pass
+  4/4 partial/final, `0` duplicate, WER/CER `0.4810/0.4332`. Run 4 mic cần
+  readiness warmup `45s` thay vì `20s` do decoder thứ tư cold-start chậm.
+- P0-08 đạt gate arbitration. P0-07 vẫn `[-]` vì WER/CER đa mic so với locked
+  baseline chưa đạt, không được suy diễn là lỗi của gate crosstalk.
 
 ## P1 — Minutes AI, revision và lifecycle dữ liệu
 

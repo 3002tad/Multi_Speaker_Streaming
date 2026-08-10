@@ -1149,6 +1149,9 @@ class FinalCandidate:
     quality: FrameQuality
     created_at: float
     fingerprint: tuple[float, ...] = ()
+    # Only an accepted enrolled profile is used here. Mic/display names are
+    # intentionally excluded: a participant can move between microphones.
+    speaker_profile: str | None = None
     winner_id: str | None = None
 
 
@@ -1400,7 +1403,10 @@ class CoordinatedVadTimeline:
                 item
                 for item in self._candidates.values()
                 if item.winner_id is None
-                and item.turn_id == current.turn_id
+                # Per-mic VAD can split a crosstalk copy a little earlier or
+                # later than the clearer microphone. Do not rely solely on a
+                # shared turn id; _same_utterance below is the conservative
+                # cross-turn gate (time + waveform/text/profile evidence).
                 and self._same_utterance(current, item)
             ]
             if not group:
@@ -1486,6 +1492,19 @@ class CoordinatedVadTimeline:
         weaker_rms = min(left.quality.rms, right.quality.rms)
         rms_ratio = weaker_rms / stronger_rms
         quality_gap = abs(left.quality.score - right.quality.score)
+        text_similarity = cls._text_similarity(left.raw_text, right.raw_text)
+        envelope_similarity = cls._envelope_similarity(
+            left.fingerprint, right.fingerprint
+        )
+        left_profile = (left.speaker_profile or "").strip()
+        right_profile = (right.speaker_profile or "").strip()
+
+        # Two accepted but different enrolled profiles are strong evidence of
+        # true overlap. Do not let similar wording or timing erase either
+        # person's transcript. Unknown speakers remain eligible for acoustic
+        # crosstalk suppression below.
+        if left_profile and right_profile and left_profile != right_profile:
+            return False
 
         # Two microphones can decode a weak acoustic copy into different
         # words, especially at the tail of a turn. If their time ranges nearly
@@ -1498,13 +1517,20 @@ class CoordinatedVadTimeline:
             and rms_ratio <= 0.35
             and quality_gap >= 4.0
         )
+        if weak_mic_copy:
+            return True
+
+        # A same-speaker profile permits a slightly lower acoustic threshold,
+        # but still needs matching timing. For unknown speakers, require two
+        # independent signals: waveform envelope plus sufficiently similar
+        # ASR text. This is intentionally fail-open for overlap: uncertain
+        # pairs are retained rather than silently dropped.
+        same_profile = bool(left_profile and left_profile == right_profile)
+        acoustic_threshold = 0.90 if same_profile else 0.96
         return (
-            weak_mic_copy
-            or cls._text_similarity(left.raw_text, right.raw_text) >= 0.58
-            or cls._envelope_similarity(
-                left.fingerprint, right.fingerprint
-            )
-            >= 0.94
+            overlap_ratio >= 0.80
+            and envelope_similarity >= acoustic_threshold
+            and text_similarity >= 0.40
         )
 
     def _prune(self, now: float) -> None:

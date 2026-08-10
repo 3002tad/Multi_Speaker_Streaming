@@ -2519,55 +2519,6 @@ async def websocket_endpoint(
             # utterance duration during a multi-mic stress test.
             start_ts = end_ts - duration_s
 
-            candidate_id = uuid.uuid4().hex
-            should_process = await room_timeline.select_final(
-                FinalCandidate(
-                    candidate_id=candidate_id,
-                    turn_id=turn_id,
-                    source_id=identity,
-                    raw_text=raw_text,
-                    start_time=start_ts,
-                    end_time=end_ts,
-                    quality=quality_summary,
-                    created_at=time.monotonic(),
-                    fingerprint=speech_envelope(audio_for_id),
-                )
-            )
-            if not should_process:
-                print(
-                    f"   [Timeline {turn_id}] Bỏ bản sao từ {identity}; "
-                    "mic khác có SNR/chất lượng tốt hơn."
-                )
-                return
-            redecode_text, redecode_metadata = await final_turn_redecode.submit(
-                audio_for_id
-            )
-            if redecode_text:
-                redecode_decision = choose_redecode_transcript(
-                    streaming_text,
-                    redecode_text,
-                    minimum_overlap=settings.asr_final_turn_redecode_min_overlap,
-                    maximum_word_ratio=settings.asr_final_turn_redecode_max_word_ratio,
-                )
-                raw_text = redecode_decision.text
-                redecode_metadata.update({
-                    "candidate_text": redecode_text,
-                    "selected": redecode_decision.selected_redecode,
-                    "decision": redecode_decision.reason,
-                    "overlap": round(redecode_decision.overlap, 4),
-                    "word_ratio": round(redecode_decision.word_ratio, 4),
-                })
-            else:
-                redecode_metadata.setdefault("selected", False)
-                redecode_metadata.setdefault("decision", "streaming_fallback")
-            phonetic_result = recover_phonetics(
-                raw_text, lexicon=lexicon_snapshot
-            )
-            # Final transcript remains evidence.  Qwen is reserved for the
-            # backend Minutes Composer, never for per-segment ASR rewriting.
-            transcript_text = format_final_transcript(
-                phonetic_result.text or raw_text
-            )
             # Realtime speaker checks yield only for final WavLM identity.
             # Qwen is intentionally deferred to the backend minutes queue.
             heavy_work.mark_final()
@@ -2627,6 +2578,66 @@ async def websocket_endpoint(
                     f"{settings.speaker_min_id_seconds:.1f}s; "
                     f"fallback về {fallback_speaker}"
                 )
+
+            # Arbitration runs after an accepted voice profile is available.
+            # A known profile conflict is therefore able to preserve true
+            # overlap before anything reaches the EventSink. Unknown speakers
+            # remain fail-open unless timing, waveform and text agree.
+            candidate_id = uuid.uuid4().hex
+            should_process = await room_timeline.select_final(
+                FinalCandidate(
+                    candidate_id=candidate_id,
+                    turn_id=turn_id,
+                    source_id=identity,
+                    raw_text=raw_text,
+                    start_time=start_ts,
+                    end_time=end_ts,
+                    quality=quality_summary,
+                    created_at=time.monotonic(),
+                    fingerprint=speech_envelope(audio_for_id),
+                    speaker_profile=(
+                        speaker_name
+                        if identity_method == "voice_profile"
+                        else None
+                    ),
+                )
+            )
+            if not should_process:
+                print(
+                    f"   [Timeline {turn_id}] Bỏ bản sao từ {identity}; "
+                    "mic khác có SNR/chất lượng tốt hơn."
+                )
+                return
+
+            redecode_text, redecode_metadata = await final_turn_redecode.submit(
+                audio_for_id
+            )
+            if redecode_text:
+                redecode_decision = choose_redecode_transcript(
+                    streaming_text,
+                    redecode_text,
+                    minimum_overlap=settings.asr_final_turn_redecode_min_overlap,
+                    maximum_word_ratio=settings.asr_final_turn_redecode_max_word_ratio,
+                )
+                raw_text = redecode_decision.text
+                redecode_metadata.update({
+                    "candidate_text": redecode_text,
+                    "selected": redecode_decision.selected_redecode,
+                    "decision": redecode_decision.reason,
+                    "overlap": round(redecode_decision.overlap, 4),
+                    "word_ratio": round(redecode_decision.word_ratio, 4),
+                })
+            else:
+                redecode_metadata.setdefault("selected", False)
+                redecode_metadata.setdefault("decision", "streaming_fallback")
+            phonetic_result = recover_phonetics(
+                raw_text, lexicon=lexicon_snapshot
+            )
+            # Final transcript remains evidence. Qwen is reserved for the
+            # backend Minutes Composer, never for per-segment ASR rewriting.
+            transcript_text = format_final_transcript(
+                phonetic_result.text or raw_text
+            )
         else:
             redecode_metadata = {
                 "status": "empty_audio",

@@ -47,6 +47,7 @@ MEETING_WS_URL = "ws://127.0.0.1:8000/ws/meeting"
 
 
 def _load_cases(limit: int) -> list[dict[str, Any]]:
+    """Load distinct clips that must survive a true-overlap global turn."""
     truth = load_transcript_truth(PROJECT_ROOT / "audio" / "truth_1.csv")
     cases = []
     for index, row in enumerate(truth[:limit]):

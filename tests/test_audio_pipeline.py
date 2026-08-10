@@ -621,6 +621,113 @@ class CoordinatedTimelineTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(results, [True, True])
 
+    async def test_conflicting_voice_profiles_keep_true_overlap(
+        self,
+    ) -> None:
+        timeline = CoordinatedVadTimeline(final_settle_seconds=0.02)
+        turn_id = timeline.speech_started("mic-a", timestamp=120.0)
+        timeline.speech_started("mic-b", timestamp=120.0)
+        now = time.monotonic()
+        # The two profiles are authoritative evidence that the sources are
+        # different people, even if wording and rough energy shape match.
+        left = FinalCandidate(
+            candidate_id="profile-a",
+            turn_id=turn_id,
+            source_id="mic-a",
+            raw_text="chúng ta thống nhất thời hạn triển khai",
+            start_time=1.0,
+            end_time=7.0,
+            quality=quality(rms=0.06, score=20),
+            created_at=now,
+            fingerprint=(1.0, 0.4, 0.2, 0.1),
+            speaker_profile="Người A",
+        )
+        right = FinalCandidate(
+            candidate_id="profile-b",
+            turn_id=turn_id,
+            source_id="mic-b",
+            raw_text="chúng ta thống nhất thời hạn triển khai",
+            start_time=1.0,
+            end_time=7.0,
+            quality=quality(rms=0.06, score=20),
+            created_at=now,
+            fingerprint=(1.0, 0.4, 0.2, 0.1),
+            speaker_profile="Người B",
+        )
+        results = await asyncio.gather(
+            timeline.select_final(left),
+            timeline.select_final(right),
+        )
+        self.assertEqual(results, [True, True])
+
+    async def test_unknown_sources_need_audio_and_text_copy_evidence(
+        self,
+    ) -> None:
+        timeline = CoordinatedVadTimeline(final_settle_seconds=0.02)
+        turn_id = timeline.speech_started("mic-a", timestamp=140.0)
+        timeline.speech_started("mic-b", timestamp=140.0)
+        now = time.monotonic()
+        left = FinalCandidate(
+            candidate_id="unknown-a",
+            turn_id=turn_id,
+            source_id="mic-a",
+            raw_text="chúng ta thống nhất thời hạn triển khai",
+            start_time=1.0,
+            end_time=7.0,
+            quality=quality(rms=0.06, score=20),
+            created_at=now,
+            fingerprint=(1.0, 0.4, 0.2, 0.1),
+        )
+        right = FinalCandidate(
+            candidate_id="unknown-b",
+            turn_id=turn_id,
+            source_id="mic-b",
+            raw_text="ngân sách của dự án cần được phê duyệt",
+            start_time=1.0,
+            end_time=7.0,
+            quality=quality(rms=0.06, score=20),
+            created_at=now,
+            fingerprint=(1.0, 0.4, 0.2, 0.1),
+        )
+        results = await asyncio.gather(
+            timeline.select_final(left),
+            timeline.select_final(right),
+        )
+        self.assertEqual(results, [True, True])
+
+    async def test_crosstalk_is_deduplicated_across_misaligned_turn_ids(
+        self,
+    ) -> None:
+        timeline = CoordinatedVadTimeline(final_settle_seconds=0.02)
+        now = time.monotonic()
+        weak = FinalCandidate(
+            candidate_id="weak-cross-turn",
+            turn_id="turn-weak",
+            source_id="mic-a",
+            raw_text="hệ thống phòng họp không giấy hôm nay",
+            start_time=10.0,
+            end_time=18.0,
+            quality=quality(rms=0.012, score=7),
+            created_at=now,
+            fingerprint=(1.0, 0.5, 0.2, 0.1),
+        )
+        clear = FinalCandidate(
+            candidate_id="clear-cross-turn",
+            turn_id="turn-clear",
+            source_id="mic-b",
+            raw_text="hệ thống phòng họp không giấy hôm nay",
+            start_time=10.1,
+            end_time=17.9,
+            quality=quality(rms=0.07, score=20),
+            created_at=now,
+            fingerprint=(1.0, 0.5, 0.2, 0.1),
+        )
+        results = await asyncio.gather(
+            timeline.select_final(weak),
+            timeline.select_final(clear),
+        )
+        self.assertEqual(results, [False, True])
+
     async def test_weak_tail_with_different_asr_text_is_deduplicated(
         self,
     ) -> None:
