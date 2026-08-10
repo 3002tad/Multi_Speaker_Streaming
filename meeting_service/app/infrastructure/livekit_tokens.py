@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -41,7 +42,14 @@ def issue_livekit_token(
         },
     }
     if metadata:
-        claims["metadata"] = metadata
+        # LiveKit's JWT metadata claim is a string. Passing the Python dict
+        # through produces a token that signs correctly but is rejected by
+        # the Go server during room connect ("cannot unmarshal object into
+        # string"). Keep the external API typed while encoding the claim at
+        # the boundary.
+        claims["metadata"] = json.dumps(
+            metadata, ensure_ascii=False, separators=(",", ":")
+        )
     token = jwt.encode(claims, settings.livekit_api_secret, algorithm="HS256")
     return {
         "livekit_url": settings.livekit_url,

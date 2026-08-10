@@ -233,7 +233,7 @@ class OpenApiContractTests(unittest.TestCase):
             "/internal/v1/meetings/{meeting_id}/runtime",
             "/internal/v1/runtimes/{runtime_session_id}/stop",
             "/internal/v1/meetings/{meeting_id}/tokens",
-            "/internal/v1/meetings/{meeting_id}/transcripts",
+            "/internal/v1/meetings/{meeting_id}/transcript",
             "/internal/v1/meetings/{meeting_id}/minutes",
             "/internal/v1/meetings/{meeting_id}",
         },

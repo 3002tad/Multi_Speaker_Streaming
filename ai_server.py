@@ -12,6 +12,7 @@ import soundfile as sf
 import uuid
 import subprocess
 import hmac
+from dataclasses import dataclass, field
 from fastapi import (
     FastAPI,
     WebSocket,
@@ -1325,6 +1326,42 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
+# The demo deliberately supports one active AI session at a time.  Keeping
+# this assignment registry in the AI process makes the LiveKit agent movable
+# between rooms without making the AI service depend on Meeting Service's
+# database.  Durable runtime/transcript state remains owned by Meeting
+# Service; this is only the bounded control-plane state for the worker.
+@dataclass
+class _AISession:
+    runtime_session_id: str
+    meeting_id: str
+    assignment_generation: int
+    payload: dict[str, object]
+    status: str = "STARTING"
+    reason: str | None = None
+    agent_status: str = "STOPPED"
+    participant_revision: int = 1
+    idempotency_keys: set[str] = field(default_factory=set)
+
+
+_ai_session_lock = threading.RLock()
+_ai_sessions: dict[str, _AISession] = {}
+_ai_active_runtime_id: str | None = None
+_ai_assignment_generation_counter = 0
+# The in-memory assignment generation is deliberately reset whenever the AI
+# process restarts.  Agent cursors therefore need a process epoch as well as a
+# monotonically increasing generation number; otherwise a post-restart
+# assignment such as generation=1 is incorrectly treated as older than the
+# Agent's pre-restart cursor generation=2.
+_ai_assignment_epoch = uuid.uuid4().hex
+_ai_agent_status: dict[str, object] = {
+    "status": "STOPPED",
+    "assignment_generation": 0,
+    "runtime_session_id": None,
+    "reason": None,
+}
+
+
 @app.on_event("shutdown")
 async def shutdown_final_turn_redecode() -> None:
     """Release queued replay callers before the AI process exits."""
@@ -1348,9 +1385,253 @@ def _require_internal_key(x_internal_key: str | None) -> None:
         raise HTTPException(status_code=401, detail="Invalid internal API key")
 
 
+def _require_service_key(
+    x_internal_key: str | None,
+    x_service_key: str | None,
+) -> None:
+    """Accept both names during the migration to the versioned contract."""
+    _require_internal_key(x_service_key or x_internal_key)
+
+
+def _session_state(session: _AISession) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "runtime_session_id": session.runtime_session_id,
+        "assignment_generation": session.assignment_generation,
+        "assignment_epoch": _ai_assignment_epoch,
+        "status": session.status,
+        "reason": session.reason,
+    }
+
+
+def _session_assignment(session: _AISession) -> dict[str, object]:
+    payload = session.payload
+    livekit = dict(payload.get("livekit") or {})
+    livekit.setdefault("url", settings.livekit_url)
+    livekit.setdefault("room", f"meeting-{session.meeting_id}")
+    return {
+        **_session_state(session),
+        "meeting_id": session.meeting_id,
+        "livekit": livekit,
+        "participants": list(payload.get("participants") or []),
+        "hotwords": list(payload.get("hotwords") or []),
+        "callback": dict(payload.get("callback") or {}),
+    }
+
+
+@app.get("/health/live")
+async def meeting_ai_live() -> dict[str, str]:
+    return {"status": "ok", "service": "meeting-ai-core"}
+
+
+@app.get("/health/ready")
+async def meeting_ai_ready() -> dict[str, object]:
+    # Model initialization happens before the FastAPI server starts.  A
+    # successful request therefore means Zipformer/WavLM/VAD are available.
+    with _ai_session_lock:
+        active = _ai_active_runtime_id is not None
+    return {
+        "status": "ok",
+        "service": "meeting-ai-core",
+        "models": {"zipformer": True, "wavlm": True, "vad": True},
+        "active_session": active,
+    }
+
+
+@app.post("/internal/v1/sessions", status_code=201)
+async def create_ai_session(
+    payload: dict = Body(...),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, object]:
+    global _ai_active_runtime_id, _ai_assignment_generation_counter
+    _require_service_key(x_internal_key, x_service_key)
+    runtime_id = str(payload.get("runtime_session_id") or "").strip()
+    meeting_id = str(payload.get("meeting_id") or "").strip()
+    if not runtime_id or not meeting_id:
+        raise HTTPException(status_code=422, detail="runtime_session_id and meeting_id are required")
+    generation = int(payload.get("assignment_generation") or 1)
+    if generation < 1:
+        raise HTTPException(status_code=422, detail="assignment_generation must be positive")
+    with _ai_session_lock:
+        existing = _ai_sessions.get(runtime_id)
+        if existing:
+            if existing.status in {"COMPLETED", "FAILED"}:
+                # A Meeting Service retry may intentionally reuse the
+                # terminal runtime row (the LiveKit room name is unique).
+                # Re-arm the in-memory control-plane record instead of
+                # returning the old terminal state.
+                existing.payload = dict(payload)
+                _ai_assignment_generation_counter = max(
+                    _ai_assignment_generation_counter + 1, generation
+                )
+                existing.assignment_generation = _ai_assignment_generation_counter
+                existing.status = "READY"
+                existing.reason = None
+                existing.agent_status = "STOPPED"
+                _ai_active_runtime_id = runtime_id
+                return _session_state(existing)
+            if idempotency_key:
+                existing.idempotency_keys.add(idempotency_key)
+            return _session_state(existing)
+        if _ai_active_runtime_id and _ai_active_runtime_id != runtime_id:
+            active = _ai_sessions.get(_ai_active_runtime_id)
+            if active and active.status not in {"COMPLETED", "FAILED"}:
+                raise HTTPException(status_code=409, detail="another AI session is active")
+        session = _AISession(
+            runtime_session_id=runtime_id,
+            meeting_id=meeting_id,
+            assignment_generation=max(
+                _ai_assignment_generation_counter + 1, generation
+            ),
+            payload=dict(payload),
+            status="READY",
+        )
+        _ai_assignment_generation_counter = session.assignment_generation
+        if idempotency_key:
+            session.idempotency_keys.add(idempotency_key)
+        _ai_sessions[runtime_id] = session
+        _ai_active_runtime_id = runtime_id
+    # Participant names seed the existing adaptive dictionary at a safe
+    # session boundary; the ASR recognizer itself remains unchanged.
+    names = [
+        str(item.get("display_name"))
+        for item in payload.get("participants", [])
+        if isinstance(item, dict) and str(item.get("display_name") or "").strip()
+    ]
+    if names:
+        reset_adaptive_dictionary_for_meeting(names)
+    return _session_state(session)
+
+
+@app.get("/internal/v1/sessions/{runtime_session_id}")
+async def get_ai_session(
+    runtime_session_id: str,
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, object]:
+    _require_service_key(x_internal_key, x_service_key)
+    with _ai_session_lock:
+        session = _ai_sessions.get(runtime_session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="AI session not found")
+        return _session_state(session)
+
+
+@app.post("/internal/v1/sessions/{runtime_session_id}/stop")
+async def stop_ai_session(
+    runtime_session_id: str,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, object]:
+    _require_service_key(x_internal_key, x_service_key)
+    global _ai_active_runtime_id
+    with _ai_session_lock:
+        session = _ai_sessions.get(runtime_session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="AI session not found")
+        session.status = "COMPLETED"
+        session.reason = "stopped_by_meeting_service"
+        if idempotency_key:
+            session.idempotency_keys.add(idempotency_key)
+        if _ai_active_runtime_id == runtime_session_id:
+            _ai_active_runtime_id = None
+        return _session_state(session)
+
+
+@app.post("/internal/v1/sessions/{runtime_session_id}/participants")
+async def update_ai_participants(
+    runtime_session_id: str,
+    payload: dict = Body(...),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, object]:
+    _require_service_key(x_internal_key, x_service_key)
+    with _ai_session_lock:
+        session = _ai_sessions.get(runtime_session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="AI session not found")
+        if session.status in {"COMPLETED", "FAILED"}:
+            raise HTTPException(status_code=409, detail="AI session is no longer active")
+        session.participant_revision = int(payload.get("snapshot_revision") or session.participant_revision + 1)
+        session.payload["participants"] = list(payload.get("participants") or [])
+        session.payload["hotwords"] = list(payload.get("hotwords") or [])
+    for item in payload.get("participants", []):
+        if isinstance(item, dict):
+            display_name = str(item.get("display_name") or "").strip()
+            if display_name:
+                register_participant_for_meeting(display_name)
+    return _session_state(session)
+
+
+@app.post("/internal/v1/sessions/{runtime_session_id}/analyze", status_code=202)
+async def analyze_ai_evidence(
+    runtime_session_id: str,
+    payload: dict = Body(...),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, object]:
+    _require_service_key(x_internal_key, x_service_key)
+    with _ai_session_lock:
+        session = _ai_sessions.get(runtime_session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="AI session not found")
+        if session.status in {"COMPLETED", "FAILED"}:
+            raise HTTPException(status_code=409, detail="AI session is no longer active")
+    # Minutes composition remains owned by Meeting Service.  This endpoint is
+    # intentionally an acceptance boundary for the next async composition
+    # slice; it never stores evidence in AI.
+    return {"status": "accepted", "runtime_session_id": runtime_session_id, "generation_id": payload.get("generation_id")}
+
+
+@app.get("/internal/v1/agent/assignment")
+async def get_agent_assignment(
+    after_generation: int = 0,
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, object]:
+    _require_service_key(x_internal_key, x_service_key)
+    with _ai_session_lock:
+        if _ai_active_runtime_id:
+            session = _ai_sessions.get(_ai_active_runtime_id)
+            if session and session.status in {"READY", "RECORDING"}:
+                if session.assignment_generation > after_generation:
+                    return _session_assignment(session)
+        return {
+            "assignment_epoch": _ai_assignment_epoch,
+            "assignment_generation": max(after_generation, int(_ai_agent_status.get("assignment_generation") or 0)),
+            "status": "IDLE",
+        }
+
+
+@app.post("/internal/v1/agent/status", status_code=202)
+async def update_agent_status(
+    payload: dict = Body(...),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, str]:
+    _require_service_key(x_internal_key, x_service_key)
+    global _ai_agent_status
+    with _ai_session_lock:
+        _ai_agent_status = dict(payload)
+        runtime_id = payload.get("runtime_session_id")
+        session = _ai_sessions.get(str(runtime_id)) if runtime_id else None
+        if session:
+            session.agent_status = str(payload.get("status") or "STOPPED")
+            if session.agent_status == "READY":
+                session.status = "RECORDING"
+            elif session.agent_status == "FAILED":
+                session.status = "FAILED"
+                session.reason = payload.get("reason")
+    return {"status": "accepted"}
+
+
 @app.get("/api/adaptive-dictionary")
 async def adaptive_dictionary_status(
-    x_internal_key: str | None = Header(default=None),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
 ):
     _require_internal_key(x_internal_key)
     with dictionary_runtime_lock:
@@ -1371,7 +1652,7 @@ async def adaptive_dictionary_status(
 @app.post("/api/adaptive-dictionary/reset")
 async def reset_adaptive_dictionary_api(
     payload: dict = Body(...),
-    x_internal_key: str | None = Header(default=None),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
 ):
     """Start one clean dictionary session without requiring a meeting title."""
     _require_internal_key(x_internal_key)
@@ -1392,7 +1673,7 @@ async def reset_adaptive_dictionary_api(
 @app.post("/api/adaptive-dictionary/participants")
 async def register_adaptive_dictionary_participant_api(
     payload: dict = Body(...),
-    x_internal_key: str | None = Header(default=None),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
 ):
     _require_internal_key(x_internal_key)
     return register_participant_for_meeting(
@@ -1402,7 +1683,7 @@ async def register_adaptive_dictionary_participant_api(
 
 @app.post("/api/adaptive-dictionary/reload")
 async def reload_adaptive_dictionary_api(
-    x_internal_key: str | None = Header(default=None),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
 ):
     """Reload the operator-owned lexicon at the next safe decoder boundary."""
     _require_internal_key(x_internal_key)
@@ -1587,7 +1868,7 @@ async def create_internal_enrollment(
     user_id: str,
     display_name: str = Form(...),
     audio: UploadFile = File(...),
-    x_internal_key: str | None = Header(default=None),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
 ):
     """Create a profile owned by the authenticated eCabinet user.
 
@@ -1621,7 +1902,7 @@ async def create_internal_enrollment(
 @app.get("/internal/v1/enrollments/{user_id}")
 async def get_internal_enrollment(
     user_id: str,
-    x_internal_key: str | None = Header(default=None),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
 ):
     _require_internal_key(x_internal_key)
     normalized_user_id = user_id.strip()
@@ -1645,7 +1926,7 @@ async def get_internal_enrollment(
 @app.delete("/internal/v1/enrollments/{user_id}", status_code=204)
 async def delete_internal_enrollment(
     user_id: str,
-    x_internal_key: str | None = Header(default=None),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
 ):
     _require_internal_key(x_internal_key)
     _delete_speaker_profile(user_id=user_id.strip(), profile_key=f"user:{user_id.strip()}")
@@ -1675,8 +1956,26 @@ async def websocket_endpoint(
     websocket: WebSocket,
     identity: str,
     display_name: str | None = None,
+    runtime_session_id: str | None = None,
+    meeting_id: str | None = None,
 ):
+    if runtime_session_id:
+        with _ai_session_lock:
+            session = _ai_sessions.get(runtime_session_id)
+            if (
+                session is None
+                or session.status not in {"READY", "RECORDING"}
+                or (meeting_id and session.meeting_id != meeting_id)
+            ):
+                await websocket.close(code=4409, reason="AI session is not active")
+                return
     await websocket.accept()
+    if runtime_session_id:
+        with _ai_session_lock:
+            session = _ai_sessions.get(runtime_session_id)
+            if session:
+                session.status = "RECORDING"
+                session.agent_status = "READY"
     fallback_speaker = (display_name or identity).strip() or identity
     register_participant_for_meeting(fallback_speaker)
     print(f"\n[+] Đã cấp phát luồng AI cho Client: {identity}")

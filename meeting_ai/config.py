@@ -81,6 +81,18 @@ class Settings:
     ai_server_http_url: str = os.getenv(
         "AI_SERVER_HTTP_URL", "http://127.0.0.1:8001"
     )
+    meeting_service_key: str = os.getenv(
+        "MEETING_SERVICE_KEY", os.getenv("INTERNAL_API_KEY", "local-demo-key")
+    )
+    agent_assignment_enabled: bool = _env_bool(
+        "AGENT_ASSIGNMENT_ENABLED", True
+    )
+    agent_static_room_fallback: bool = _env_bool(
+        "AGENT_STATIC_ROOM_FALLBACK", False
+    )
+    agent_poll_seconds: float = max(
+        0.5, float(os.getenv("AGENT_POLL_SECONDS", "1.0"))
+    )
     audio_frame_size_ms: int = _env_choice_int(
         "AUDIO_FRAME_SIZE_MS", 20, (10, 20, 40, 50, 100)
     )

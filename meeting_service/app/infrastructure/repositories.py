@@ -38,6 +38,25 @@ class SqlAlchemyRuntimeRepository:
             existing = session.scalar(select(RuntimeSessionRecord).where(RuntimeSessionRecord.meeting_id == meeting_id, RuntimeSessionRecord.status.not_in([RuntimeStatus.COMPLETED.value, RuntimeStatus.FAILED.value])))
             if existing:
                 return _to_domain(existing)
+            # A terminal demo runtime owns the unique room name. Reuse that
+            # row for a retry instead of inserting a second record that would
+            # violate ``meeting_runtime_sessions.livekit_room``. This keeps
+            # start idempotent while preserving the Meeting Service's single
+            # active-room invariant.
+            terminal = session.scalar(
+                select(RuntimeSessionRecord)
+                .where(RuntimeSessionRecord.meeting_id == meeting_id)
+                .order_by(RuntimeSessionRecord.created_at.desc())
+            )
+            if terminal:
+                terminal.meeting_snapshot_json = snapshot
+                terminal.status = RuntimeStatus.STARTING.value
+                terminal.started_at = None
+                terminal.ended_at = None
+                terminal.error_code = None
+                terminal.error_message = None
+                session.flush()
+                return _to_domain(terminal)
             record = RuntimeSessionRecord(meeting_id=meeting_id, meeting_snapshot_json=snapshot, livekit_room=f"meeting-{meeting_id}", status=RuntimeStatus.STARTING.value)
             session.add(record)
             session.flush()

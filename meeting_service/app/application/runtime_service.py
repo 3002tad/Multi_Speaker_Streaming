@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from meeting_service.app.config import settings
 from meeting_service.app.domain.models import RuntimeSession, RuntimeStatus
 from meeting_service.app.infrastructure.repositories import RuntimeRepository
 from meeting_service.app.infrastructure.runtime_store import InMemoryRuntimeStore
@@ -31,7 +32,19 @@ class RuntimeService:
         session = self.store.create(meeting_id, snapshot)
         if self.ai_client:
             payload = dict(snapshot)
-            payload.update({"schema_version": 1, "runtime_session_id": str(session.runtime_session_id), "meeting_id": str(meeting_id), "assignment_generation": 1})
+            payload.update({
+                "schema_version": 1,
+                "runtime_session_id": str(session.runtime_session_id),
+                "meeting_id": str(meeting_id),
+                "assignment_generation": 1,
+                "livekit": {
+                    "url": settings.livekit_url,
+                    "room": session.livekit_room,
+                },
+                "callback": {
+                    "url": settings.ai_callback_url,
+                },
+            })
             try:
                 result = await self.ai_client.create_session(payload, str(session.runtime_session_id))
                 if result.get("status") in {"READY", "RECORDING"}:

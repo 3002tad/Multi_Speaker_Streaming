@@ -25,6 +25,7 @@ class RuntimeSession:
 
     def as_dict(self) -> dict[str, str]:
         return {
+            "schema_version": 1,
             "meeting_id": str(self.meeting_id),
             "runtime_session_id": str(self.runtime_session_id),
             "status": self.status.value,

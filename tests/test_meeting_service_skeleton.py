@@ -73,6 +73,25 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
             self.assertEqual(client.get("/health/live").status_code, 200)
             self.assertEqual(client.get("/health/ready").json()["status"], "ok")
 
+    def test_runtime_and_empty_minutes_follow_contract_response_shapes(self) -> None:
+        meeting_id = uuid4()
+        with TestClient(app) as client:
+            created = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "APPROVED"}},
+            )
+            self.assertEqual(created.status_code, 201)
+            runtime = created.json()
+            self.assertEqual(runtime["schema_version"], 1)
+            self.assertIn("created_at", runtime)
+
+            minutes = client.get(f"/internal/v1/meetings/{meeting_id}/minutes")
+            self.assertEqual(minutes.status_code, 200)
+            document = minutes.json()["document"]
+            self.assertEqual(document["schema_version"], 1)
+            self.assertEqual(document["meeting"]["title"], "Biên bản cuộc họp")
+            self.assertEqual(document["source_segment_ids"], [])
+
     def test_runtime_lifecycle_is_service_local(self) -> None:
         meeting_id = uuid4()
         with TestClient(app) as client:
@@ -110,6 +129,23 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
             second = client.delete(f"/internal/v1/meetings/{meeting_id}")
             self.assertEqual(second.status_code, 200)
             self.assertEqual(second.json()["status"], "PURGED")
+
+    def test_transcript_contract_uses_the_canonical_singular_route(self) -> None:
+        meeting_id = uuid4()
+        with TestClient(app) as client:
+            appended = client.post(
+                f"/internal/v1/meetings/{meeting_id}/transcript",
+                json={"segment_id": "contract-1", "text": "canonical"},
+            )
+            self.assertEqual(appended.status_code, 201)
+            response = client.get(f"/internal/v1/meetings/{meeting_id}/transcript")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["meeting_id"], str(meeting_id))
+            self.assertEqual(response.json()["segments"][0]["text"], "canonical")
+            self.assertEqual(
+                client.get(f"/internal/v1/meetings/{meeting_id}/transcripts").status_code,
+                404,
+            )
 
     def test_state_guard_blocks_invalid_runtime_start_and_early_minutes_approval(self) -> None:
         meeting_id = uuid4()

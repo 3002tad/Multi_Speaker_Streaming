@@ -123,7 +123,16 @@ def _default_minutes(meeting_id: UUID) -> dict[str, Any]:
         "meeting_id": str(meeting_id),
         "revision": 0,
         "status": "DRAFT",
-        "document": {"title": "Biên bản cuộc họp", "summary": "", "topics": [], "decisions": [], "actions": []},
+        # Keep the first, empty revision structurally identical to the
+        # minutes-document contract.  The web editor can therefore hydrate it
+        # directly without maintaining a second legacy document shape.
+        "document": {
+            "schema_version": 1,
+            "meeting": {"title": "Biên bản cuộc họp", "started_at": None},
+            "summary": [],
+            "topics": [],
+            "source_segment_ids": [],
+        },
         "source_segment_ids": [],
     }
 

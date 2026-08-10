@@ -34,8 +34,6 @@ paths:
       - $ref: "#/components/parameters/MeetingId"
     post:
       operationId: createMeetingRuntime
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -45,12 +43,6 @@ paths:
       responses:
         "201":
           $ref: "#/components/responses/RuntimeResponse"
-        "200":
-          description: Existing runtime returned for the same idempotency key.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Runtime"
         "403":
           $ref: "#/components/responses/ProblemResponse"
         "409":
@@ -62,8 +54,6 @@ paths:
       - $ref: "#/components/parameters/RuntimeSessionId"
     post:
       operationId: stopMeetingRuntime
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           $ref: "#/components/responses/RuntimeResponse"
@@ -82,22 +72,6 @@ paths:
         "200":
           $ref: "#/components/responses/RuntimeResponse"
         "404":
-          $ref: "#/components/responses/ProblemResponse"
-  /internal/v1/meetings/{meeting_id}/snapshot:
-    parameters:
-      - $ref: "#/components/parameters/MeetingId"
-    put:
-      operationId: updateMeetingSnapshot
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "../schemas/meeting-snapshot.schema.json"
-      responses:
-        "200":
-          $ref: "#/components/responses/RuntimeResponse"
-        "409":
           $ref: "#/components/responses/ProblemResponse"
   /internal/v1/meetings/{meeting_id}/tokens:
     parameters:
@@ -147,15 +121,11 @@ paths:
           $ref: "#/components/responses/ProblemResponse"
         "503":
           $ref: "#/components/responses/ProblemResponse"
-  /internal/v1/meetings/{meeting_id}/transcripts:
+  /internal/v1/meetings/{meeting_id}/transcript:
     parameters:
       - $ref: "#/components/parameters/MeetingId"
     get:
       operationId: listMeetingTranscripts
-      parameters:
-        - name: after_sequence
-          in: query
-          schema: {type: integer, minimum: 0}
       responses:
         "200":
           description: Persisted final transcript state.
@@ -164,13 +134,12 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [meeting_id, items, last_sequence]
+                required: [meeting_id, segments]
                 properties:
                   meeting_id: {type: string, format: uuid}
-                  items:
+                  segments:
                     type: array
                     items: {type: object}
-                  last_sequence: {type: integer, minimum: 0}
   /internal/v1/meetings/{meeting_id}/minutes:
     parameters:
       - $ref: "#/components/parameters/MeetingId"
@@ -202,20 +171,6 @@ paths:
           $ref: "#/components/responses/ProblemResponse"
         "422":
           $ref: "#/components/responses/ProblemResponse"
-  /internal/v1/meetings/{meeting_id}/minutes/analyze:
-    parameters:
-      - $ref: "#/components/parameters/MeetingId"
-    post:
-      operationId: analyzeMeetingMinutes
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "202":
-          description: Minutes generation queued.
-        "409":
-          $ref: "#/components/responses/ProblemResponse"
-        "503":
-          $ref: "#/components/responses/ProblemResponse"
   /internal/v1/meetings/{meeting_id}/minutes/review:
     parameters:
       - $ref: "#/components/parameters/MeetingId"
@@ -243,8 +198,6 @@ paths:
       - $ref: "#/components/parameters/MeetingId"
     post:
       operationId: exportMeetingMinutesDocx
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: false
         content:
@@ -360,11 +313,6 @@ components:
       in: path
       required: true
       schema: {type: string, format: uuid}
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      schema: {type: string, minLength: 8, maxLength: 160}
   schemas:
     Runtime:
       type: object
@@ -378,18 +326,23 @@ components:
           type: string
           enum: [STARTING, READY, RECORDING, STOPPING, COMPLETED, FAILED]
         livekit_room: {type: string}
+        created_at: {type: string, format: date-time}
         started_at: {type: [string, "null"], format: date-time}
         ended_at: {type: [string, "null"], format: date-time}
     MinutesRevision:
       type: object
       additionalProperties: false
-      required: [meeting_id, revision, status, document]
+      required: [meeting_id, revision, status, document, source_segment_ids]
       properties:
         meeting_id: {type: string, format: uuid}
-        revision: {type: integer, minimum: 1}
+        revision: {type: integer, minimum: 0}
         status: {type: string, enum: [DRAFT, REVIEWING, APPROVED, SUPERSEDED]}
         document:
           $ref: "../schemas/minutes-document.schema.json"
+        source_segment_ids:
+          type: array
+          items: {type: string}
+        updated_at: {type: string, format: date-time}
     MinutesExport:
       type: object
       additionalProperties: false
