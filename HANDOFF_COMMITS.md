@@ -292,3 +292,35 @@ Giới hạn còn lại:
 - Callback persistence/ordering/retry vẫn thuộc P0-05; participant assignment động thuộc P0-06.
 
 Đối chiếu merge plan: P0-04 đã đạt gate đúng phạm vi additive. Hai repository đã sạch sau commit; eCabinet là local-only và không được push. Bước tiếp theo là P0-05 callback persistence, ordering và retry.
+
+## Checkpoint — Hoàn tất P0-05: callback persistence, ordering và retry
+
+Đã commit cục bộ theo cặp trạng thái repository:
+
+- Root / Meeting Service: branch `feature/meeting-platform-microservices`, commit `598d5e6` — `feat: hoàn thiện P0-05 callback persistence và retry`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit hiện tại `0ba851d` — không có thay đổi trong checkpoint này.
+- Handoff: commit tài liệu được tạo ngay sau checkpoint code; eCabinet vẫn local-only và không push.
+
+Phạm vi thay đổi:
+
+- Mở rộng AI event contract với `transcript.updated`; validate schema version, event type, timestamp, runtime/meeting binding và trạng thái runtime.
+- Persist/upsert `partial`, `final`, `updated`, `retracted` theo `segment_id` và `revision`; xử lý `accepted`, `duplicate`, `stale` theo event ID, sequence và revision.
+- Commit transcript trong Meeting Service trước khi Socket.IO emit; REST rehydrate lọc partial/retracted đúng trạng thái persisted.
+- Chuẩn hóa callback publisher trong Agent, tự tăng revision theo segment, bounded spool, retry/backoff/timeout và graceful flush khi dừng.
+- Không thay đổi ASR/DSP, speaker identification, tuning baseline, LiveKit contract hoặc module nghiệp vụ eCabinet.
+
+Kiểm thử đã chạy:
+
+- Targeted P0-05 + contract + publisher: **39 tests passed**.
+- Full unit/contract/regression suite trong WSL: **136 tests passed**.
+- Compileall cho Agent, Meeting Service, Meeting AI và test publisher: đạt.
+- `git diff --check`: đạt trước khi commit.
+- SQLite đóng/mở lại xác nhận transcript final và event ID được khôi phục; test callback xác nhận DB commit xảy ra trước Socket.IO emit.
+
+Giới hạn còn lại:
+
+- Chưa fault-injection trên PostgreSQL/Redis/MinIO production hoặc outage mạng LiveKit thật.
+- Spool của AI hiện bounded theo process; sequence sau AI process restart thuộc P0-06 assignment recovery.
+- Chưa chạy E2E audio nhiều mic ở checkpoint này vì thay đổi chỉ nằm ở callback/persistence transport.
+
+Đối chiếu merge plan: P0-05 đã đạt gate additive, không xâm lấn eCabinet. Bước tiếp theo theo thứ tự là P0-06 Agent assignment recovery, sau đó P0-07 multi-mic streaming regression.
