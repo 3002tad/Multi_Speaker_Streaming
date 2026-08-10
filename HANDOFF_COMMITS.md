@@ -324,3 +324,36 @@ Giới hạn còn lại:
 - Chưa chạy E2E audio nhiều mic ở checkpoint này vì thay đổi chỉ nằm ở callback/persistence transport.
 
 Đối chiếu merge plan: P0-05 đã đạt gate additive, không xâm lấn eCabinet. Bước tiếp theo theo thứ tự là P0-06 Agent assignment recovery, sau đó P0-07 multi-mic streaming regression.
+
+## Checkpoint — P0-06 hoàn tất; P0-07/P0-08 đã có bằng chứng regression
+
+Đã commit cục bộ theo cặp trạng thái repository:
+
+- Root / Meeting AI + Meeting Service: branch `feature/meeting-platform-microservices`, commit `91b634d` — `feat(meeting-ai): recover assignments and harden multi-mic streaming`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit hiện tại `0ba851d` — không có thay đổi trong checkpoint này.
+- eCabinet là repository local-only và không được push.
+
+Phạm vi thay đổi:
+
+- Persist/restore assignment control-plane trong Meeting AI, thêm epoch/generation và kiểm tra stale update để Agent có thể khôi phục sau restart AI process.
+- Hoàn thiện contract/session state, runtime probe và các test assignment liên quan; compatibility wrapper `ai_server.py` và `agent.py` vẫn được giữ.
+- Đổi scheduler Zipformer dùng chung sang fair round-robin theo mic, thêm telemetry và tăng queue audio nhằm tránh một mic chiếm toàn bộ hàng đợi.
+- Bổ sung harness concurrent có control tuần tự, readiness pre-roll và đánh giá per-source; thử nghiệm decoder tách mỗi mic được giữ opt-in, mặc định tắt vì không cải thiện quality trong mẫu đo.
+- Không thay đổi tuning Zipformer, VAD, DSP, ngưỡng speaker identification hay module nghiệp vụ eCabinet.
+
+Kiểm thử đã chạy:
+
+- Full unit/contract trong WSL: **147 passed**, 6 subtests passed.
+- Targeted assignment/scheduler/contract: **27 passed**, 6 subtests passed.
+- `compileall` và `git diff --check`: đạt.
+- Streaming regression `truth.csv`: passed; dual-mic probe `33.25s` với đầy đủ metadata global-turn/quality.
+- P0-08: ba cặp control/concurrent 2 mic đều có partial/final và không duplicate; median control WER/CER `0.3725/0.3203`, concurrent `0.3878/0.3493`.
+- Acceptance 4 mic: structural pass, 4/4 nguồn có partial/final, không duplicate; WER/CER `0.4779/0.4405`.
+
+Giới hạn còn lại:
+
+- P0-07 và P0-08 chưa đạt quality gate: concurrent tăng median `+0.0153` WER, `+0.0290` CER so với control; 4 mic còn vượt locked baseline.
+- Chưa có fixture riêng cho crosstalk (cùng audio qua nhiều mic) và true overlap (nhiều audio khác nhau cùng lúc), nên chưa thể sửa global-turn một cách có kiểm chứng.
+- Chưa chạy fault injection PostgreSQL/Redis/MinIO hoặc LiveKit outage production.
+
+Đối chiếu merge plan: P0-06 đạt đúng phạm vi additive. P0-07/P0-08 vẫn mở và đã được cập nhật evidence trong checklist; không có sai lệch kiến trúc. Bước tiếp theo là tạo hai fixture overlap, thiết kế gate global-turn theo correlation/identity rồi chạy lại 2/4 mic acceptance. Handoff tài liệu được commit cục bộ ngay sau checkpoint code; không push.
