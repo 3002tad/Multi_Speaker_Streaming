@@ -263,3 +263,32 @@ Giới hạn còn lại:
 - Chưa chạy lại regression nhiều mic ở checkpoint này vì thay đổi chỉ nằm ở contract/persistence, không ở audio/LiveKit.
 
 Đối chiếu merge plan: P0-01 đã hoàn tất đúng phạm vi, additive và không làm thay đổi kiến trúc lõi eCabinet. Bước tiếp theo theo thứ tự là P0-04, P0-05, P0-06 rồi P0-07. Repository `ecabinet` là local-only và không được push.
+
+## Checkpoint — Hoàn tất P0-04: active-session lock và idempotency
+
+Đã commit cục bộ theo cặp thay đổi đồng thời:
+
+- Root / Meeting Service: branch `feature/meeting-platform-microservices`, commit `2c9305a` — `feat(reliability): complete P0-04 runtime idempotency`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit `0ba851d` — `feat(meeting): propagate runtime idempotency keys`.
+
+Phạm vi thay đổi:
+
+- Thêm partial unique index cho một runtime chưa terminal trên mỗi `meeting_id` và atomic stop claim trước side effect AI.
+- Hoàn thiện idempotency record cho start/stop/purge với request fingerprint và response replay; reuse key với payload khác bị từ chối.
+- Bổ sung migration `0003_runtime_lock_idempotency_hash.py`.
+- OpenAPI yêu cầu `Idempotency-Key` cho lifecycle start/stop/purge; eCabinet BFF truyền key của caller hoặc fallback ổn định cho UI cũ.
+- Cập nhật checklist/merge plan và test concurrency/retry; không thay đổi ASR/DSP/LiveKit baseline hoặc module nghiệp vụ eCabinet ngoài session façade.
+
+Kiểm thử đã chạy:
+
+- Targeted P0-04 + contract: **38 tests passed**.
+- Full unit/contract suite trong WSL: **129 tests passed**.
+- Compile Meeting Service, tests và eCabinet session BFF: đạt.
+- `git diff --check`: đạt trước commit ở cả hai repository.
+
+Giới hạn còn lại:
+
+- Chưa chạy contention test với PostgreSQL/Redis production thật; đã kiểm tra SQLite metadata và InMemory concurrent behavior.
+- Callback persistence/ordering/retry vẫn thuộc P0-05; participant assignment động thuộc P0-06.
+
+Đối chiếu merge plan: P0-04 đã đạt gate đúng phạm vi additive. Hai repository đã sạch sau commit; eCabinet là local-only và không được push. Bước tiếp theo là P0-05 callback persistence, ordering và retry.
