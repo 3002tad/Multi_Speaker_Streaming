@@ -199,3 +199,37 @@ Giới hạn còn lại:
 Review theo merge plan: đã hoàn thành vertical slice UI MeetingRoom light và kiểm tra hạ tầng LiveKit; còn thiếu contract session/assignment của Meeting AI và E2E media thực sự. Không thay đổi thuật toán ASR/speaker baseline. eCabinet là repository local-only, không được push.
 
 Bước tiếp theo theo thứ tự ưu tiên: (1) triển khai/adapter API session và assignment cho Meeting AI, (2) chuyển Agent sang room động và callback Meeting Service, (3) dọn runtime FAILED theo quy trình an toàn rồi chạy E2E hai browser/mic, (4) cập nhật public healthcheck và kiểm thử lại trước checkpoint tiếp theo.
+
+## Checkpoint — Service authentication và LiveKit role permissions
+
+Đã commit cục bộ theo cặp thay đổi đồng thời:
+
+- Root / Meeting Service: branch `feature/meeting-platform-microservices`, commit `af97248` — `feat(security): enforce service auth and LiveKit role permissions`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit `de3d04c` — `feat(meeting): map server permissions to LiveKit workspace`.
+
+Phạm vi thay đổi:
+
+- Bắt buộc `X-Service-Key` cho internal Meeting Service API và AI callback; chuẩn hóa xác thực service-to-service.
+- Runtime token chỉ chấp nhận JWT đã ký, kiểm tra binding meeting/runtime, issuer, audience, thời hạn, permissions và `jti`.
+- LiveKit token không còn mặc định publish; quyền được suy ra từ permission `PUBLISH_AUDIO` do eCabinet cấp.
+- Runtime snapshot và Socket.IO token dùng permission matrix theo role; UI MeetingRoom không lấy `localStorage` làm nguồn quyết định quyền mic/minutes.
+- eCabinet mapping quyền server sang BFF, LiveKit token response và giao diện MeetingRoom.
+- Không thay đổi thuật toán ASR, speaker identification hoặc tuning baseline.
+
+Kiểm thử đã chạy:
+
+- Full unit/contract suite trong WSL: **121 tests passed**.
+- Edge headless E2E với cùng `runtime_session_id`:
+  - Member: response `can_publish=true`, JWT `video.canPublish=true`, UI có nút `Bật micro`.
+  - Observer: response `can_publish=false`, JWT `video.canPublish=false`, `video.canSubscribe=true`, UI không có nút micro.
+  - Cả hai kết nối được cùng phòng LiveKit và đọc được transcript/biên bản.
+- `git diff --check`: đạt trước khi commit.
+- Hai tài khoản E2E đã được gỡ khỏi attendee; tài khoản còn ràng buộc lịch sử được vô hiệu hóa mềm.
+
+Giới hạn còn lại:
+
+- Chưa thực hiện kiểm thử thu microphone thật trong browser headless; kết quả publish được xác nhận bằng permission response và signed JWT claim.
+- Chưa chạy E2E audio → Agent → ASR → transcript với mic vật lý.
+- Chưa cập nhật public Nginx/healthcheck trên home server.
+
+Đối chiếu merge plan: P0-02 và P0-03 đã hoàn tất; không có điểm lệch kiến trúc. Bước tiếp theo là triển khai contract session/assignment cho Meeting AI, chuyển Agent sang room động, rồi chạy E2E media thực tế. Repository `ecabinet` là local-only và không được push.
