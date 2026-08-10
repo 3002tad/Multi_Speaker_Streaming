@@ -30,6 +30,9 @@ class Settings:
     service_key: str = os.getenv("MEETING_SERVICE_KEY", "local-meeting-service-key")
     ai_base_url: str = os.getenv("MEETING_AI_BASE_URL", "http://meeting-ai-api:8001")
     ai_enabled: bool = _bool("MEETING_AI_ENABLED")
+    ai_timeout_seconds: float = max(
+        1.0, float(os.getenv("MEETING_AI_TIMEOUT_SECONDS", "60"))
+    )
     ai_callback_url: str = os.getenv(
         "MEETING_AI_CALLBACK_URL",
         "http://meeting-service:8002/internal/v1/ai-events",

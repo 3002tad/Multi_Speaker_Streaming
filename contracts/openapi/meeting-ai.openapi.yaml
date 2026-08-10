@@ -196,6 +196,7 @@ paths:
                     additionalProperties: false
                     required: [assignment_generation, status]
                     properties:
+                      assignment_epoch: {type: string, minLength: 1, maxLength: 128}
                       assignment_generation: {type: integer, minimum: 0}
                       status: {const: IDLE}
   /internal/v1/agent/status:
@@ -211,6 +212,7 @@ paths:
               required: [schema_version, assignment_generation, status]
               properties:
                 schema_version: {const: 1}
+                assignment_epoch: {type: [string, "null"], maxLength: 128}
                 assignment_generation: {type: integer, minimum: 1}
                 runtime_session_id: {type: [string, "null"], format: uuid}
                 status: {type: string, enum: [CONNECTING, READY, FAILED, STOPPED]}
@@ -247,6 +249,7 @@ components:
       properties:
         schema_version: {const: 1}
         runtime_session_id: {type: string, format: uuid}
+        assignment_epoch: {type: string, minLength: 1, maxLength: 128}
         assignment_generation: {type: integer, minimum: 1}
         status: {type: string, enum: [STARTING, READY, RECORDING, STOPPING, COMPLETED, FAILED]}
         reason: {type: [string, "null"]}

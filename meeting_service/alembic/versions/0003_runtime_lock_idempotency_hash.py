@@ -4,7 +4,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0003_runtime_lock_idempotency_hash"
+revision = "0003_runtime_lock_hash"
 down_revision = "0002_ai_events"
 branch_labels = None
 depends_on = None

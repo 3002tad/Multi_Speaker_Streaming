@@ -218,6 +218,12 @@ class ContractSchemaTests(unittest.TestCase):
         }
         validate_contract(value, _load_json(SCHEMA_ROOT / "ai-event.schema.json"))
 
+    def test_ai_assignment_epoch_is_valid_and_optional_for_legacy_fixture(self) -> None:
+        value = _load_json(EXAMPLE_ROOT / "ai-session.json")
+        validate_contract(value, _load_json(SCHEMA_ROOT / "ai-session.schema.json"))
+        value["assignment_epoch"] = "epoch-after-restart"
+        validate_contract(value, _load_json(SCHEMA_ROOT / "ai-session.schema.json"))
+
     def test_final_event_requires_external_runtime_id(self) -> None:
         value = _load_json(EXAMPLE_ROOT / "transcript-final-event.json")
         value["runtime_session_id"] = "paperless-demo"

@@ -35,8 +35,11 @@ class AssignmentCursor:
 
     def observe(self, assignment: dict) -> bool:
         epoch = str(assignment.get("assignment_epoch") or "").strip() or None
-        epoch_changed = bool(self.epoch and epoch and epoch != self.epoch)
-        if epoch and epoch != self.epoch:
+        # A missing epoch after one was observed is treated as a control-plane
+        # reset too; retaining the old generation could otherwise hide a new
+        # assignment from a legacy/partially upgraded AI endpoint.
+        epoch_changed = bool(self.epoch and epoch != self.epoch)
+        if epoch != self.epoch:
             self.epoch = epoch
             self.generation = 0
         if assignment.get("status") != "IDLE":
@@ -44,6 +47,27 @@ class AssignmentCursor:
                 assignment.get("assignment_generation") or self.generation
             )
         return epoch_changed
+
+
+def assignment_requires_rejoin(previous: dict, current: dict) -> bool:
+    """Return whether an Agent must leave the current room/assignment."""
+    if str(current.get("status") or "") == "IDLE":
+        return True
+    previous_epoch = str(previous.get("assignment_epoch") or "").strip()
+    current_epoch = str(current.get("assignment_epoch") or "").strip()
+    if previous_epoch and current_epoch != previous_epoch:
+        return True
+    previous_runtime = str(previous.get("runtime_session_id") or "").strip()
+    current_runtime = str(current.get("runtime_session_id") or "").strip()
+    if previous_runtime and current_runtime and previous_runtime != current_runtime:
+        return True
+    previous_generation = int(previous.get("assignment_generation") or 0)
+    current_generation = int(current.get("assignment_generation") or 0)
+    return bool(
+        previous_generation
+        and current_generation
+        and previous_generation != current_generation
+    )
 
 
 class EventPublisher:
@@ -569,6 +593,7 @@ async def _post_agent_status(
     payload = {
         "schema_version": 1,
         "assignment_generation": int(assignment.get("assignment_generation") or 1),
+        "assignment_epoch": assignment.get("assignment_epoch"),
         "runtime_session_id": assignment.get("runtime_session_id"),
         "status": status,
         "reason": reason,
@@ -593,7 +618,6 @@ async def _run_assignment(
     livekit_url = str(livekit.get("url") or settings.livekit_url)
     room_name = str(livekit.get("room") or settings.meeting_room)
     runtime_id = str(assignment.get("runtime_session_id") or "")
-    assignment_epoch = str(assignment.get("assignment_epoch") or "").strip()
     publisher = EventPublisher(assignment if runtime_id else None)
     room = rtc.Room()
     room_stop = asyncio.Event()
@@ -668,23 +692,7 @@ async def _run_assignment(
                         # disconnect immediately after joining.
                         client, 0
                     )
-                    current_epoch = str(
-                        current.get("assignment_epoch") or ""
-                    ).strip()
-                    if (
-                        assignment_epoch
-                        and current_epoch
-                        and current_epoch != assignment_epoch
-                    ):
-                        # The AI process forgot this in-memory session. Leave
-                        # the old room and let the main loop reset its cursor
-                        # and fetch a fresh assignment.
-                        room_stop.set()
-                        return
-                    if current.get("status") == "IDLE":
-                        room_stop.set()
-                        return
-                    if str(current.get("runtime_session_id") or "") != runtime_id:
+                    if assignment_requires_rejoin(assignment, current):
                         room_stop.set()
                         return
                 except Exception as exc:

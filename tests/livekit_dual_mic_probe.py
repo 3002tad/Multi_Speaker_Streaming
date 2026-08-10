@@ -129,6 +129,9 @@ async def publish_source(
     ready: asyncio.Event,
     *,
     identity_sink: dict[str, str] | None = None,
+    published_event: asyncio.Event | None = None,
+    decoder_ready: asyncio.Event | None = None,
+    pre_roll_seconds: float = 0.0,
     finalization_wait_seconds: float = 12.0,
 ) -> None:
     credentials = await get_credentials(name)
@@ -148,7 +151,30 @@ async def publish_source(
             credentials["token"],
         )
         await room.local_participant.publish_track(track, options)
+        if published_event is not None:
+            published_event.set()
         await ready.wait()
+
+        # Let the worker receive a short silence pre-roll while the AI process
+        # allocates its decoder. The measured fixture speech starts only after
+        # the harness observes active_asr_streams, preventing cold-start loss.
+        pre_roll_frames = max(
+            0, int(round(pre_roll_seconds * SAMPLE_RATE / FRAME_SAMPLES))
+        )
+        silence = np.zeros(FRAME_SAMPLES, dtype=np.float32)
+        for _ in range(pre_roll_frames):
+            pcm = (silence * 32767).astype(np.int16)
+            await source.capture_frame(
+                rtc.AudioFrame(
+                    data=pcm.tobytes(),
+                    sample_rate=SAMPLE_RATE,
+                    num_channels=1,
+                    samples_per_channel=FRAME_SAMPLES,
+                )
+            )
+            await asyncio.sleep(FRAME_SAMPLES / SAMPLE_RATE)
+        if decoder_ready is not None:
+            await decoder_ready.wait()
 
         for start in range(0, len(audio), FRAME_SAMPLES):
             samples = audio[start : start + FRAME_SAMPLES]

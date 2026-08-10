@@ -68,7 +68,11 @@ else:
     app.state.ai_event_repository = InMemoryAIEventRepository(app.state.content_store)
 app.state.object_storage = build_object_storage()
 if settings.ai_enabled:
-    app.state.runtime_service.ai_client = MeetingAIClient(settings.ai_base_url, settings.service_key)
+    app.state.runtime_service.ai_client = MeetingAIClient(
+        settings.ai_base_url,
+        settings.service_key,
+        timeout=settings.ai_timeout_seconds,
+    )
 
 
 @app.get("/health/live")

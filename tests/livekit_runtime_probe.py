@@ -87,7 +87,11 @@ async def main() -> None:
             f"{service_url}/internal/v1/meetings/{meeting_id}/runtime",
             json={
                 "meeting": {"status": "APPROVED", "title": "Runtime probe"},
-                "participants": [{"user_id": user_id, "display_name": "Audio Probe"}],
+                "participants": (
+                    []
+                    if os.getenv("RUNTIME_PROBE_NO_PARTICIPANT") == "1"
+                    else [{"user_id": user_id, "display_name": "Audio Probe"}]
+                ),
             },
             headers={**service_headers, "Idempotency-Key": f"probe-start-{meeting_id}"},
         )
@@ -112,6 +116,7 @@ async def main() -> None:
                 "user_id": user_id,
                 "device_id": "runtime-probe",
             },
+            headers=service_headers,
         )
         token_response.raise_for_status()
         credentials = token_response.json()
@@ -129,7 +134,8 @@ async def main() -> None:
         stopped.raise_for_status()
         await asyncio.sleep(1.0)
         transcript = await client.get(
-            f"{service_url}/internal/v1/meetings/{meeting_id}/transcript"
+            f"{service_url}/internal/v1/meetings/{meeting_id}/transcript",
+            headers=service_headers,
         )
         transcript.raise_for_status()
 

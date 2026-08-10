@@ -90,6 +90,12 @@ class Settings:
     agent_static_room_fallback: bool = _env_bool(
         "AGENT_STATIC_ROOM_FALLBACK", False
     )
+    agent_assignment_state_path: Path = Path(
+        os.getenv(
+            "AGENT_ASSIGNMENT_STATE_PATH",
+            str(RUNTIME_ROOT / "data" / "agent_assignment.json"),
+        )
+    )
     agent_poll_seconds: float = max(
         0.5, float(os.getenv("AGENT_POLL_SECONDS", "1.0"))
     )
@@ -222,9 +228,11 @@ class Settings:
     )
     # Per-mic audio stays ordered, while all calls into the shared Zipformer
     # recognizer are serialized by one worker outside the asyncio event loop.
-    # The queue applies backpressure instead of silently dropping speech.
+    # Keep enough ordered audio for one hard-split turn when several tracks
+    # share the recognizer scheduler. The input loop must not stall before
+    # VAD receives the remainder of a speech turn.
     asr_stream_queue_max_chunks: int = max(
-        50, int(os.getenv("ASR_STREAM_QUEUE_MAX_CHUNKS", "400"))
+        50, int(os.getenv("ASR_STREAM_QUEUE_MAX_CHUNKS", "1200"))
     )
     asr_stream_finalize_timeout_seconds: float = max(
         1.0,
@@ -274,6 +282,11 @@ class Settings:
     # candidate. Frame-level switching can punch holes in fast speech.
     asr_decode_all_mics: bool = _env_bool(
         "ASR_DECODE_ALL_MICS", True
+    )
+    # Experimental P0-08 path. Disabled by default because it duplicates the
+    # Zipformer model in memory and must be benchmarked separately.
+    asr_isolated_mic_decoders: bool = _env_bool(
+        "ASR_ISOLATED_MIC_DECODERS", False
     )
     asr_soft_split_seconds: float = float(
         os.getenv("ASR_SOFT_SPLIT_SECONDS", "15")

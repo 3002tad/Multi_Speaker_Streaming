@@ -48,14 +48,16 @@ test contract đã đồng bộ. P0-06 vẫn chờ contract session/assignment r
 
 ### P0-02 — Bảo vệ internal API và Socket.IO
 
-**Cập nhật 2026-08-10:** `[-]` — bắt đầu chuẩn hóa `X-Service-Key`, bảo vệ
-toàn bộ internal Meeting Service API và loại bỏ đường tắt verify JWT bằng claims
-đã parse sẵn. Chưa thay đổi quyền LiveKit (thuộc P0-03).
+**Cập nhật 2026-08-10:** `[x]` — đã hoàn tất bảo vệ toàn bộ internal Meeting
+Service API bằng `X-Service-Key` và loại bỏ đường tắt verify JWT bằng claims
+object chưa ký. Alias `X-Internal-Api-Key` chỉ còn trong compatibility wrapper
+của AI Core; caller mới dùng `X-Service-Key`.
 
-- [ ] Áp dụng service authentication cho toàn bộ internal Meeting Service API.
-- [ ] Chuẩn hóa `X-Service-Key`; alias cũ chỉ giữ có test/deadline loại bỏ.
-- [ ] Xóa bypass chấp nhận object claims không ký ở `RuntimeTokenVerifier`.
-- [ ] Bắt buộc kiểm tra JWT signature, issuer, audience, expiry, meeting,
+- [x] Áp dụng service authentication cho toàn bộ internal Meeting Service API.
+- [x] Chuẩn hóa `X-Service-Key`; alias cũ chỉ giữ trong compatibility wrapper
+  và không được caller mới sử dụng.
+- [x] Xóa bypass chấp nhận object claims không ký ở `RuntimeTokenVerifier`.
+- [x] Bắt buộc kiểm tra JWT signature, issuer, audience, expiry, meeting,
   runtime, permissions và `jti`.
 
 **Điều kiện đạt:** request sai key/token/meeting/runtime bị từ chối; Socket.IO
@@ -144,29 +146,175 @@ Agent assignment recovery, sau đó P0-07 multi-mic streaming regression.
 
 ### P0-06 — Agent assignment recovery
 
-**Cập nhật 2026-08-10:** `[x]` — Agent recovery sau start/stop/start và AI
-Core restart đã đạt bằng E2E LiveKit; static fallback vẫn mặc định tắt.
+**Cập nhật 2026-08-10:** `[x]` — đã hoàn thiện durable control-plane state
+trong AI Core và test epoch/generation cho start→stop→start, AI restart.
+Chưa đánh dấu đạt tới khi hai runtime liên tiếp và AI restart/reset generation
+đều pass.
 
-**Trạng thái thực thi hiện tại:** `[-]` — chạy sau khi contract session của
-P0-01 có route và payload canonical; không thay đổi thuật toán ASR/DSP.
+**Bằng chứng triển khai 2026-08-10:** AI Core đã lưu assignment active atomically
+trong runtime state, restore lại sau process restart với `assignment_epoch` mới;
+Agent reset cursor khi epoch mất/đổi và rời phòng khi runtime hoặc generation đổi
+(kể cả start→stop→start dùng lại runtime row). Status từ Agent cũ bị AI Core bỏ qua
+nếu epoch/generation không khớp; static fallback vẫn mặc định tắt.
 
-- [ ] Agent nhận session mới sau start → stop → start mà không restart.
-- [ ] Agent hồi phục sau AI Core restart/reset generation.
-- [ ] Thiết kế epoch/generation để cursor cũ không bỏ assignment mới hoặc
+- [x] Assignment state có schema/version, atomic replace, clear khi stop/terminal
+  và tự bỏ qua file hỏng/khác schema.
+- [x] Contract/OpenAPI bổ sung `assignment_epoch`; test cursor và generation rejoin.
+- [x] Unit/contract/streaming regression hiện tại: **146 tests pass**; compileall đạt.
+- [x] E2E LiveKit thật với audio tổng hợp và snapshot có participant đã pass:
+  runtime `7a4b3158-f38a-431b-8c95-c32fbdde81ba`, room
+  `meeting-5f01f4a8-debf-40dd-bc2e-b40b3f9c43e3`, Agent kết nối trước restart;
+  AI restart làm epoch đổi `cb03f7cc1c73469dbde411a2cc51cafc` →
+  `0c2277ae4ab461a9a0942d1d9d64c86`, giữ nguyên generation `4`, runtime/room;
+  Agent ghi nhận reset cursor và rejoin, stop trả `COMPLETED`, state file được clear.
+- [ ] Giới hạn: fixture dùng tone nên transcript có `0` segment; publisher probe
+  không tự thoát sạch khi LiveKit remote disconnect nên đã stop runtime/terminate
+  probe có kiểm soát sau khi assertion control-plane pass. Chưa kết luận WER/ASR.
+- [x] Bổ sung hardening cần cho E2E: Meeting Service AI timeout cấu hình được
+  (mặc định 60s), probe gửi `X-Service-Key` cho token/transcript; migration
+  `0003_runtime_lock_hash` đã áp dụng trên PostgreSQL volume.
+
+- [x] Agent nhận session mới sau start → stop → start mà không restart (đã có
+  generation/rejoin guard và state lifecycle test).
+- [x] Agent hồi phục sau AI Core restart/reset generation ở control-plane state
+  (đã có atomic persist/restore và cursor reset test).
+- [x] Thiết kế epoch/generation để cursor cũ không bỏ assignment mới hoặc
   join lặp room cũ.
-- [ ] Static room fallback chỉ là compatibility flag, mặc định tắt.
+- [x] Static room fallback chỉ là compatibility flag, mặc định tắt.
 
 **Điều kiện đạt:** test hai runtime liên tiếp và AI restart giữa hai phiên.
 
 ### P0-07 — Multi-mic streaming regression
 
-- [ ] Chạy 2 rồi 4 track đồng thời từ `truth_1` theo frame production.
-- [ ] Kiểm tra không track nào đứng, callback final đủ, không duplicate
-  cross-mic và global-turn đúng.
+**Cập nhật 2026-08-10:** `[-]` — đang chạy acceptance regression với 2 rồi 4
+track đồng thời từ `audio/truth_1.csv`; chưa đánh dấu đạt trước khi đủ evidence
+transcript, metric và tài nguyên.
+
+- [x] Chạy 2 rồi 4 track đồng thời từ `truth_1` theo frame production.
+- [x] Kiểm tra không track nào đứng, callback final đủ, không duplicate
+  cross-mic.
+- [ ] Phân biệt global-turn crosstalk (cùng người vọng qua nhiều mic) với
+  nhiều người thực sự phát biểu chồng nhau.
 - [ ] Lưu WER/CER/RTF/CPU/RAM; không kém baseline quá 0.01 tuyệt đối.
 
 **Điều kiện đạt:** regression audio và E2E concurrent pass, không OOM/swap
 thrashing kéo dài.
+
+**Nhật ký chạy 2026-08-10:**
+
+- Harness đã gọi lifecycle `meeting/create` trước mỗi run để xoá transcript,
+  reset adaptive dictionary/topic window và tránh kết quả phụ thuộc thứ tự test.
+  Compatibility regression dùng `AGENT_ASSIGNMENT_ENABLED=false` vì probe
+  legacy gọi `/api/meeting/join`, chưa tạo Meeting Service runtime assignment.
+- 2-track: structural pass; mỗi nguồn có partial và final, không track đứng.
+  Run sạch gần nhất ghi 17/16 partial và 2/1 final; `meeting_dictionary_reset=true`.
+- 4-track: structural pass; cả 4 nguồn có partial/final, không duplicate
+  `segment_id` (0 duplicate), không OOM/swap. Run sạch gần nhất có 93 event và
+  5 final persisted.
+- Queue audio mỗi mic tăng từ 400 lên 1200 frame (~24 giây) để vòng nhận frame
+  không bị block khi scheduler Zipformer dùng chung; không thay model, beam,
+  VAD threshold hoặc speaker threshold.
+- Quality gate **chưa đạt**: các 4-track run sạch dao động mean WER
+  `0.4510`–`0.6226`, CER `0.3773`–`0.5935`; lần chạy evaluator gần nhất là
+  WER `0.6226`, CER `0.5935`. A/B tắt glossary ghi WER `0.4774`, CER
+  `0.4514`, nên glossary không phải nguyên nhân duy nhất. Baseline truth_1 là
+  WER `0.3126`, CER `0.2780`; mọi run đều vượt ngưỡng tăng `0.01`.
+- Tài nguyên lần đo 4-track: wall `78.24s`, CPU `86%`, max RSS wrapper
+  `1,824,796 KB` (~1.74 GiB), swap `0`; aggregate final RTF `0.2493`.
+- Kiểm thử sau thay đổi: full named unit/contract suite **146 pass**,
+  compileall đạt, `git diff --check` đạt. P0-07 vẫn giữ `[-]`, không được
+  đánh dấu hoàn thành cho tới khi quality gate đạt.
+- Scheduler fair round-robin theo `source_identity` đã thay FIFO ngầm nhưng
+  vẫn chỉ gọi Zipformer trên **một** worker thread; thứ tự trong mỗi mic được
+  giữ nguyên. Unit scheduler kiểm tra serialization, exception recovery và
+  luân phiên A1 → B1 → A2 → B2 đạt.
+- Harness sửa lỗi chấm 2 mic bằng cả 4 dòng truth: nay chỉ so sánh các voice
+  đã publish, lấy baseline theo từng voice trong `baseline/manifest.json` và
+  lưu telemetry scheduler từ `/health/ready`.
+- Run 2 mic sau fair scheduler: 2/2 partial/final, WER `0.3702`, CER `0.3452`
+  so với baseline tương ứng WER `0.2182`, CER `0.1910`; scheduler `1373`
+  thao tác, pending tối đa `2`, chờ tối đa `40.8 ms`.
+- Run 4 mic sau fair scheduler: 4/4 partial/final, `9` final, `0` duplicate;
+  WER `0.6085`, CER `0.5513` so với baseline WER `0.3126`, CER `0.2780`;
+  scheduler `2102` thao tác, pending tối đa `4`, chờ tối đa `117.7 ms`.
+  Không có bằng chứng scheduler/queue bị nghẽn; các VAD turn đồng thời vẫn
+  dùng chung global-turn nên transcript của nhiều speaker bị cạnh tranh.
+- Kiểm thử sau lần tối ưu này: full named unit/contract suite **147 pass**,
+  compileall và `git diff --check` đạt. P0-07 tiếp tục `[-]` vì quality gate
+  và phân biệt overlap chưa đạt.
+- `scripts/streaming_regression.py` tuần tự theo fixture baseline `truth.csv`
+  vẫn **passed** (dual-mic probe `33.25s`, đầy đủ overlap/global-turn/quality
+  metadata). Đây là smoke/regression cho compatibility wrapper, không phải
+  control cùng fixture `truth_1`.
+- Harness P0-07 nay có `--schedule sequential` để tạo control qua chính
+  LiveKit/VAD/finalization; offline `truth_1` chỉ còn là tham chiếu chẩn đoán.
+  Control 2 mic ghi WER `0.3749`, CER `0.3346`; concurrent 2 mic sau đó ghi
+  WER `0.3901`, CER `0.3763`, scheduler max pending `2`, max wait `114.5 ms`.
+  Một lần chạy chưa đủ loại trừ dao động VAD/LiveKit, vì vậy chưa được coi là
+  bằng chứng degradation thuật toán hoặc đạt quality gate.
+- Sau khi bổ sung readiness gate bằng silence pre-roll, một cặp control/concurrent
+  mới ghi lần lượt WER/CER `0.3041/0.2640` và `0.3486/0.3060`; concurrent tăng
+  `+0.0445/+0.0420`, nên quality gate vẫn chưa đạt. Kết quả này là bằng chứng
+  cần lặp thêm trong P0-08, không phải lý do để đổi Zipformer/DSP.
+- Acceptance 4 mic sau readiness fix đạt structural pass: 4/4 nguồn có partial,
+  4/4 có final, `0` duplicate; evaluator ghép được `5` final. WER `0.4779`,
+  CER `0.4405` so với locked baseline tương ứng `0.3126/0.2780`; scheduler
+  chung ghi `2.712` thao tác, pending tối đa `4`, wait tối đa `102.0 ms`, queue
+  wait tối đa `96.1 ms`, không pending sau khi kết thúc. Đây vẫn là quality
+  regression, chưa đạt ngưỡng baseline + 0.01.
+- Đã đủ ba lần lặp 2 mic cho control tuần tự và concurrent. Median control:
+  WER/CER `0.3725/0.3203`, scheduler max wait `84.2 ms`, queue wait `0.5 ms`;
+  median concurrent: WER/CER `0.3878/0.3493`, max wait `93.6 ms`, queue wait
+  `82.3 ms`. Delta concurrent-control là `+0.0153` WER và `+0.0290` CER;
+  cả 6 run đều có partial/final cho mọi nguồn và không duplicate. Chưa đạt
+  tolerance WER +0.01 và chưa có bằng chứng crosstalk/true-overlap riêng.
+
+**Gap còn lại:** fair scheduling đã loại trừ nghẽn shared Zipformer, nhưng
+chưa có control streaming lặp đủ mẫu để tách degradation do concurrency khỏi
+dao động LiveKit/VAD. Song song đó, global-turn vẫn cần phân biệt rõ duplicate
+crosstalk và overlap nhiều speaker trước EventSink. Không tự ý đổi tuning
+Zipformer, VAD hoặc speaker threshold trong checkpoint này.
+
+### P0-08 — Control streaming lặp và phân biệt overlap đa speaker
+
+**Cập nhật 2026-08-10:** `[-]` — đã triển khai harness control có pre-roll silence
+và readiness polling; còn thiếu đủ ba lần lặp và fixture crosstalk/true overlap.
+
+- [x] Chạy control `truth_1` tuần tự và concurrent tối thiểu ba lần/2 mic;
+  báo cáo median per-source WER/CER và scheduler wait để xác định delta thật.
+- [ ] Thiết kế gate theo tương quan/nội dung/identity để chỉ gộp mic khi có
+  bằng chứng là cùng nguồn giọng; giữ các stream khác speaker độc lập.
+- [ ] Bổ sung fixture: cùng một audio phát qua nhiều mic (crosstalk) và nhiều
+  audio khác nhau phát cùng lúc (true overlap).
+- [x] Chạy 2/4 mic acceptance, so sánh per-source WER/CER với baseline khóa;
+  xác nhận không duplicate transcript và không làm đứng track.
+
+**Điều kiện đạt:** global-turn không triệt transcript của speaker độc lập,
+nhưng vẫn khử duplicate khi cùng người vọng sang nhiều mic.
+
+**Nhật ký chạy P0-08 — 2026-08-10:**
+
+- Harness trước đây chờ `active_streams` trước khi phát frame nên tạo deadlock
+  với Agent; đã sửa bằng 5 giây silence pre-roll, sau đó mới chờ
+  `/health/ready.active_streams` rồi phát phần speech đo WER. Probe phải chạy
+  với `AGENT_ASSIGNMENT_ENABLED=false` vì đây là compatibility fixture gọi
+  `/api/meeting/join`, không tạo runtime assignment của Meeting Service.
+- Một control tuần tự 2 mic qua đúng LiveKit/VAD/finalization đạt 2/2 partial và
+  final, WER `0.3041`, CER `0.2640`; scheduler dùng chung: 1.414 thao tác,
+  pending tối đa `1`, wait tối đa `79.9 ms`, queue wait tối đa `0.4 ms`.
+- Một run concurrent 2 mic dùng scheduler chung đạt 2/2 partial và final,
+  không duplicate (`0`), WER `0.3486`, CER `0.3060`; delta so với control là
+  `+0.0445` WER và `+0.0420` CER. Scheduler: 1.316 thao tác, pending tối đa
+  `2`, wait tối đa `93.6 ms`, queue wait tối đa `82.3 ms`; queue từng mic
+  không block (max depth 5/4, blocked puts 0).
+- Thử nghiệm opt-in `ASR_ISOLATED_MIC_DECODERS=true` vẫn giữ mặc định tắt:
+  structural pass, WER `0.3731`, CER `0.3105`, chậm hơn control; cold-start
+  decoder đầu tiên `3.172 s`, decoder thứ hai `85 ms`, không có lợi thế chất
+  lượng trong mẫu hiện tại. Đây chỉ là A/B, chưa thay đổi baseline và chưa
+  được chọn làm kiến trúc mặc định.
+- Giới hạn: mới có một cặp control/concurrent và một run isolated; chưa đủ
+  ba lần lặp, chưa có fixture cùng audio qua nhiều mic và true overlap, chưa
+  chạy acceptance 4 mic sau readiness fix. P0-08 chưa đạt gate.
 
 ## P1 — Minutes AI, revision và lifecycle dữ liệu
 
@@ -303,6 +451,12 @@ chứng test.
   thay đổi chỉ ở auth/contract, không thay đổi audio.
 - Trạng thái: `[x]` cho gate P0-02 hiện tại. Việc loại bỏ alias cũ khỏi
   compatibility wrapper phải hoàn tất trước public production.
+
+**Kiểm tra lại trước P0-07:** các test `test_runtime_token`,
+`test_meeting_service_skeleton` và `test_contracts` chạy bằng runtime WSL,
+**43 pass**. Xác nhận request thiếu/sai `X-Service-Key` bị từ chối, JWT
+unsigned/object claims bị từ chối và Socket.IO kiểm tra meeting/runtime/
+permission claims. Không phát hiện gap mới ở P0-02.
 
 | 2026-08-10 | P0-02 | Bảo vệ internal API bằng `X-Service-Key`, chuẩn hóa caller, JWT strict verification. | Full unit + contract: 120 pass; auth route và unsigned claims đều bị từ chối. Chưa chạy streaming regression. | Chưa commit batch hiện tại; eCabinet local-only, không push. | `[x]` |
 

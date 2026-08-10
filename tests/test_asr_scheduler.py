@@ -70,8 +70,65 @@ class ZipformerDecodeSchedulerTests(unittest.IsolatedAsyncioTestCase):
             raise ValueError("bad stream")
 
         with self.assertRaisesRegex(ValueError, "bad stream"):
-            await self.scheduler.run(fail)
-        self.assertEqual(await self.scheduler.run(lambda: "recovered"), "recovered")
+            await asyncio.wait_for(self.scheduler.run(fail), timeout=1)
+        self.assertEqual(
+            await asyncio.wait_for(
+                self.scheduler.run(lambda: "recovered"), timeout=1
+            ),
+            "recovered",
+        )
+
+    async def test_round_robins_backlogged_microphones(self):
+        """A follow-up from mic A must yield to mic B after A's first turn."""
+        order = []
+        first_started = threading.Event()
+        release_first = threading.Event()
+
+        def operation(label: str, *, wait: bool = False) -> str:
+            if wait:
+                first_started.set()
+                release_first.wait(timeout=1)
+            order.append(label)
+            return label
+
+        first = asyncio.create_task(
+            self.scheduler.run(
+                lambda: operation("a-1", wait=True),
+                stream_key="mic-a",
+            )
+        )
+        await asyncio.to_thread(first_started.wait, 1)
+        queued = [
+            asyncio.create_task(
+                self.scheduler.run(
+                    lambda: operation("a-2"), stream_key="mic-a"
+                )
+            ),
+            asyncio.create_task(
+                self.scheduler.run(
+                    lambda: operation("b-1"), stream_key="mic-b"
+                )
+            ),
+            asyncio.create_task(
+                self.scheduler.run(
+                    lambda: operation("b-2"), stream_key="mic-b"
+                )
+            ),
+        ]
+        await asyncio.sleep(0)
+        release_first.set()
+        self.assertEqual(
+            await asyncio.gather(first, *queued),
+            ["a-1", "a-2", "b-1", "b-2"],
+        )
+        self.assertEqual(order, ["a-1", "b-1", "a-2", "b-2"])
+        telemetry = self.scheduler.telemetry()
+        self.assertEqual(telemetry["submitted"], 4)
+        self.assertEqual(telemetry["completed"], 4)
+        self.assertEqual(telemetry["pending"], 0)
+        self.assertIn("max_queue_wait_ms", telemetry)
+        self.assertIn("mean_operation_ms", telemetry)
+        self.assertIn("max_operation_ms", telemetry)
 
 
 if __name__ == "__main__":

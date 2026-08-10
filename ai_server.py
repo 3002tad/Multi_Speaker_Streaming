@@ -46,6 +46,7 @@ from meeting_ai.core.audio_pipeline import (
     unpack_audio_packet,
 )
 from meeting_ai.config import settings
+from meeting_ai.core.assignment_state import AssignmentStateStore
 from meeting_ai.core.asr_scheduler import ZipformerDecodeScheduler
 from meeting_ai.core.final_turn import choose_redecode_transcript
 from meeting_ai.core.adaptive_dictionary import (
@@ -160,6 +161,7 @@ topic_discovery = TopicDiscoveryWindow(
 # every microphone. One dedicated worker preserves serialized access without
 # ever making the asyncio event loop wait on a threading.Lock.
 zipformer_scheduler = ZipformerDecodeScheduler()
+active_asr_streams: set[str] = set()
 
 # ============================================================
 # 2. WavLM – Speaker Embedding
@@ -538,7 +540,8 @@ class FinalTurnRedecodeCoordinator:
                 audio, future, _submitted_at = await self.queue.get()
                 try:
                     text = await zipformer_scheduler.run(
-                        lambda: decode_final_turn_audio(audio)
+                        lambda: decode_final_turn_audio(audio),
+                        stream_key="final-turn-redecode",
                     )
                     if not future.done():
                         future.set_result(text)
@@ -1360,6 +1363,73 @@ _ai_agent_status: dict[str, object] = {
     "runtime_session_id": None,
     "reason": None,
 }
+_assignment_state_store = AssignmentStateStore(settings.agent_assignment_state_path)
+
+
+def _assignment_state_payload(session: _AISession) -> dict[str, object]:
+    """Return only JSON-safe control-plane data needed by Agent recovery."""
+    return {
+        "runtime_session_id": session.runtime_session_id,
+        "meeting_id": session.meeting_id,
+        "assignment_generation": session.assignment_generation,
+        "payload": dict(session.payload),
+        "participant_revision": session.participant_revision,
+    }
+
+
+def _persist_active_assignment_locked() -> None:
+    """Persist the single active assignment; caller holds ``_ai_session_lock``."""
+    global _ai_active_runtime_id
+    runtime_id = _ai_active_runtime_id
+    session = _ai_sessions.get(runtime_id) if runtime_id else None
+    if session is None or session.status in {"COMPLETED", "FAILED"}:
+        _assignment_state_store.clear()
+        if session is not None and session.status in {"COMPLETED", "FAILED"}:
+            _ai_active_runtime_id = None
+        return
+    _assignment_state_store.save(
+        assignment_generation_counter=_ai_assignment_generation_counter,
+        active=_assignment_state_payload(session),
+    )
+
+
+def _restore_assignment_state() -> None:
+    """Re-arm an active assignment after an AI process restart.
+
+    Meeting Service still owns the durable runtime lifecycle. The restored
+    record is only enough for Agent to rejoin the existing LiveKit room; a new
+    process epoch makes the Agent reset its generation cursor before polling.
+    """
+    global _ai_active_runtime_id, _ai_assignment_generation_counter
+    saved = _assignment_state_store.load()
+    if not saved:
+        return
+    active = saved.get("active") or {}
+    runtime_id = str(active.get("runtime_session_id") or "").strip()
+    meeting_id = str(active.get("meeting_id") or "").strip()
+    payload = active.get("payload")
+    if not runtime_id or not meeting_id or not isinstance(payload, dict):
+        _assignment_state_store.clear()
+        return
+    generation = max(1, int(active.get("assignment_generation") or 1))
+    session = _AISession(
+        runtime_session_id=runtime_id,
+        meeting_id=meeting_id,
+        assignment_generation=generation,
+        payload=dict(payload),
+        status="READY",
+        agent_status="STOPPED",
+        participant_revision=max(1, int(active.get("participant_revision") or 1)),
+    )
+    _ai_sessions[runtime_id] = session
+    _ai_active_runtime_id = runtime_id
+    _ai_assignment_generation_counter = max(
+        generation,
+        int(saved.get("assignment_generation_counter") or 0),
+    )
+
+
+_restore_assignment_state()
 
 
 @app.on_event("shutdown")
@@ -1435,6 +1505,8 @@ async def meeting_ai_ready() -> dict[str, object]:
         "service": "meeting-ai-core",
         "models": {"zipformer": True, "wavlm": True, "vad": True},
         "active_session": active,
+        "active_streams": sorted(active_asr_streams),
+        "zipformer_scheduler": zipformer_scheduler.telemetry(),
     }
 
 
@@ -1471,6 +1543,7 @@ async def create_ai_session(
                 existing.reason = None
                 existing.agent_status = "STOPPED"
                 _ai_active_runtime_id = runtime_id
+                _persist_active_assignment_locked()
                 return _session_state(existing)
             if idempotency_key:
                 existing.idempotency_keys.add(idempotency_key)
@@ -1493,6 +1566,7 @@ async def create_ai_session(
             session.idempotency_keys.add(idempotency_key)
         _ai_sessions[runtime_id] = session
         _ai_active_runtime_id = runtime_id
+        _persist_active_assignment_locked()
     # Participant names seed the existing adaptive dictionary at a safe
     # session boundary; the ASR recognizer itself remains unchanged.
     names = [
@@ -1538,6 +1612,7 @@ async def stop_ai_session(
             session.idempotency_keys.add(idempotency_key)
         if _ai_active_runtime_id == runtime_session_id:
             _ai_active_runtime_id = None
+        _persist_active_assignment_locked()
         return _session_state(session)
 
 
@@ -1558,6 +1633,7 @@ async def update_ai_participants(
         session.participant_revision = int(payload.get("snapshot_revision") or session.participant_revision + 1)
         session.payload["participants"] = list(payload.get("participants") or [])
         session.payload["hotwords"] = list(payload.get("hotwords") or [])
+        _persist_active_assignment_locked()
     for item in payload.get("participants", []):
         if isinstance(item, dict):
             display_name = str(item.get("display_name") or "").strip()
@@ -1616,9 +1692,18 @@ async def update_agent_status(
     _require_service_key(x_internal_key, x_service_key)
     global _ai_agent_status
     with _ai_session_lock:
-        _ai_agent_status = dict(payload)
         runtime_id = payload.get("runtime_session_id")
         session = _ai_sessions.get(str(runtime_id)) if runtime_id else None
+        if runtime_id and session is None:
+            return {"status": "stale"}
+        if session:
+            incoming_epoch = str(payload.get("assignment_epoch") or "").strip()
+            incoming_generation = int(payload.get("assignment_generation") or 0)
+            if incoming_epoch != _ai_assignment_epoch:
+                return {"status": "stale"}
+            if incoming_generation and incoming_generation != session.assignment_generation:
+                return {"status": "stale"}
+        _ai_agent_status = dict(payload)
         if session:
             session.agent_status = str(payload.get("status") or "STOPPED")
             if session.agent_status == "READY":
@@ -1626,6 +1711,7 @@ async def update_agent_status(
             elif session.agent_status == "FAILED":
                 session.status = "FAILED"
                 session.reason = payload.get("reason")
+            _persist_active_assignment_locked()
     return {"status": "accepted"}
 
 
@@ -1983,16 +2069,30 @@ async def websocket_endpoint(
     register_participant_for_meeting(fallback_speaker)
     print(f"\n[+] Đã cấp phát luồng AI cho Client: {identity}")
 
+    decode_scheduler = zipformer_scheduler
+    if settings.asr_isolated_mic_decoders:
+        # Opt-in experiment: each mic owns an independent recognizer and
+        # scheduler, so no shared Zipformer object is called concurrently.
+        decode_scheduler = ZipformerDecodeScheduler()
+        print(f"[ASR isolation] [{identity}] decoder/scheduler riêng cho mic")
+
     # A decoder generation stays immutable within one VAD/global turn.
-    asr_recognizer = recognizer
+    with dictionary_runtime_lock:
+        asr_recognizer = (
+            create_asr_recognizer(hotword_artifacts)
+            if settings.asr_isolated_mic_decoders
+            else recognizer
+        )
     stream_allocation_started = time.perf_counter()
-    asr_stream = await zipformer_scheduler.run(
-        asr_recognizer.create_stream
+    asr_stream = await decode_scheduler.run(
+        asr_recognizer.create_stream,
+        stream_key=identity,
     )
     print(
         f"[ASR ready] [{identity}] stream allocated in "
         f"{(time.perf_counter() - stream_allocation_started) * 1000:.0f} ms"
     )
+    active_asr_streams.add(identity)
     local_dictionary_generation = dictionary_generation
     turn_phonetic_lexicon = phonetic_lexicon
     vad_stream  = vad_model.stream()
@@ -2024,6 +2124,11 @@ async def websocket_endpoint(
     audio_queue = asyncio.Queue(
         maxsize=settings.asr_stream_queue_max_chunks
     )
+    audio_queue_metrics = {
+        "max_depth": 0,
+        "blocked_puts": 0,
+        "blocked_seconds": 0.0,
+    }
     quality_tracker = AudioQualityTracker()
     asr_preprocessor = StreamingAsrPreprocessor(
         high_pass_hz=settings.asr_high_pass_hz,
@@ -2223,7 +2328,11 @@ async def websocket_endpoint(
                         next_generation != local_dictionary_generation
                     )
                     if generation_changed:
-                        asr_recognizer = next_recognizer
+                        asr_recognizer = (
+                            create_asr_recognizer(hotword_artifacts)
+                            if settings.asr_isolated_mic_decoders
+                            else next_recognizer
+                        )
                         asr_stream = asr_recognizer.create_stream()
                         local_dictionary_generation = next_generation
                     else:
@@ -2236,8 +2345,9 @@ async def websocket_endpoint(
                     return generation_changed
 
                 try:
-                    generation_changed = await zipformer_scheduler.run(
-                        start_step
+                    generation_changed = await decode_scheduler.run(
+                        start_step,
+                        stream_key=identity,
                     )
                     if generation_changed:
                         print(
@@ -2266,7 +2376,10 @@ async def websocket_endpoint(
                     return final_text
 
                 try:
-                    final_text = await zipformer_scheduler.run(finalize_step)
+                    final_text = await decode_scheduler.run(
+                        finalize_step,
+                        stream_key=identity,
+                    )
                     if not future.done():
                         future.set_result(final_text)
                 except Exception as exc:
@@ -2327,7 +2440,10 @@ async def websocket_endpoint(
                     )
 
                 try:
-                    text = await zipformer_scheduler.run(decode_step)
+                    text = await decode_scheduler.run(
+                        decode_step,
+                        stream_key=identity,
+                    )
                 except Exception as exc:
                     text = ""
                     print(f"[!] Lỗi decode ASR [{identity}]: {exc}")
@@ -2902,19 +3018,37 @@ async def websocket_endpoint(
                     # Preprocessing and recognizer access stay on the same
                     # per-mic command stream. This avoids racing a frontend
                     # reset while a new VAD turn starts.
+                    queue_put_started = time.perf_counter()
                     await audio_queue.put(
                         ("audio", audio_np, frame_quality)
                     )
+                    queue_put_seconds = (
+                        time.perf_counter() - queue_put_started
+                    )
+                    audio_queue_metrics["max_depth"] = max(
+                        audio_queue_metrics["max_depth"],
+                        audio_queue.qsize(),
+                    )
+                    if queue_put_seconds >= 0.005:
+                        audio_queue_metrics["blocked_puts"] += 1
+                        audio_queue_metrics["blocked_seconds"] += (
+                            queue_put_seconds
+                        )
 
     except WebSocketDisconnect:
         print(f"\n[-] Client {identity} đã ngắt kết nối.")
     except Exception as e:
         print(f"\n[!] Lỗi [{identity}]: {e}")
     finally:
+        active_asr_streams.discard(identity)
         print(
             f"[audio input] [{identity}] received={received_frame_count} "
             f"frames/{received_sample_count / 16000:.2f}s, "
-            f"peak_rms={received_peak_rms:.5f}"
+            f"peak_rms={received_peak_rms:.5f}, "
+            f"asr_queue_max={audio_queue_metrics['max_depth']}, "
+            f"blocked_puts={audio_queue_metrics['blocked_puts']}, "
+            f"blocked_ms="
+            f"{audio_queue_metrics['blocked_seconds'] * 1000:.1f}"
         )
         try:
             if is_speaking:
@@ -2945,6 +3079,12 @@ async def websocket_endpoint(
             await vad_stream.aclose()
         except Exception:
             pass
+        if decode_scheduler is not zipformer_scheduler:
+            print(
+                f"[ASR scheduler] [{identity}] "
+                f"{decode_scheduler.telemetry()}"
+            )
+            await decode_scheduler.close()
 
 if __name__ == "__main__":
     import os

@@ -312,7 +312,7 @@ async def _reset_adaptive_dictionary(
             response = await client.post(
                 f"{settings.ai_server_http_url}/api/adaptive-dictionary/reset",
                 json={"participant_names": participant_names},
-                headers={"X-Internal-Key": settings.internal_api_key},
+                headers={"X-Internal-Api-Key": settings.internal_api_key},
             )
             response.raise_for_status()
             return {"status": "ready", **response.json()}
@@ -334,7 +334,7 @@ async def _register_dictionary_participant(
                     "/api/adaptive-dictionary/participants"
                 ),
                 json={"display_name": display_name},
-                headers={"X-Internal-Key": settings.internal_api_key},
+            headers={"X-Internal-Api-Key": settings.internal_api_key},
             )
             response.raise_for_status()
             return {"status": "ready", **response.json()}
