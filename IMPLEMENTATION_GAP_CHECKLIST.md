@@ -30,17 +30,19 @@
 
 ### P0-01 — Đồng bộ contract Meeting Service với implementation
 
-**Cập nhật 2026-08-10:** `[-]` — route transcript đã chốt là số ít và OpenAPI
-đã bỏ route chưa hiện thực; vẫn còn kiểm tra payload/idempotency/security.
+**Cập nhật 2026-08-10:** `[x]` — đã hoàn thiện route snapshot, response/error shape
+và canonical transcript; `minutes/analyze` được xác nhận thuộc Meeting AI/P1-01,
+không giả lập route trong Meeting Service.
 
-**Trạng thái thực thi hiện tại:** `[-]` — đang đối chiếu FastAPI, OpenAPI và
-runtime probe. P0-06 được kiểm thử cùng vì assignment Agent phụ thuộc trực tiếp
-vào contract session này.
+**Trạng thái thực thi hiện tại:** `[x]` — OpenAPI, FastAPI, eCabinet BFF/client và
+test contract đã đồng bộ. P0-06 vẫn chờ contract session/assignment riêng.
 
-- [ ] Chốt endpoint transcript canonical (`/transcript` hoặc `/transcripts`).
-- [ ] Đồng bộ OpenAPI, FastAPI routes, eCabinet client/UI và test app thật.
-- [ ] Implement hoặc loại chính thức `PUT /snapshot` và `POST /minutes/analyze`.
-- [ ] Đối chiếu HTTP method, payload, error code, idempotency và security.
+- [x] Chốt endpoint transcript canonical là `/transcript`.
+- [x] Đồng bộ OpenAPI, FastAPI routes, eCabinet BFF/client và contract tests.
+- [x] Implement `PUT /snapshot`; xác nhận `POST /minutes/analyze` thuộc Meeting AI
+  và deferred sang P1-01, không tạo route giả trong Meeting Service.
+- [x] Đối chiếu HTTP method, payload, error code/problem response và security;
+  idempotency được tách sang P0-04.
 
 **Điều kiện đạt:** không còn route contract thiếu hoặc route thực tế sai shape.
 
@@ -308,3 +310,29 @@ chứng test.
     `can_publish=false`, JWT `video.canPublish=false`, `video.canSubscribe=true` và
     UI không có nút micro. Hai tài khoản tạm đã được gỡ khỏi attendee; do ràng buộc
     dữ liệu lịch sử, tài khoản được vô hiệu hóa mềm (`is_active=false`).
+
+### Nhật ký thực thi — P0-01 — 2026-08-10
+
+- Trạng thái: `[x]`.
+- Đã chốt route transcript canonical là `GET /internal/v1/meetings/{meeting_id}/transcript`;
+  OpenAPI, FastAPI Meeting Service và eCabinet client/BFF dùng cùng method, path và payload.
+- Đã triển khai `PUT /internal/v1/meetings/{meeting_id}/snapshot` với kiểm tra
+  `snapshot_revision` tăng dần, từ chối runtime không tồn tại hoặc đã kết thúc, và
+  đồng bộ endpoint BFF eCabinet để tái tạo snapshot từ dữ liệu eCabinet.
+- Lỗi của internal API đã thống nhất về `application/problem+json`, có `code`,
+  `message` và `correlation_id`; test contract/validation đã được bổ sung.
+- `POST /minutes/analyze` không được thêm vào Meeting Service: phân tích thuộc
+  Meeting AI qua `/internal/v1/sessions/{runtime_session_id}/analyze`, được ghi rõ
+  trong OpenAPI và plan, thực hiện ở P1-01.
+- Kiểm thử: targeted contract + Meeting Service **26 pass**; full unit/contract
+  suite **123 pass**. Không có thay đổi audio/ASR/LiveKit nên không phát sinh tuning
+  baseline.
+- Giới hạn còn lại: idempotency key thuộc P0-04; đồng bộ participant động với AI
+  thuộc P0-06; snapshot hiện vẫn do eCabinet làm nguồn sự thật và không cho phép
+  Meeting Service truy cập database eCabinet.
+- Đối chiếu merge plan: P0-01 đã hoàn tất đúng phạm vi contract/persistence,
+  additive, không xâm lấn các module document/task/conclusion/voting/qlvb. Batch
+  hiện chưa commit; eCabinet là repository local-only, không push.
+- Bước tiếp theo theo thứ tự ưu tiên: P0-04 (idempotency và retry an toàn), P0-05
+  (callback/event contract), P0-06 (participant assignment động), sau đó P0-07
+  (regression nhiều mic).

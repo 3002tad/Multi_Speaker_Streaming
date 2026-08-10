@@ -161,6 +161,41 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
                 404,
             )
 
+    def test_snapshot_contract_updates_revision_and_rejects_stale(self) -> None:
+        meeting_id = uuid4()
+        base = {
+            "schema_version": 1,
+            "snapshot_revision": 1,
+            "meeting_id": str(meeting_id),
+            "meeting": {"title": "Contract test", "status": "ONGOING", "started_at": None, "ended_at": None},
+            "actor": {"user_id": str(uuid4()), "display_name": "Chair", "role": "CHAIRPERSON", "permissions": ["CONTROL"]},
+            "participants": [],
+            "hotwords": [],
+        }
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+            created = client.post(f"/internal/v1/meetings/{meeting_id}/runtime", json=base)
+            self.assertEqual(created.status_code, 201)
+            updated = {**base, "snapshot_revision": 2, "participants": [{"user_id": str(uuid4()), "display_name": "Member", "role": "MEMBER"}]}
+            response = client.put(f"/internal/v1/meetings/{meeting_id}/snapshot", json=updated)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["snapshot_revision"], 2)
+            self.assertEqual(len(response.json()["snapshot"]["participants"]), 1)
+            stale = client.put(f"/internal/v1/meetings/{meeting_id}/snapshot", json=updated)
+            self.assertEqual(stale.status_code, 409)
+            self.assertEqual(stale.headers["content-type"], "application/problem+json")
+            self.assertEqual(stale.json()["code"], "HTTP_409")
+
+    def test_internal_errors_follow_problem_contract(self) -> None:
+        with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:
+            response = client.get(f"/internal/v1/meetings/{uuid4()}/status")
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.headers["content-type"], "application/problem+json")
+            self.assertIn("correlation_id", response.json())
+            invalid = client.put(f"/internal/v1/meetings/{uuid4()}/snapshot", json=[])
+            self.assertEqual(invalid.status_code, 422)
+            self.assertEqual(invalid.headers["content-type"], "application/problem+json")
+            self.assertEqual(invalid.json()["code"], "HTTP_422")
+
     def test_state_guard_blocks_invalid_runtime_start_and_early_minutes_approval(self) -> None:
         meeting_id = uuid4()
         with TestClient(app, headers={"X-Service-Key": settings.service_key}) as client:

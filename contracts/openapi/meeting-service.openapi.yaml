@@ -5,7 +5,9 @@ info:
   description: >-
     Contract called by the eCabinet BFF. Meeting Service owns runtime,
     transcripts, minutes, exports and realtime state; it never queries the
-    eCabinet database.
+    eCabinet database. Minutes analysis is owned by the separate Meeting AI
+    contract (`/internal/v1/sessions/{runtime_session_id}/analyze`) and is
+    deferred to P1-01; this service does not expose `/minutes/analyze`.
 servers:
   - url: http://meeting-service:8002
     description: Docker internal network
@@ -72,6 +74,26 @@ paths:
         "200":
           $ref: "#/components/responses/RuntimeResponse"
         "404":
+          $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/snapshot:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    put:
+      operationId: updateMeetingRuntimeSnapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/meeting-snapshot.schema.json"
+      responses:
+        "200":
+          $ref: "#/components/responses/SnapshotResponse"
+        "404":
+          $ref: "#/components/responses/ProblemResponse"
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+        "422":
           $ref: "#/components/responses/ProblemResponse"
   /internal/v1/meetings/{meeting_id}/tokens:
     parameters:
@@ -391,6 +413,23 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Runtime"
+    SnapshotResponse:
+      description: Updated participant and role snapshot.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [meeting_id, runtime_session_id, snapshot_revision, status, snapshot]
+            properties:
+              meeting_id: {type: string, format: uuid}
+              runtime_session_id: {type: string, format: uuid}
+              snapshot_revision: {type: integer, minimum: 1}
+              status:
+                type: string
+                enum: [STARTING, READY, RECORDING, STOPPING, COMPLETED, FAILED]
+              snapshot:
+                $ref: "../schemas/meeting-snapshot.schema.json"
     MinutesResponse:
       description: Minutes revision.
       content:

@@ -13,6 +13,7 @@ from meeting_service.app.infrastructure.models import AIEventRecord, RuntimeSess
 class RuntimeRepository(Protocol):
     def create(self, meeting_id: UUID, snapshot: dict) -> RuntimeSession: ...
     def get(self, meeting_id: UUID) -> RuntimeSession | None: ...
+    def update_snapshot(self, meeting_id: UUID, snapshot: dict) -> dict: ...
     def set_status(self, runtime_id: UUID, status: RuntimeStatus) -> RuntimeSession | None: ...
     def delete_meeting(self, meeting_id: UUID) -> int: ...
 
@@ -66,6 +67,32 @@ class SqlAlchemyRuntimeRepository:
         with self._sessions() as session:
             record = session.scalar(select(RuntimeSessionRecord).where(RuntimeSessionRecord.meeting_id == meeting_id).order_by(RuntimeSessionRecord.created_at.desc()))
             return _to_domain(record) if record else None
+
+    def update_snapshot(self, meeting_id: UUID, snapshot: dict) -> dict:
+        with self._sessions.begin() as session:
+            record = session.scalar(
+                select(RuntimeSessionRecord)
+                .where(RuntimeSessionRecord.meeting_id == meeting_id)
+                .order_by(RuntimeSessionRecord.created_at.desc())
+            )
+            if record is None:
+                raise LookupError("runtime not found")
+            if record.status in {RuntimeStatus.COMPLETED.value, RuntimeStatus.FAILED.value}:
+                raise ValueError("runtime is no longer active")
+            current = dict(record.meeting_snapshot_json or {})
+            current_revision = int(current.get("snapshot_revision") or 0)
+            next_revision = int(snapshot.get("snapshot_revision") or 0)
+            if next_revision <= current_revision:
+                raise ValueError(f"snapshot revision must be greater than {current_revision}")
+            record.meeting_snapshot_json = dict(snapshot)
+            session.flush()
+            return {
+                "meeting_id": str(meeting_id),
+                "runtime_session_id": str(record.id),
+                "snapshot_revision": next_revision,
+                "status": record.status,
+                "snapshot": dict(snapshot),
+            }
 
     def set_status(self, runtime_id: UUID, status: RuntimeStatus) -> RuntimeSession | None:
         with self._sessions.begin() as session:

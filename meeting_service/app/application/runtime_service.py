@@ -57,6 +57,9 @@ class RuntimeService:
     def status(self, meeting_id: UUID) -> RuntimeSession | None:
         return self.store.get(meeting_id)
 
+    def update_snapshot(self, meeting_id: UUID, snapshot: dict) -> dict:
+        return self.store.update_snapshot(meeting_id, snapshot)
+
     async def stop(self, runtime_session_id: UUID) -> RuntimeSession | None:
         if self.ai_client:
             await self.ai_client.stop_session(str(runtime_session_id), str(runtime_session_id))

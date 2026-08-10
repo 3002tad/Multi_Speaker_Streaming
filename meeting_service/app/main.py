@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from uuid import uuid4
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 import socketio
 
 from meeting_service.app.api.internal import router as internal_router
@@ -16,6 +20,41 @@ from meeting_service.app.infrastructure.object_storage import build_object_stora
 
 
 app = FastAPI(title="Meeting Service", version="0.1.0")
+
+
+@app.exception_handler(HTTPException)
+async def internal_problem_details(request: Request, exc: HTTPException):
+    """Keep internal contract errors stable without changing public adapters."""
+    if not request.url.path.startswith("/internal/v1"):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
+    detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
+    return JSONResponse(
+        status_code=exc.status_code,
+        media_type="application/problem+json",
+        content={
+            "code": f"HTTP_{exc.status_code}",
+            "message": detail,
+            "correlation_id": request.headers.get("X-Correlation-ID") or str(uuid4()),
+        },
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def internal_validation_problem(request: Request, exc: RequestValidationError):
+    if not request.url.path.startswith("/internal/v1"):
+        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    return JSONResponse(
+        status_code=422,
+        media_type="application/problem+json",
+        content={
+            "code": "HTTP_422",
+            "message": "Request validation failed",
+            "correlation_id": request.headers.get("X-Correlation-ID") or str(uuid4()),
+            "details": {"errors": exc.errors()},
+        },
+    )
+
 app.include_router(internal_router)
 app.include_router(ai_events_router)
 if settings.persistence_enabled:

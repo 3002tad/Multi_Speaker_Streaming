@@ -130,6 +130,19 @@ def runtime_status(meeting_id: UUID, request: Request) -> dict[str, object]:
     return session.as_dict()
 
 
+@router.put("/meetings/{meeting_id}/snapshot")
+def update_runtime_snapshot(meeting_id: UUID, request: Request, snapshot: dict[str, object] = Body(...)) -> dict[str, object]:
+    revision = snapshot.get("snapshot_revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        raise HTTPException(status_code=422, detail="snapshot_revision must be a positive integer")
+    try:
+        return _service(request).update_snapshot(meeting_id, snapshot)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="runtime not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post("/runtimes/{runtime_session_id}/stop")
 async def stop_runtime(runtime_session_id: UUID, request: Request) -> dict[str, object]:
     session = await _service(request).stop(runtime_session_id)

@@ -232,6 +232,7 @@ class OpenApiContractTests(unittest.TestCase):
         "meeting-service.openapi.yaml": {
             "/internal/v1/meetings/{meeting_id}/runtime",
             "/internal/v1/runtimes/{runtime_session_id}/stop",
+            "/internal/v1/meetings/{meeting_id}/snapshot",
             "/internal/v1/meetings/{meeting_id}/tokens",
             "/internal/v1/meetings/{meeting_id}/transcript",
             "/internal/v1/meetings/{meeting_id}/minutes",
