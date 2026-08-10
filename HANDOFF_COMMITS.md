@@ -233,3 +233,33 @@ Giới hạn còn lại:
 - Chưa cập nhật public Nginx/healthcheck trên home server.
 
 Đối chiếu merge plan: P0-02 và P0-03 đã hoàn tất; không có điểm lệch kiến trúc. Bước tiếp theo là triển khai contract session/assignment cho Meeting AI, chuyển Agent sang room động, rồi chạy E2E media thực tế. Repository `ecabinet` là local-only và không được push.
+
+## Checkpoint — Hoàn tất P0-01: đồng bộ contract transcript và snapshot
+
+Đã commit cục bộ theo cặp thay đổi đồng thời:
+
+- Root / Meeting Service: branch `feature/meeting-platform-microservices`, commit `03e9a8a` — `feat(contract): complete P0-01 meeting contract sync`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit `6749312` — `feat(meeting): sync runtime snapshot contract`.
+
+Phạm vi thay đổi:
+
+- Chốt route transcript canonical `GET /internal/v1/meetings/{meeting_id}/transcript` và đồng bộ OpenAPI, FastAPI, eCabinet client/BFF.
+- Triển khai `PUT /internal/v1/meetings/{meeting_id}/snapshot` với kiểm tra revision tăng dần, runtime tồn tại và trạng thái terminal; eCabinet vẫn là nguồn sự thật của snapshot.
+- Chuẩn hóa lỗi internal API về `application/problem+json` với `code`, `message` và `correlation_id`.
+- Không thêm `/minutes/analyze` vào Meeting Service; endpoint phân tích thuộc Meeting AI và được ghi ở P1-01.
+- Cập nhật `IMPLEMENTATION_GAP_CHECKLIST.md` và `merge_feature_plan.md`; không xâm lấn module document/task/conclusion/voting/qlvb, không thay đổi thuật toán ASR/speaker baseline.
+
+Kiểm thử đã chạy:
+
+- Targeted contract + Meeting Service: **26 tests passed**.
+- Full unit/contract suite trong WSL: **123 tests passed**.
+- `git diff --check`: đạt ở root và eCabinet trước khi commit.
+
+Giới hạn còn lại:
+
+- Idempotency key và retry an toàn thuộc P0-04.
+- Callback/event contract thuộc P0-05.
+- Đồng bộ participant động với Meeting AI thuộc P0-06; snapshot hiện chưa tự phát assignment sang Agent.
+- Chưa chạy lại regression nhiều mic ở checkpoint này vì thay đổi chỉ nằm ở contract/persistence, không ở audio/LiveKit.
+
+Đối chiếu merge plan: P0-01 đã hoàn tất đúng phạm vi, additive và không làm thay đổi kiến trúc lõi eCabinet. Bước tiếp theo theo thứ tự là P0-04, P0-05, P0-06 rồi P0-07. Repository `ecabinet` là local-only và không được push.
