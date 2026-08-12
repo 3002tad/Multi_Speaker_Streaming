@@ -46,6 +46,7 @@ from meeting_ai.config import settings
 from meeting_ai.api import create_application
 from meeting_ai.application.minutes_worker import MinutesWorker, MinutesWorkerError
 from meeting_ai.application.session_manager import SessionConflict, SessionManager
+from meeting_ai.application.transcript_coordinator import TranscriptCoordinator
 from meeting_ai.infrastructure.speaker_store import QdrantSpeakerStore
 from meeting_ai.core.assignment_state import AssignmentStateStore
 from meeting_ai.core.asr_scheduler import ZipformerDecodeScheduler
@@ -1932,6 +1933,13 @@ async def websocket_endpoint(
             await websocket.close(code=4409, reason="AI session is not active")
             return
     await websocket.accept()
+    async def send_transcript_text(message: str) -> None:
+        await websocket.send_text(message)
+
+    transcript_coordinator = TranscriptCoordinator(
+        send_transcript_text,
+        partial_interval_seconds=0.25,
+    )
     if runtime_session_id:
         session_manager.mark_websocket_recording(runtime_session_id)
     fallback_speaker = (display_name or identity).strip() or identity
@@ -2175,13 +2183,12 @@ async def websocket_endpoint(
         )
 
     last_sent_text = ""
-    last_partial_sent_at = 0.0
     last_speech_end_time = 0.0
     bg_tasks = set()
 
     async def asr_worker():
         nonlocal current_speaker
-        nonlocal last_sent_text, last_partial_sent_at
+        nonlocal last_sent_text
         nonlocal asr_recognizer, asr_stream
         nonlocal local_dictionary_generation
 
@@ -2320,27 +2327,13 @@ async def websocket_endpoint(
                     for _ in chunks:
                         audio_queue.task_done()
 
-                now = time.time()
-
-                if (
-                    text
-                    and text != last_sent_text
-                    and now - last_partial_sent_at >= 0.25
-                ):
+                if text and text != last_sent_text:
                     last_sent_text = text
-                    last_partial_sent_at = now
-                    partial_msg = {
-                        "partial": format_realtime_draft(text),
-                        "identity": identity,
-                        "speaker": current_speaker,
-                        "identity_method": "mic_fallback",
-                        "speaker_confidence": None,
-                        "ts": time.time()
-                    }
-                    try:
-                        await websocket.send_text(json.dumps(partial_msg, ensure_ascii=False))
-                    except Exception:
-                        pass
+                    await transcript_coordinator.publish_partial(
+                        format_realtime_draft(text),
+                        identity=identity,
+                        speaker=current_speaker,
+                    )
                 if deferred_command is not None:
                     await handle_command(deferred_command)
                 if stop_after_batch:
@@ -2518,14 +2511,6 @@ async def websocket_endpoint(
                 phonetic_result.text or raw_text
             )
 
-        async def emit_payload(message: dict) -> None:
-            try:
-                await websocket.send_text(
-                    json.dumps(message, ensure_ascii=False)
-                )
-            except Exception:
-                pass
-
         utterance_id = uuid.uuid4().hex
         refinement_pending = False
         refinement_ms = 0
@@ -2572,7 +2557,7 @@ async def websocket_endpoint(
             "refinement_pending": refinement_pending,
             "revision": 1,
         }
-        await emit_payload(payload)
+        await transcript_coordinator.publish_final(payload)
         schedule_topic_observation(
             turn_id=turn_id,
             raw_text=streaming_text,
@@ -2622,6 +2607,7 @@ async def websocket_endpoint(
                     current_turn_id = room_timeline.speech_started(
                         identity, timestamp=last_audio_timestamp
                     )
+                    transcript_coordinator.begin_turn()
                     last_sent_text = ""
                     current_speaker = fallback_speaker
                     print(

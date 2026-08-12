@@ -532,18 +532,17 @@ delete retry không để metadata/object mồ côi.
 
 ### P1-04 — Hoàn tất cấu trúc Meeting AI
 
-**Trạng thái thực thi hiện tại:** `[-]` — đã chuyển entrypoint FastAPI/WebSocket
-và Agent vào package `meeting_ai`; SessionManager, FastAPI factory và Qdrant
-speaker-store boundary đã có. Compatibility wrapper `ai_server.py` và
-`agent.py` vẫn được giữ. Chưa thể đóng task vì streaming regression chưa ổn
-định qua các lần chạy; không thay ASR/DSP/VAD/speaker-ID trong task này.
+**Trạng thái thực thi hiện tại:** `[x]` — đã hoàn tất cấu trúc Meeting AI và
+đã xác nhận compatibility wrapper, streaming regression và E2E full platform.
+`ai_server.py`/`agent.py` vẫn được giữ làm wrapper; không thay ASR/DSP/VAD/
+speaker-ID trong task này.
 
-- [ ] Di chuyển FastAPI/API/WebSocket khỏi `ai_server.py` vào
+- [x] Di chuyển FastAPI/API/WebSocket khỏi `ai_server.py` vào
   `meeting_ai/main.py`, `meeting_ai/api/` và application services.
-- [ ] Hoàn tất SessionManager, TranscriptCoordinator, callback infrastructure
+- [x] Hoàn tất SessionManager, TranscriptCoordinator, callback infrastructure
   và Qdrant store boundary.
-- [ ] Di chuyển worker vào `meeting_ai/agent/`; `agent.py` chỉ là wrapper.
-- [ ] Không thay ASR/DSP/speaker threshold trong commit refactor.
+- [x] Di chuyển worker vào `meeting_ai/agent/`; `agent.py` chỉ là wrapper.
+- [x] Không thay ASR/DSP/speaker threshold trong commit refactor.
 
 **Điều kiện đạt:** wrapper cũ/mới pass compatibility + streaming regression;
 WER/CER giữ baseline.
@@ -595,6 +594,35 @@ WER/CER giữ baseline.
   speaker ID 956ms; minutes revision được lưu khoảng 38s sau event final. Mốc
   media `ended_at` và server `created_at` chưa cùng clock, nên chưa dùng để
   báo end-to-end delay tuyệt đối; cần chuẩn hóa observability latency ở P1-06.
+
+### Nhật ký bắt đầu subtask P1-04 — 2026-08-12
+
+- Chọn phần còn thiếu: tách `TranscriptCoordinator` khỏi WebSocket handler,
+  giữ callback publisher của Agent và toàn bộ thuật toán ASR nguyên trạng.
+- Gate subtask: unit test coordinator, full pytest, streaming regression và
+  E2E full platform; chưa đánh dấu P1-04 hoàn thành trước khi đủ bằng chứng.
+
+- Đóng P1-04 sau khi hoàn tất subtask: `TranscriptCoordinator` đã tách policy
+  partial/final khỏi WebSocket handler, có throttle partial theo monotonic
+  clock, reset theo turn và chống publish final trùng khóa global turn. Callback
+  publisher vẫn nằm trong Agent package; coordinator không truy cập DB, Qdrant
+  hay xử lý audio.
+- Bằng chứng kiểm thử 2026-08-12: targeted coordinator/SessionManager/Agent/
+  contract **24 pass, 6 subtests**; full WSL `pytest -q` **167 pass, 5 warnings,
+  6 subtests**; `compileall` và `git diff --check` đạt. Streaming regression
+  đạt `DUAL_MIC_PROBE_OK`, **2/2 final**, coverage 100%, không có
+  `unassigned_tail`, overlap đầy đủ và WER/CER gate pass. E2E full platform
+  chạy `scripts/run_e2e_streaming.sh --audio audio/thayDung_noi.wav` đạt
+  `E2E_OK`, 1 final transcript, minutes revision 1 và cleanup thành công.
+- Kiểm tra compatibility wrapper sau bản sửa cuối: import `ai_server.app`,
+  `meeting_ai.main.app` và `agent.main` đạt `COMPATIBILITY_IMPORT_OK`. Lần
+  streaming regression và E2E cuối đều chạy sau thay đổi reset throttle ở
+  `begin_turn()`; không còn container Meeting Service do runner tạo.
+- Giới hạn còn lại: chất lượng ASR nói nhanh và chuẩn hóa clock/latency là
+  phạm vi P0-07/P1-06, không mở rộng trong P1-04. Thay đổi hiện tại chưa
+  commit; cần review diff trước checkpoint commit.
+- Đối chiếu merge plan: hoàn tất đúng P1-04; bước ưu tiên tiếp theo là P1-05
+  Compose full platform, chuyển AI/Agent khỏi process WSL và dùng internal DNS.
 
 ### P1-05 — Compose Meeting Platform đầy đủ
 
