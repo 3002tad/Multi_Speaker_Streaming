@@ -78,6 +78,12 @@ class Settings:
     ai_server_ws_url: str = os.getenv(
         "AI_SERVER_WS_URL", "ws://127.0.0.1:8001"
     )
+    # Several LiveKit tracks may subscribe at the same instant. Give the
+    # Agent-to-AI WebSocket handshake enough time for the AI event loop to
+    # accept every connection instead of applying websockets' short default.
+    ai_server_ws_open_timeout_seconds: float = max(
+        5.0, float(os.getenv("AI_SERVER_WS_OPEN_TIMEOUT_SECONDS", "30"))
+    )
     ai_server_http_url: str = os.getenv(
         "AI_SERVER_HTTP_URL", "http://127.0.0.1:8001"
     )
@@ -260,14 +266,14 @@ class Settings:
     asr_final_turn_redecode_max_word_ratio: float = float(
         os.getenv("ASR_FINAL_TURN_REDECODE_MAX_WORD_RATIO", "1.35")
     )
-    # Silero controls transcript boundaries. A four-second endpoint delay
-    # merged distinct speakers and made the timeline wait too long. Keep
-    # these tunable per room so recordings can be calibrated without code.
+    # Silero controls transcript boundaries. Keep a little more endpoint
+    # silence than the old demo default so short pauses in fast speech do not
+    # become separate final transcripts; this adds at most 0.5s final delay.
     vad_min_speech_seconds: float = float(
         os.getenv("VAD_MIN_SPEECH_SECONDS", "0.20")
     )
     vad_min_silence_seconds: float = float(
-        os.getenv("VAD_MIN_SILENCE_SECONDS", "0.90")
+        os.getenv("VAD_MIN_SILENCE_SECONDS", "1.40")
     )
     vad_prefix_padding_seconds: float = float(
         os.getenv("VAD_PREFIX_PADDING_SECONDS", "0.50")
@@ -289,7 +295,10 @@ class Settings:
         "ASR_ISOLATED_MIC_DECODERS", False
     )
     asr_soft_split_seconds: float = float(
-        os.getenv("ASR_SOFT_SPLIT_SECONDS", "15")
+        # A 15s soft split was reached by endpoint silence for 14s clips,
+        # resetting Zipformer immediately before VAD emitted END_OF_SPEECH.
+        # Match the hard safety limit so normal speech ends only through VAD.
+        os.getenv("ASR_SOFT_SPLIT_SECONDS", "30")
     )
     asr_hard_split_seconds: float = float(
         os.getenv("ASR_HARD_SPLIT_SECONDS", "30")

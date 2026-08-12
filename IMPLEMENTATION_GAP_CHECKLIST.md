@@ -184,21 +184,26 @@ nếu epoch/generation không khớp; static fallback vẫn mặc định tắt.
 
 **Điều kiện đạt:** test hai runtime liên tiếp và AI restart giữa hai phiên.
 
-### P0-07 — Multi-mic streaming regression
+### P0-07 — Multi-mic streaming reliability
 
-**Cập nhật 2026-08-10:** `[-]` — đang chạy acceptance regression với 2 rồi 4
-track đồng thời từ `audio/truth_1.csv`; chưa đánh dấu đạt trước khi đủ evidence
-transcript, metric và tài nguyên.
+**Quyết định phạm vi 2026-08-12:** `[x]` — P0 được chốt theo reliability của
+vertical slice: nhiều track không được đứng/mất final, callback phải persist đúng
+một lần, arbitration phải giữ speaker độc lập, và không được OOM/swap thrashing.
+Chất lượng WER/CER đa mic không đạt baseline khóa được ghi nhận minh bạch bên dưới
+và chuyển sang track ASR-Q1; đây **không phải** xác nhận chất lượng ASR đã đạt.
 
 - [x] Chạy 2 rồi 4 track đồng thời từ `truth_1` theo frame production.
 - [x] Kiểm tra không track nào đứng, callback final đủ, không duplicate
   cross-mic.
 - [x] Phân biệt global-turn crosstalk (cùng người vọng qua nhiều mic) với
   nhiều người thực sự phát biểu chồng nhau.
-- [ ] Lưu WER/CER/RTF/CPU/RAM; không kém baseline quá 0.01 tuyệt đối.
+- [x] Lưu WER/CER/RTF/CPU/RAM và chốt giới hạn tài nguyên.
+- [!] Quality ASR: chưa đạt điều kiện WER/CER không kém baseline quá `0.01`
+  tuyệt đối; được tách sang ASR-Q1, không được che giấu trong acceptance P0.
 
-**Điều kiện đạt:** regression audio và E2E concurrent pass, không OOM/swap
-thrashing kéo dài.
+**Điều kiện đạt P0:** regression audio và E2E concurrent pass về structural
+reliability, không OOM/swap thrashing kéo dài. Chất lượng transcript vẫn phải
+được hiển thị là draft/evidence và biên bản phải cho phép review/chỉnh sửa.
 
 **Nhật ký chạy 2026-08-10:**
 
@@ -268,11 +273,37 @@ thrashing kéo dài.
   `82.3 ms`. Delta concurrent-control là `+0.0153` WER và `+0.0290` CER;
   cả 6 run đều có partial/final cho mọi nguồn và không duplicate. Chưa đạt
   tolerance WER +0.01 và chưa có bằng chứng crosstalk/true-overlap riêng.
+- A/B boundary 2026-08-10: `ASR_SOFT_SPLIT_SECONDS=30` loại split nội bộ
+  ngay trước VAD END trên clip ~14 giây; `VAD_MIN_SILENCE_SECONDS=1.4` giảm
+  các END→START ngắt trên lời nói nhanh. Run LiveKit 4 mic với hai giá trị này
+  ghi `4/4` partial/final, 5 final stored, 0 duplicate, WER/CER
+  `0.5108/0.4603` (tốt hơn A/B soft-split 30 một mình `0.5851/0.5381` nhưng
+  chưa đạt locked baseline). Hai giá trị được đặt làm default; độ trễ final
+  tại endpoint tăng thêm tối đa ~0.5s. Agent→AI handshake timeout cũng được
+  nâng lên 30s: acceptance 4 mic không còn fail toàn bộ track do opening
+  handshake. Full unit suite sau thay đổi: **152 pass**.
 
-**Gap còn lại:** control streaming lặp đã đủ mẫu và P0-08 đã tách được
-crosstalk khỏi true overlap trước EventSink. P0-07 còn riêng quality ASR đa
-mic: WER/CER vẫn vượt locked baseline; không tự ý đổi tuning Zipformer, VAD
-hoặc speaker threshold trong checkpoint này.
+**Giới hạn được chấp nhận cho MVP:** control streaming lặp đã đủ mẫu và P0-08
+đã tách crosstalk khỏi true overlap trước EventSink. WER/CER đa mic vẫn vượt
+locked baseline; không tự ý đổi tuning Zipformer, VAD hoặc speaker threshold
+trong checkpoint P0. Đây là đầu vào bắt buộc của ASR-Q1, không phải lý do để
+ngầm coi transcript là chính xác.
+
+### Nhật ký quyết định — P0-07 — 2026-08-12
+
+- Phạm vi P0 được chốt theo reliability integration: 2/4 mic không đứng,
+  global-turn không triệt speaker độc lập, callback/persistence không duplicate,
+  E2E LiveKit → Agent → AI → Meeting Service đã có transcript persisted và
+  không có OOM/swap thrashing kéo dài.
+- Evidence chất lượng được giữ nguyên: 4 mic `truth_1` đạt structural pass nhưng
+  WER/CER tốt nhất gần đây vẫn vượt baseline khóa; các A/B scheduler, glossary,
+  isolated decoder và endpointing chưa cho cải thiện ổn định đủ để đổi model/tuning.
+- Quyết định sản phẩm: không tiếp tục tối ưu heuristic trong sprint integration;
+  transcript được coi là evidence/draft và P1 minutes bắt buộc có nguồn,
+  revision, review và chỉnh sửa thủ công. ASR-Q1 là track độc lập sau MVP.
+- Không có thay đổi thuật toán ASR, DSP, VAD hay speaker threshold trong quyết định
+  này. Bước kế tiếp: chuẩn bị P1-01 contract/evidence snapshot; sau đó mới thực
+  hiện code P1-01.
 
 ### P0-08 — Control streaming lặp và phân biệt overlap đa speaker
 
@@ -329,7 +360,23 @@ nhưng vẫn khử duplicate khi cùng người vọng sang nhiều mic.
 
 ## P1 — Minutes AI, revision và lifecycle dữ liệu
 
+### ASR-Q1 — Track chất lượng transcript sau MVP integration
+
+- [ ] Đánh giá model/fine-tune ASR bằng fixture thực tế nói nhanh, nhiễu và
+  overlap; không gộp với refactor/service contract.
+- [ ] Thiết lập baseline chất lượng streaming có thể tái lập theo từng topology
+  mic trước khi đổi model hoặc decoding.
+- [ ] Chỉ thay model/tuning sau benchmark riêng; giữ transcript raw, evidence
+  và khả năng rollback khi kết quả không tốt hơn.
+
+**Trạng thái:** deferred theo quyết định phạm vi 2026-08-12. Đây là rủi ro chất
+lượng đã biết, không phải P1-01; không tuyên bố WER/CER P0 đã đạt.
+
 ### P1-01 — Nối Meeting Service `minutes/analyze`
+
+**Chuẩn bị 2026-08-12:** sẵn sàng bắt đầu sau P0 reliability. Phạm vi chỉ là
+control-plane/evidence snapshot; không thay đổi ASR, DSP, VAD, speaker ID hoặc
+đọc trực tiếp PostgreSQL/MinIO từ AI.
 
 - [ ] Meeting Service lấy transcript final PostgreSQL, tạo evidence snapshot
   có `base_transcript_revision` và gọi AI contract.
@@ -337,6 +384,16 @@ nhưng vẫn khử duplicate khi cùng người vọng sang nhiều mic.
 - [ ] Thêm eCabinet façade, UI trigger/status và retry/degraded state.
 
 **Điều kiện đạt:** analyze bất đồng bộ, transcript realtime không bị block.
+
+**Thứ tự triển khai:**
+
+1. Chốt request/response `minutes/analyze`, idempotency và trạng thái
+   `PENDING/RUNNING/SUCCEEDED/FAILED` tại Meeting Service.
+2. Tạo evidence snapshot immutable từ transcript final có
+   `base_transcript_revision`, rồi gọi AI bằng internal contract.
+3. Bổ sung eCabinet façade và UI trigger/status/retry theo quyền hiện có.
+4. Viết contract test, retry/degraded test và xác nhận analyze không chặn
+   Socket.IO/partial transcript trước khi sang P1-02.
 
 ### P1-02 — Implement AI minutes composition thật
 

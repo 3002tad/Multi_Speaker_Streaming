@@ -320,7 +320,11 @@ async def process_track(
     print(f"[track] Đang xử lý mic: {display_name} ({identity})")
     try:
         async with websockets.connect(
-            uri, max_size=None, ping_interval=20, ping_timeout=20
+            uri,
+            max_size=None,
+            ping_interval=20,
+            ping_timeout=20,
+            open_timeout=settings.ai_server_ws_open_timeout_seconds,
         ) as websocket:
 
             async def receive_results() -> None:
