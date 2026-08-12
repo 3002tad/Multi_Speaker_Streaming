@@ -514,10 +514,14 @@ delete retry không để metadata/object mồ côi.
   test DB commit lỗi sau upload xác nhận object được xóa; full `pytest -q` đạt
   **162 pass**;
   SQLAlchemy SQLite smoke cho APPROVED → DRAFT đạt. `git diff --check` đạt.
-- Giới hạn: Docker daemon không khả dụng trong môi trường hiện tại nên chưa
-  chạy migration/partial-failure trên PostgreSQL/MinIO container thật và chưa
-  chạy lại LiveKit E2E sau thay đổi persistence. Đây là điều kiện cần bổ sung
-  trước acceptance production, không phải gap của contract/unit gate.
+- Kiểm thử bổ sung bằng Docker: `docker compose up -d --build` khởi chạy
+  PostgreSQL/Redis/MinIO/Meeting Service healthy; migration head là
+  `0009_purge_tombstones`. API smoke trong container đã chạy đủ runtime →
+  transcript → DRAFT → stop/review/approve → DOCX qua MinIO → purge, kết quả
+  `DOCKER_API_SMOKE_OK`; không xóa volume.
+- Giới hạn: chưa chạy lại LiveKit E2E với AI/Agent sau thay đổi persistence.
+  API/persistence Docker đã pass; LiveKit full-platform E2E vẫn cần bổ sung
+  trước acceptance production.
 - Đối chiếu merge plan: hoàn tất đúng lifecycle Meeting Service, không tạo FK,
   query chéo hoặc ghi sang document/task/conclusion/QLVB; không thay thuật toán
   ASR/DSP/VAD/speaker-ID.
