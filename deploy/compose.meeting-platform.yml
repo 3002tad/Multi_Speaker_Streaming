@@ -1,0 +1,82 @@
+# Run together with meeting_service/docker-compose.yml.  The private env file
+# is outside source and is supplied with --env-file; it is also injected into
+# AI/Agent only so secrets are never copied into an image.
+services:
+  meeting-service:
+    environment:
+      MEETING_AI_ENABLED: "true"
+      MEETING_AI_BASE_URL: http://meeting-ai-api:8001
+      MEETING_AI_CALLBACK_URL: http://meeting-service:8002/internal/v1/ai-events
+      MEETING_SERVICE_KEY: ${MEETING_SERVICE_KEY:-${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}}
+
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:--1}
+    volumes:
+      - ${MEETING_RUNTIME_HOST_PATH:-/home/ntd/meeting_runtime}/ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  meeting-ai-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.meeting-ai
+    env_file:
+      - ${MEETING_PLATFORM_ENV_FILE:?set MEETING_PLATFORM_ENV_FILE to the private runtime env file}
+    environment: &meeting_ai_environment
+      MEETING_RUNTIME_DIR: /runtime
+      HF_HOME: /runtime/huggingface
+      XDG_CACHE_HOME: /runtime/python_cache
+      AI_SERVER_HOST: 0.0.0.0
+      AI_SERVER_PORT: "8001"
+      AI_SERVER_HTTP_URL: http://meeting-ai-api:8001
+      AI_SERVER_WS_URL: ws://meeting-ai-api:8001
+      BACKEND_INTERNAL_URL: http://meeting-service:8002/internal/v1/ai-events
+      MEETING_SERVICE_KEY: ${MEETING_SERVICE_KEY:-${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}}
+      OLLAMA_URL: http://ollama:11434
+      DATABASE_PATH: /runtime/data/meeting.db
+      SPEAKER_DATABASE_PATH: /runtime/data/qdrant_speakers
+      ZIPFORMER_MODEL_DIR: /runtime/Zipformer-30M-RNNT-Streaming-6000h
+      ASR_ENHANCER_MODEL: /runtime/models/dpdfnet_baseline.onnx
+      PHONETIC_G2P_MODEL_PATH: /runtime/models/g2p_multilingual_byT5_tiny_onnx
+      ADAPTIVE_DICTIONARY_STATE_PATH: /runtime/data/adaptive_dictionary.json
+      ADAPTIVE_DICTIONARY_MANUAL_PATH: /runtime/data/meeting_lexicon.txt
+      TOPIC_DISCOVERY_STATE_PATH: /runtime/data/topic_discovery.json
+      ZIPFORMER_HOTWORDS_PATH: /runtime/data/zipformer_hotwords.txt
+      ZIPFORMER_BPE_VOCAB_PATH: /runtime/data/zipformer.bpe.vocab
+      PHONETIC_DICTIONARY_PATH: /runtime/data/phonetic_dictionary.txt
+    volumes:
+      - ${MEETING_RUNTIME_HOST_PATH:-/home/ntd/meeting_runtime}:/runtime
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8001/health/ready').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 120s
+    restart: unless-stopped
+
+  livekit-agent:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.livekit-agent
+    env_file:
+      - ${MEETING_PLATFORM_ENV_FILE:?set MEETING_PLATFORM_ENV_FILE to the private runtime env file}
+    environment:
+      <<: *meeting_ai_environment
+      AGENT_ASSIGNMENT_ENABLED: "true"
+      AGENT_STATIC_ROOM_FALLBACK: "false"
+    depends_on:
+      meeting-ai-api:
+        condition: service_healthy
+      meeting-service:
+        condition: service_healthy
+    restart: unless-stopped

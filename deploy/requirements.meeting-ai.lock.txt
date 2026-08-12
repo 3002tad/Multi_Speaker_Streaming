@@ -1,0 +1,26 @@
+# CPU-only runtime for the Meeting AI API.  Models and Hugging Face cache are
+# bind-mounted at /runtime; they must never be downloaded into this image.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+fastapi==0.139.2
+uvicorn==0.51.0
+httpx==0.28.1
+websockets==16.1.1
+python-multipart==0.0.32
+numpy==2.5.1
+soundfile==0.14.0
+torch==2.13.0+cpu
+transformers==4.57.6
+sentencepiece==0.2.2
+sherpa_onnx==1.13.4
+onnxruntime==1.27.0
+optimum==2.1.0
+optimum-onnx==0.1.0
+qdrant-client==1.18.0
+openai==2.46.0
+livekit==1.1.13
+livekit-agents==1.6.6
+livekit-plugins-silero==1.6.6
+epitran==1.35.2
+panphon==0.22.2
+sea-g2p==0.7.20

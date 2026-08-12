@@ -1447,6 +1447,7 @@ async def meeting_ai_ready() -> dict[str, object]:
         "status": "ok",
         "service": "meeting-ai-core",
         "models": {"zipformer": True, "wavlm": True, "vad": True},
+        "speaker_profiles": speaker_store.count(),
         "active_session": session_manager.is_active(),
         "active_streams": sorted(active_asr_streams),
         "zipformer_scheduler": zipformer_scheduler.telemetry(),
@@ -2966,9 +2967,10 @@ def run_server() -> None:
     import os
     import uvicorn
 
+    host = os.getenv("AI_SERVER_HOST", "127.0.0.1")
     port = int(os.getenv("AI_SERVER_PORT", "8001"))
     print(f"\n🚀 Khởi chạy AI pipeline tại http://localhost:{port} ...")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,7 @@
+# The Agent only forwards LiveKit audio and does not load ASR/WavLM/Qdrant.
+httpx==0.28.1
+websockets==16.1.1
+numpy==2.5.1
+livekit==1.1.13
+livekit-api==1.2.0
+

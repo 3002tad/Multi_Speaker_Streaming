@@ -626,13 +626,52 @@ WER/CER giữ baseline.
 
 ### P1-05 — Compose Meeting Platform đầy đủ
 
-- [ ] Thêm Dockerfile/requirements lock cho AI Core và LiveKit Agent.
-- [ ] Compose có AI, Agent, Meeting Service, Redis, MinIO, PostgreSQL với
+### Nhật ký bắt đầu P1-05 — 2026-08-12
+
+- Chọn task: container hóa `meeting-ai-api` và `livekit-agent`, kết nối với
+  Meeting Service bằng internal DNS. Runtime/model/Qdrant tiếp tục mount từ
+  thư mục ngoài source; không thay thuật toán ASR/DSP/VAD/speaker-ID.
+- Gate: build Compose, health/readiness, restart giữ Qdrant profile, streaming
+  regression và E2E full platform không còn native AI/Agent process.
+
+- [x] Thêm Dockerfile/requirements lock cho AI Core và LiveKit Agent.
+- [x] Compose có AI, Agent, Meeting Service, Redis, MinIO, PostgreSQL với
   health dependencies và internal DNS/network.
-- [ ] Mount model/cache/Qdrant runtime ngoài source; restart không mất profile.
-- [ ] Không cần chạy AI/Agent thủ công bằng process WSL.
+- [x] Mount model/cache/Qdrant runtime ngoài source; restart không mất profile.
+- [x] Không cần chạy AI/Agent thủ công bằng process WSL.
 
 **Điều kiện đạt:** container restart đạt transcript và Qdrant persistence.
+
+### Nhật ký thực thi — P1-05 — 2026-08-12
+
+- Thêm `deploy/Dockerfile.meeting-ai`, `deploy/Dockerfile.livekit-agent`, lock
+  dependency riêng và `deploy/compose.meeting-platform.yml`. `meeting-ai-api`
+  là một worker duy nhất, mount `${MEETING_RUNTIME_HOST_PATH}` vào `/runtime`;
+  Agent không mount model/Qdrant. Ollama dùng `${MEETING_RUNTIME_HOST_PATH}/ollama`.
+  Không model/cache/key nào được copy vào source hoặc image.
+- Chuyển đường gọi nội bộ sang `meeting-ai-api:8001`, `meeting-service:8002`
+  và `ollama:11434`. `scripts/run_e2e_streaming.sh` nay chỉ chạy Compose,
+  không gọi `run_demo.sh`, `ai_server.py` hay `agent.py` native. File native
+  override cũ được ghi rõ là legacy P1-04.
+- Bổ sung `python-multipart` vào AI lock sau khi container startup phát hiện
+  endpoint enrollment cần dependency này. `/health/ready` báo thêm số profile
+  Qdrant để kiểm tra persistence, không thay logic nhận dạng.
+- Kiểm thử: Compose config và `bash -n` runner đạt; full WSL `pytest -q`
+  **167 pass, 5 warnings, 6 subtests**. Build thật image AI/Agent đạt. E2E
+  containerized với `audio/thayDung_noi.wav` đạt `E2E_OK`: 1 transcript final,
+  minutes revision 1. Internal DNS Agent → AI và AI → Meeting Service đều
+  trả HTTP 200.
+- Restart gate: AI readiness trước/sau restart có `speaker_profiles: 15 → 15`;
+  Zipformer/WavLM/VAD/Qdrant nạp lại từ `/runtime`. Agent ghi nhận restart
+  control-plane và polling phục hồi; một số lỗi kết nối ngắn trong thời gian
+  AI chưa ready là retry expected.
+- Giới hạn: Ollama local đã unload model để tránh tranh RAM, nhưng daemon system
+  chưa dừng hẳn vì WSL hiện yêu cầu mật khẩu sudo. Ollama container là runtime
+  được dùng trong E2E. P1-05 chưa commit; cần review diff và kiểm tra cleanup
+  trước checkpoint.
+- Đối chiếu merge plan: P1-05 hoàn tất container hóa Meeting AI/Agent, giữ
+  ranh giới microservice và không xâm lấn eCabinet. Bước tiếp theo: P1-06
+  observability latency/graceful SIGTERM, sau đó P1-07 UI acceptance.
 
 ### P1-06 — Config, readiness và operation
 

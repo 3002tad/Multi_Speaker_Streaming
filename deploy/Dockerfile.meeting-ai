@@ -1,0 +1,30 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libffi8 \
+        libgomp1 \
+        libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY deploy/requirements.meeting-ai.lock.txt /tmp/requirements.lock.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.lock.txt
+
+COPY meeting_ai /app/meeting_ai
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    MEETING_RUNTIME_DIR=/runtime \
+    HF_HOME=/runtime/huggingface \
+    XDG_CACHE_HOME=/runtime/python_cache \
+    AI_SERVER_HOST=0.0.0.0 \
+    AI_SERVER_PORT=8001
+
+EXPOSE 8001
+
+# Exactly one worker owns Zipformer/WavLM and the embedded Qdrant store.
+CMD ["python", "-m", "meeting_ai.main"]
+

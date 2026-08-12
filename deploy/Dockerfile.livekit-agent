@@ -1,0 +1,15 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY deploy/requirements.livekit-agent.lock.txt /tmp/requirements.lock.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.lock.txt
+
+COPY meeting_ai /app/meeting_ai
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    MEETING_RUNTIME_DIR=/runtime
+
+CMD ["python", "-m", "meeting_ai.agent.worker"]
+

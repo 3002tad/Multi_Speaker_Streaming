@@ -58,13 +58,22 @@ username: admin
 password: admin@123
 ```
 
-## 3. Khởi chạy Meeting Service
+## 3. Khởi chạy Meeting Platform containerized
 
-Meeting Service dùng PostgreSQL/Redis riêng. Không xóa volume `backend_*`.
+Meeting Service, Meeting AI Core, LiveKit Agent và Ollama chạy cùng Compose;
+PostgreSQL/Redis/MinIO vẫn là dữ liệu riêng của Meeting Service. Không xóa
+volume `backend_*`.
 
 ```bash
-cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming/meeting_service
-docker compose -p meeting_service up -d --build
+cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
+set -a
+source /home/ntd/meeting_runtime/meeting-platform.env
+set +a
+export MEETING_PLATFORM_ENV_FILE=/home/ntd/meeting_runtime/meeting-platform.env
+
+docker compose --env-file "$MEETING_PLATFORM_ENV_FILE" \
+  -f meeting_service/docker-compose.yml \
+  -f deploy/compose.meeting-platform.yml up -d --build
 ```
 
 Healthcheck:
@@ -72,8 +81,14 @@ Healthcheck:
 ```bash
 curl -fsS http://127.0.0.1:8002/health/live
 curl -fsS http://127.0.0.1:8002/health/ready
-docker compose -p meeting_service ps
+docker compose --env-file "$MEETING_PLATFORM_ENV_FILE" \
+  -f meeting_service/docker-compose.yml \
+  -f deploy/compose.meeting-platform.yml ps
 ```
+
+Chi tiết mount runtime/model và lệnh pull Qwen lần đầu nằm ở
+[`deploy/README.md`](deploy/README.md). Không chạy `ai_server.py` hoặc
+`agent.py` native khi stack Compose đang hoạt động.
 
 ### E2E audio đồng bộ (khuyến nghị thay cho chạy thủ công từng service)
 
@@ -201,8 +216,10 @@ docker compose down
 cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming/ecabinet/backend
 docker compose down
 
-cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming/meeting_service
-docker compose -p meeting_service down
+cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
+docker compose --env-file "$MEETING_PLATFORM_ENV_FILE" \
+  -f meeting_service/docker-compose.yml \
+  -f deploy/compose.meeting-platform.yml down --remove-orphans
 ```
 
 Các lệnh trên chỉ dừng/xóa container và network của compose, không xóa volume.

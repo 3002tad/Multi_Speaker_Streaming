@@ -1,6 +1,6 @@
-# Local E2E override only.  The AI Core and Agent still run natively in WSL
-# until P1-05 containerizes them; therefore the two directions use different
-# loopback names deliberately.
+# Legacy P1-04 native-WSL E2E override retained only for reproducing an older
+# bridge. P1-05 uses deploy/compose.meeting-platform.yml and internal DNS;
+# scripts/run_e2e_streaming.sh no longer loads this file.
 services:
   meeting-service:
     environment:
