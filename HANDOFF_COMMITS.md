@@ -389,3 +389,46 @@ Giới hạn còn lại:
 - Chưa fault-injection PostgreSQL/Redis/MinIO production hoặc LiveKit outage production.
 
 Đối chiếu merge plan: P0-08 đã đạt gate về điều phối crosstalk/true overlap, đúng phạm vi additive. Không có sai lệch kiến trúc. Bước tiếp theo theo ưu tiên là xử lý P0-07: phân tích quality/độ trễ multi-mic mà không làm suy giảm baseline và chạy lại regression 2/4 mic.
+
+## Checkpoint — Hoàn tất P1-01: Minutes analysis control-plane
+
+Đã commit cục bộ theo cặp repository:
+
+- Root / Meeting Service + Meeting AI: branch `feature/meeting-platform-microservices`, commit `709575e` — `feat(minutes): add P1-01 evidence analysis control plane`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit `022ac25` — `feat(meeting): add minutes analysis trigger and status`.
+- eCabinet là repository local-only; không push remote.
+
+Phạm vi thay đổi:
+
+- Meeting Service thêm bảng/migration `meeting_minutes_analyses`, lưu trạng thái
+  `PENDING/RUNNING/SUCCEEDED/FAILED` và evidence bất biến lấy từ transcript final.
+- Bổ sung `GET/POST /internal/v1/meetings/{meeting_id}/minutes/analyze`; Meeting
+  Service chỉ gửi evidence qua internal contract tới Meeting AI. AI không truy cập
+  PostgreSQL hoặc MinIO của Meeting Service/eCabinet.
+- AI acceptance endpoint kiểm tra schema evidence và trả `202 accepted`; chưa
+  gọi Qwen hoặc tạo `minutes.updated`, phần đó thuộc P1-02.
+- eCabinet bổ sung façade theo quyền hiện có, API client và UI trigger/status/retry
+  trong Meeting Workspace. Không sửa các module document/task/conclusion/voting/qlvb.
+- `base_transcript_revision` dùng fingerprint tất định của tập segment final để
+  tránh va chạm khi segment được sửa hoặc thêm mới.
+
+Kiểm thử đã chạy:
+
+- Full unit/contract suite trong WSL: **155/155 pass**.
+- Python compile cho Meeting Service, Meeting AI, tests và eCabinet backend: đạt.
+- Frontend production build trong image Docker: đạt.
+- Meeting Service migration image build và Alembic head: `0006_minutes_analysis`.
+- `git diff --check`: đạt trước commit; sau commit root và eCabinet đều sạch.
+
+Giới hạn còn lại:
+
+- Chưa chạy full Docker E2E PostgreSQL/Redis/MinIO + Qwen + callback
+  `minutes.updated`; đây là phạm vi P1-02.
+- Khi Meeting AI chưa cấu hình hoặc không phản hồi, analysis chuyển `FAILED` để
+  UI retry; transcript realtime vẫn độc lập.
+- WER/CER vẫn là ASR-Q1 đã deferred, không thay đổi trong checkpoint này.
+
+Đối chiếu merge plan: P1-01 đã hoàn tất đúng phạm vi control-plane/evidence,
+additive và không xâm lấn kiến trúc eCabinet. Bước tiếp theo là P1-02: Qwen
+composer nhận evidence, tạo structured minutes và callback `minutes.updated`; sau
+đó P1-03 xử lý stale result, manual revision và approved immutability.
