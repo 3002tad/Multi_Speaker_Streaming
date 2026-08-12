@@ -181,6 +181,23 @@ def _validate_minutes_event(request: Request, event: AIEvent) -> None:
         UUID(str(payload.get("generation_id")))
     except (ValueError, TypeError, AttributeError) as exc:
         raise HTTPException(status_code=422, detail="minutes.updated ids must be UUIDs") from exc
+    analysis_service = getattr(request.app.state, "minutes_analysis", None)
+    if analysis_service is not None:
+        analysis = analysis_service.repository.get_by_id(UUID(str(payload["analysis_id"])))
+        if analysis is None:
+            raise HTTPException(status_code=409, detail="minutes.updated references unknown analysis")
+        if str(analysis.get("meeting_id")) != str(event.meeting_id):
+            raise HTTPException(status_code=409, detail="minutes.updated analysis meeting mismatch")
+        expected_generation = str(analysis.get("generation_id") or "")
+        if expected_generation and expected_generation != str(payload["generation_id"]):
+            raise HTTPException(status_code=409, detail="minutes.updated generation is stale")
+        expected_transcript_revision = int(analysis.get("base_transcript_revision") or 0)
+        if expected_transcript_revision != int(payload["base_transcript_revision"]):
+            raise HTTPException(status_code=409, detail="minutes.updated transcript snapshot is stale")
+        supplied_minutes_revision = payload.get("base_minutes_revision")
+        expected_minutes_revision = int(analysis.get("base_minutes_revision") or 0)
+        if supplied_minutes_revision is not None and int(supplied_minutes_revision) != expected_minutes_revision:
+            raise HTTPException(status_code=409, detail="minutes.updated minutes snapshot is stale")
     transcript = _content(request).transcript(event.meeting_id)
     known_ids = {
         str(item.get("segment_id"))
@@ -201,7 +218,9 @@ def _validate_runtime(request: Request, event: AIEvent) -> None:
         raise HTTPException(status_code=404, detail="callback runtime not found")
     if runtime.meeting_id != event.meeting_id:
         raise HTTPException(status_code=409, detail="callback meeting does not match runtime")
-    if runtime.status in {RuntimeStatus.COMPLETED, RuntimeStatus.FAILED}:
+    if runtime.status == RuntimeStatus.FAILED:
+        raise HTTPException(status_code=409, detail="callback runtime has failed")
+    if runtime.status == RuntimeStatus.COMPLETED and event.type != "minutes.updated":
         raise HTTPException(status_code=409, detail="callback runtime is no longer active")
 
 
@@ -229,13 +248,40 @@ async def receive_ai_event(request: Request, event: AIEvent) -> dict[str, str]:
     if status == "accepted":
         if event.type == "minutes.updated":
             current = _content(request).minutes(event.meeting_id)
-            _content(request).save_minutes(
-                event.meeting_id,
-                event.payload["document"],
-                "DRAFT",
-                int(current.get("revision", 0)),
-            )
             analysis_service = getattr(request.app.state, "minutes_analysis", None)
+            analysis = (
+                analysis_service.repository.get_by_id(UUID(str(event.payload["analysis_id"])))
+                if analysis_service is not None
+                else None
+            )
+            expected_revision = int(
+                (analysis or {}).get("base_minutes_revision")
+                or event.payload.get("base_minutes_revision")
+                or 0
+            )
+            if str(current.get("status") or "DRAFT") == "APPROVED" or int(current.get("revision", 0)) != expected_revision:
+                if analysis_service is not None:
+                    analysis_service.callback_status(
+                        UUID(str(event.payload["analysis_id"])),
+                        "STALE",
+                        "minutes revision changed before AI callback",
+                    )
+                return {"status": "stale"}
+            try:
+                _content(request).save_minutes(
+                    event.meeting_id,
+                    event.payload["document"],
+                    "DRAFT",
+                    expected_revision,
+                )
+            except MinutesRevisionConflict:
+                if analysis_service is not None:
+                    analysis_service.callback_status(
+                        UUID(str(event.payload["analysis_id"])),
+                        "STALE",
+                        "minutes revision changed before AI callback",
+                    )
+                return {"status": "stale"}
             if analysis_service is not None:
                 analysis_service.callback_status(
                     UUID(str(event.payload["analysis_id"])),

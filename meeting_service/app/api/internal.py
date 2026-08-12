@@ -34,6 +34,10 @@ def _storage(request: Request):
     return getattr(request.app.state, "object_storage", object_storage)
 
 
+def _purge_tombstones(request: Request):
+    return request.app.state.purge_tombstones
+
+
 def _ai_client(request: Request):
     client = getattr(request.app.state, "ai_client", None)
     if client is None:
@@ -114,15 +118,27 @@ def purge_meeting(meeting_id: UUID, request: Request) -> dict[str, object]:
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     exports = _content(request).list_exports(meeting_id)
+    tombstone = _purge_tombstones(request).prepare(
+        meeting_id,
+        [str(export["storage_key"]) for export in exports],
+    )
+    pending_storage_keys: list[str] = []
     export_storage_deleted = 0
     export_storage_cleanup_failed = 0
-    for export in exports:
+    for storage_key in list(tombstone.get("pending_storage_keys") or []):
         try:
-            _storage(request).delete(export["storage_key"])
+            _storage(request).delete(storage_key)
             export_storage_deleted += 1
         except Exception:
-            # Metadata is still removed below; report the orphan for retry/operations.
+            # Keep the key in the durable tombstone so a later purge retry can
+            # remove the object after a transient MinIO outage.
+            pending_storage_keys.append(storage_key)
             export_storage_cleanup_failed += 1
+    tombstone = _purge_tombstones(request).record_attempt(
+        meeting_id,
+        pending_storage_keys,
+        "object storage cleanup failed" if pending_storage_keys else None,
+    )
     content_deleted = _content(request).delete_meeting(meeting_id)
     ai_repository = getattr(request.app.state, "ai_event_repository", None)
     ai_deleted = ai_repository.delete_meeting(meeting_id) if ai_repository else 0
@@ -136,6 +152,9 @@ def purge_meeting(meeting_id: UUID, request: Request) -> dict[str, object]:
         "minutes_analysis_rows_deleted": analysis_deleted,
         "export_objects_deleted": export_storage_deleted,
         "export_objects_cleanup_failed": export_storage_cleanup_failed,
+        "purge_cleanup_status": tombstone["status"],
+        "purge_cleanup_attempts": tombstone["attempts"],
+        "pending_storage_objects": len(tombstone.get("pending_storage_keys") or []),
     }
 
 
@@ -291,13 +310,15 @@ async def analyze_minutes(meeting_id: UUID, request: Request) -> dict[str, objec
     if runtime.status in {RuntimeStatus.COMPLETED, RuntimeStatus.FAILED}:
         raise HTTPException(status_code=409, detail="runtime is no longer active")
     try:
+        current_minutes = _content(request).minutes(meeting_id)
         result = await _minutes_analysis(request).request(
             meeting_id=meeting_id,
             runtime_session_id=runtime.runtime_session_id,
             meeting_snapshot=_service(request).snapshot(meeting_id),
             transcript=_content(request).transcript(meeting_id),
-            previous_document=_content(request).minutes(meeting_id).get("document"),
+            previous_document=current_minutes.get("document"),
             idempotency_key=_idempotency_key(request),
+            previous_revision=int(current_minutes.get("revision", 0)),
         )
         return _public_analysis(result)
     except MinutesAnalysisConflict as exc:
@@ -322,7 +343,7 @@ def update_minutes(meeting_id: UUID, request: Request, payload: dict[str, object
             raise HTTPException(status_code=409, detail="Minutes can only be approved after the runtime has completed")
     try:
         return _content(request).save_minutes(meeting_id, document, str(status) if status else None, base_revision)
-    except MinutesRevisionConflict as exc:
+    except (MinutesRevisionConflict, MinutesStateConflict) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

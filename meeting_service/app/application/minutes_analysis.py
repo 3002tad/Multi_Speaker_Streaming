@@ -33,6 +33,7 @@ class MinutesAnalysisConflict(RuntimeError):
 
 class MinutesAnalysisRepository(Protocol):
     def get(self, meeting_id: UUID) -> dict[str, Any] | None: ...
+    def get_by_id(self, analysis_id: UUID) -> dict[str, Any] | None: ...
     def create_or_get(
         self,
         meeting_id: UUID,
@@ -63,6 +64,11 @@ class InMemoryMinutesAnalysisRepository:
                 return None
             return _as_dict(max(candidates, key=lambda item: item["updated_at"]))
 
+    def get_by_id(self, analysis_id: UUID) -> dict[str, Any] | None:
+        with self._lock:
+            item = self._items.get(analysis_id)
+            return _as_dict(item) if item else None
+
     def create_or_get(self, meeting_id: UUID, runtime_session_id: UUID, base_transcript_revision: int, evidence: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         with self._lock:
             key = (meeting_id, base_transcript_revision)
@@ -76,6 +82,8 @@ class InMemoryMinutesAnalysisRepository:
                 "meeting_id": str(meeting_id),
                 "runtime_session_id": str(runtime_session_id),
                 "base_transcript_revision": base_transcript_revision,
+                "base_minutes_revision": int(evidence.get("base_minutes_revision") or 0),
+                "generation_id": str(evidence.get("generation_id") or ""),
                 "status": ANALYSIS_PENDING,
                 "error_message": None,
                 "evidence": _as_dict(evidence),
@@ -114,6 +122,8 @@ class SqlAlchemyMinutesAnalysisRepository:
             "meeting_id": str(row.meeting_id),
             "runtime_session_id": str(row.runtime_session_id),
             "base_transcript_revision": row.base_transcript_revision,
+            "base_minutes_revision": int((row.evidence_json or {}).get("base_minutes_revision") or 0),
+            "generation_id": str((row.evidence_json or {}).get("generation_id") or ""),
             "status": row.status,
             "error_message": row.error_message,
             "evidence": deepcopy(row.evidence_json),
@@ -128,6 +138,11 @@ class SqlAlchemyMinutesAnalysisRepository:
                 .where(MinutesAnalysisRecord.meeting_id == meeting_id)
                 .order_by(MinutesAnalysisRecord.updated_at.desc())
             )
+            return self._item(row) if row else None
+
+    def get_by_id(self, analysis_id: UUID) -> dict[str, Any] | None:
+        with self._sessions() as session:
+            row = session.get(MinutesAnalysisRecord, analysis_id)
             return self._item(row) if row else None
 
     def create_or_get(self, meeting_id: UUID, runtime_session_id: UUID, base_transcript_revision: int, evidence: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -197,6 +212,7 @@ class MinutesAnalysisService:
         meeting_snapshot: dict[str, Any],
         transcript: list[dict[str, Any]],
         previous_document: dict[str, Any] | None,
+        previous_revision: int = 0,
     ) -> tuple[int, dict[str, Any]]:
         segments = []
         for item in transcript:
@@ -248,18 +264,20 @@ class MinutesAnalysisService:
                 "started_at": meeting.get("started_at"),
             },
             "base_transcript_revision": base_revision,
+            "base_minutes_revision": max(0, int(previous_revision)),
             "segments": segments,
             "previous_document": deepcopy(previous_document) if previous_document else None,
         }
         return base_revision, evidence
 
-    async def request(self, *, meeting_id: UUID, runtime_session_id: UUID, meeting_snapshot: dict[str, Any], transcript: list[dict[str, Any]], previous_document: dict[str, Any] | None, idempotency_key: str) -> dict[str, Any]:
+    async def request(self, *, meeting_id: UUID, runtime_session_id: UUID, meeting_snapshot: dict[str, Any], transcript: list[dict[str, Any]], previous_document: dict[str, Any] | None, idempotency_key: str, previous_revision: int = 0) -> dict[str, Any]:
         base_revision, evidence = self.build_evidence(
             meeting_id=meeting_id,
             runtime_session_id=runtime_session_id,
             meeting_snapshot=meeting_snapshot,
             transcript=transcript,
             previous_document=previous_document,
+            previous_revision=previous_revision,
         )
         record, created = self.repository.create_or_get(
             meeting_id, runtime_session_id, base_revision, evidence

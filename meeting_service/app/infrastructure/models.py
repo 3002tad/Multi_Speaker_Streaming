@@ -137,3 +137,17 @@ class MinutesExportRecord(Base):
     checksum: Mapped[str] = mapped_column(String(128), nullable=False)
     created_by: Mapped[str | None] = mapped_column(String(160), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MeetingPurgeTombstoneRecord(Base):
+    """Durable cleanup intent for a meeting purge and object-storage retries."""
+
+    __tablename__ = "meeting_purge_tombstones"
+
+    meeting_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="PENDING")
+    pending_storage_keys: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

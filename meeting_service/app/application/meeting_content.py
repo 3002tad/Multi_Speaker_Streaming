@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from meeting_service.app.infrastructure.models import MinutesExportRecord, MinutesRevisionRecord, TranscriptSegmentRecord
@@ -91,10 +92,16 @@ class MeetingContentStore:
             current_revision = int(previous.get("revision", 0))
             if base_revision is not None and base_revision != current_revision:
                 raise MinutesRevisionConflict(f"stale minutes revision; expected {current_revision}")
+            previous_status = str(previous.get("status") or "DRAFT")
+            if previous_status == "APPROVED" and status not in {None, "DRAFT"}:
+                raise MinutesStateConflict(
+                    "approved minutes are immutable; edits must create a DRAFT revision"
+                )
+            next_status = "DRAFT" if previous_status == "APPROVED" else (status or previous_status)
             item = {
                 "meeting_id": str(meeting_id),
                 "revision": int(previous.get("revision", 0)) + 1,
-                "status": status or ("DRAFT" if previous.get("status") == "APPROVED" else previous.get("status", "DRAFT")),
+                "status": next_status,
                 "document": deepcopy(document),
                 "source_segment_ids": [str(x.get("segment_id")) for x in self._transcripts.get(meeting_id, [])],
                 "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -275,10 +282,16 @@ class SqlAlchemyMeetingContentRepository:
                 select(MinutesRevisionRecord)
                 .where(MinutesRevisionRecord.meeting_id == meeting_id)
                 .order_by(MinutesRevisionRecord.revision.desc())
+                .with_for_update()
             )
             current_revision = previous.revision if previous else 0
             if base_revision is not None and base_revision != current_revision:
                 raise MinutesRevisionConflict(f"stale minutes revision; expected {current_revision}")
+            previous_status = previous.status if previous else "DRAFT"
+            if previous_status == "APPROVED" and status not in {None, "DRAFT"}:
+                raise MinutesStateConflict(
+                    "approved minutes are immutable; edits must create a DRAFT revision"
+                )
             revision = current_revision + 1
             source_ids = [
                 str(row.segment_id)
@@ -291,12 +304,18 @@ class SqlAlchemyMeetingContentRepository:
             row = MinutesRevisionRecord(
                 meeting_id=meeting_id,
                 revision=revision,
-                status=status or ("DRAFT" if previous and previous.status == "APPROVED" else (previous.status if previous else "DRAFT")),
+                status="DRAFT" if previous_status == "APPROVED" else (status or previous_status),
                 document_json=deepcopy(document),
                 source_segment_ids=source_ids,
             )
-            session.add(row)
-            session.flush()
+            try:
+                with session.begin_nested():
+                    session.add(row)
+                    session.flush()
+            except IntegrityError as exc:
+                raise MinutesRevisionConflict(
+                    f"stale minutes revision; expected {current_revision}"
+                ) from exc
             return {
                 "meeting_id": str(meeting_id),
                 "revision": revision,

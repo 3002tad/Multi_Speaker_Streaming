@@ -18,6 +18,7 @@ from meeting_service.app.application.minutes_analysis import (
     SqlAlchemyMinutesAnalysisRepository,
     analysis_store,
 )
+from meeting_service.app.application.purge import SqlAlchemyPurgeTombstoneStore, purge_tombstones
 from meeting_service.app.infrastructure.database import create_session_factory
 from meeting_service.app.infrastructure.repositories import InMemoryAIEventRepository, SqlAlchemyAIEventRepository, SqlAlchemyRuntimeRepository
 from meeting_service.app.infrastructure.ai_client import MeetingAIClient
@@ -70,11 +71,13 @@ if settings.persistence_enabled:
     app.state.minutes_analysis = MinutesAnalysisService(
         SqlAlchemyMinutesAnalysisRepository(session_factory)
     )
+    app.state.purge_tombstones = SqlAlchemyPurgeTombstoneStore(session_factory)
 else:
     app.state.runtime_service = RuntimeService()
     app.state.content_store = MeetingContentStore()
     app.state.ai_event_repository = InMemoryAIEventRepository(app.state.content_store)
     app.state.minutes_analysis = MinutesAnalysisService(analysis_store)
+    app.state.purge_tombstones = purge_tombstones
 app.state.object_storage = build_object_storage()
 if settings.ai_enabled:
     app.state.ai_client = MeetingAIClient(

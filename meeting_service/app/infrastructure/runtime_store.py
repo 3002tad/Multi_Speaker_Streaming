@@ -118,4 +118,9 @@ class InMemoryRuntimeStore(RuntimeRepository):
             for runtime_id in ids:
                 del self._items[runtime_id]
                 self._snapshots.pop(runtime_id, None)
+            prefixes = {f"start:{meeting_id}", f"purge:{meeting_id}"}
+            prefixes.update(f"stop:{runtime_id}" for runtime_id in ids)
+            for key in list(self._idempotency):
+                if key[0] in prefixes:
+                    self._idempotency.pop(key, None)
             return len(ids)

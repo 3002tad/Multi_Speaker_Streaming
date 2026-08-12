@@ -464,8 +464,7 @@ conflict vẫn để riêng.
   cho fingerprint transcript BIGINT và `0008` cho callback sequence BIGINT;
   migration chạy thành công.
 - Giới hạn: E2E production network/HTTPS chưa chạy; callback E2E local dùng
-  loopback WSL vì Agent chạy ngoài Docker. Chưa kiểm thử conflict manual
-  edit/stale LLM result, thuộc P1-03. Chưa có thay đổi chất lượng ASR;
+  loopback WSL vì Agent chạy ngoài Docker. Chưa có thay đổi chất lượng ASR;
   ASR-Q1 vẫn deferred.
 - Đối chiếu merge plan: P1-02 hoàn tất đúng phạm vi biên bản trong phiên họp,
   additive; không ghi decision/action sang task, conclusion, Văn bản chỉ đạo,
@@ -475,15 +474,55 @@ conflict vẫn để riêng.
 
 ### P1-03 — Revision conflict, approved immutability và purge
 
-- [ ] Manual edit dùng optimistic locking `base_revision`.
-- [ ] LLM result cũ không ghi đè manual revision mới hơn.
-- [ ] Approved revision immutable; edit sau approve tạo DRAFT revision mới.
-- [ ] Purge dùng tombstone/idempotency retry và cascade runtime, transcript,
+**Trạng thái thực thi hiện tại:** `[x]` — đã hoàn tất P1-03a, P1-03b và
+P1-03c. Dependency: P1-02 đã có persistence biên bản thật; P1-06a đã có profile
+E2E ổn định. Không thay đổi thuật toán ASR, DSP, VAD hoặc speaker identification.
+
+#### P1-03a — Revision/CAS và immutable approved
+
+- [x] Manual edit dùng optimistic locking `base_revision`.
+- [x] Approved revision immutable; edit sau approve tạo DRAFT revision mới.
+
+#### P1-03b — Stale LLM callback
+
+- [x] LLM result cũ không ghi đè manual revision mới hơn; callback stale được
+  ghi nhận idempotent và trả trạng thái có thể xử lý lại.
+
+#### P1-03c — Purge và object-storage retry
+
+- [x] Purge dùng tombstone/idempotency retry và cascade runtime, transcript,
   minutes, exports, events/idempotency record.
-- [ ] MinIO upload/DB failure cleanup và MinIO delete failure durable retry.
+- [x] MinIO upload/DB failure cleanup và MinIO delete failure có durable retry.
 
 **Điều kiện đạt:** test manual-edit-versus-LLM, partial transaction failure và
 delete retry không để metadata/object mồ côi.
+
+### Nhật ký thực thi — P1-03 — 2026-08-12
+
+- Revision/CAS: `save_minutes` từ chối `base_revision` cũ; revision APPROVED
+  không bị ghi đè và chỉnh sửa sau duyệt chỉ tạo DRAFT.
+- Stale LLM: evidence lưu `base_minutes_revision`/`generation_id`; callback
+  kiểm tra analysis, transcript snapshot và trả `{"status":"stale"}` nếu bản
+  sửa tay hoặc bản APPROVED đã xuất hiện. Worker coi stale là kết quả cuối,
+  không retry vô hạn.
+- Purge: thêm tombstone Meeting Service và migration `0009_purge_tombstones`;
+  object storage lỗi được giữ pending, retry lần sau, còn metadata nội bộ được
+  xóa idempotent. Runtime repository dọn retry records liên quan.
+- Kiểm thử: `pytest -q tests/test_meeting_service_skeleton.py
+  tests/test_minutes_lifecycle.py tests/test_minutes_worker.py
+  tests/test_minutes_exports.py tests/test_contracts.py` đạt **49 pass**;
+  test DB commit lỗi sau upload xác nhận object được xóa; full `pytest -q` đạt
+  **162 pass**;
+  SQLAlchemy SQLite smoke cho APPROVED → DRAFT đạt. `git diff --check` đạt.
+- Giới hạn: Docker daemon không khả dụng trong môi trường hiện tại nên chưa
+  chạy migration/partial-failure trên PostgreSQL/MinIO container thật và chưa
+  chạy lại LiveKit E2E sau thay đổi persistence. Đây là điều kiện cần bổ sung
+  trước acceptance production, không phải gap của contract/unit gate.
+- Đối chiếu merge plan: hoàn tất đúng lifecycle Meeting Service, không tạo FK,
+  query chéo hoặc ghi sang document/task/conclusion/QLVB; không thay thuật toán
+  ASR/DSP/VAD/speaker-ID.
+- Bước tiếp theo: P1-04 — hoàn tất tách Meeting AI Core; sau đó P1-05 Compose
+  full platform và chuyển callback bridge sang internal DNS.
 
 ## P1 — Refactor AI Core và container hóa
 

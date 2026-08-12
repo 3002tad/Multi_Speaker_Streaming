@@ -196,8 +196,9 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
                     "sequence": 100,
                     "payload": {
                         "analysis_id": analysis_id,
-                        "generation_id": str(uuid4()),
+                        "generation_id": requested.json()["generation_id"],
                         "base_transcript_revision": requested.json()["base_transcript_revision"],
+                        "base_minutes_revision": requested.json()["base_minutes_revision"],
                         "document": {
                             "schema_version": 1,
                             "meeting": {

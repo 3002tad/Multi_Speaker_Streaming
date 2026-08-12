@@ -71,6 +71,7 @@ def _callback_event(
             "analysis_id": str(evidence["analysis_id"]),
             "generation_id": str(evidence["generation_id"]),
             "base_transcript_revision": int(evidence["base_transcript_revision"]),
+            "base_minutes_revision": int(evidence.get("base_minutes_revision") or 0),
             "document": document,
             "generator_meta": generator_meta,
         },
@@ -134,7 +135,7 @@ class MinutesWorker:
                     if 400 <= response.status_code < 500:
                         response.raise_for_status()
                     result = response.json()
-                    if result.get("status") not in {"accepted", "duplicate"}:
+                    if result.get("status") not in {"accepted", "duplicate", "stale"}:
                         raise MinutesWorkerError(
                             f"Meeting Service rejected minutes callback: {result.get('status')}"
                         )

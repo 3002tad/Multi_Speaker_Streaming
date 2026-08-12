@@ -212,7 +212,15 @@ class SqlAlchemyRuntimeRepository:
 
     def delete_meeting(self, meeting_id: UUID) -> int:
         with self._sessions.begin() as session:
+            runtime_ids = list(
+                session.scalars(
+                    select(RuntimeSessionRecord.id).where(RuntimeSessionRecord.meeting_id == meeting_id)
+                ).all()
+            )
             result = session.execute(delete(RuntimeSessionRecord).where(RuntimeSessionRecord.meeting_id == meeting_id))
+            operations = {f"start:{meeting_id}", f"purge:{meeting_id}"}
+            operations.update(f"stop:{runtime_id}" for runtime_id in runtime_ids)
+            session.execute(delete(IdempotencyRecord).where(IdempotencyRecord.operation.in_(operations)))
             return int(result.rowcount or 0)
 
 
