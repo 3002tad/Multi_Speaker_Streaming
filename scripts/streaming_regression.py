@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -272,6 +273,56 @@ def _covers_truth(
     return True
 
 
+def _create_probe_assignment(client: httpx.Client) -> str:
+    """Start an ephemeral AI assignment for the LiveKit probe.
+
+    The production Agent deliberately waits for Meeting Service to assign one
+    runtime before it joins a room. A standalone regression has no lifecycle
+    call, so it creates and later stops its own assignment instead of enabling
+    the old static-room fallback.
+    """
+    runtime_session_id = f"streaming-regression-{uuid.uuid4().hex}"
+    response = client.post(
+        "http://127.0.0.1:8001/internal/v1/sessions",
+        headers={
+            "X-Service-Key": settings.meeting_service_key,
+            "Idempotency-Key": runtime_session_id,
+        },
+        json={
+            "runtime_session_id": runtime_session_id,
+            "meeting_id": settings.meeting_code,
+            "assignment_generation": 1,
+            "livekit": {"room": settings.meeting_room},
+            "participants": [
+                {"display_name": "Mic A"},
+                {"display_name": "Mic B"},
+            ],
+            # No callback is intentional: this harness verifies the legacy
+            # local backend endpoint rather than a Meeting Service instance.
+        },
+    )
+    response.raise_for_status()
+    return runtime_session_id
+
+
+def _stop_probe_assignment(
+    client: httpx.Client,
+    runtime_session_id: str | None,
+) -> None:
+    if not runtime_session_id:
+        return
+    try:
+        client.post(
+            f"http://127.0.0.1:8001/internal/v1/sessions/{runtime_session_id}/stop",
+            headers={
+                "X-Service-Key": settings.meeting_service_key,
+                "Idempotency-Key": f"stop-{runtime_session_id}",
+            },
+        ).raise_for_status()
+    except httpx.HTTPError as exc:
+        print(f"[streaming-test] Cannot stop temporary assignment: {exc}")
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     base_url = args.backend_url.rstrip("/")
     truth = load_transcript_truth(CONFIG_ROOT / "audio" / "truth.csv")
@@ -289,6 +340,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     demo_process: subprocess.Popen | None = None
+    probe_runtime_session_id: str | None = None
     log_path = PROJECT_ROOT / "output" / "streaming-regression-demo.log"
     if args.start_demo:
         print("[streaming-test] Khởi động run_demo.sh...")
@@ -302,6 +354,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 timeout=args.start_timeout,
             )
             client.delete(f"{base_url}/api/transcripts").raise_for_status()
+            probe_runtime_session_id = _create_probe_assignment(client)
 
             print("[streaming-test] Chạy dual-mic LiveKit probe...")
             probe = subprocess.run(
@@ -332,6 +385,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 timeout=args.final_timeout,
             )
     finally:
+        with httpx.Client(timeout=10.0) as cleanup_client:
+            _stop_probe_assignment(cleanup_client, probe_runtime_session_id)
         if demo_process is not None and not args.keep_demo:
             _stop_demo(demo_process)
 

@@ -150,7 +150,7 @@ start_process "Web/API" \
   "$PYTHON_BIN" -m uvicorn backend.api.main:app \
   --host 0.0.0.0 --port 8000
 
-start_process "AI pipeline" "$PYTHON_BIN" -u ai_server.py
+start_process "AI pipeline" "$PYTHON_BIN" -u -m meeting_ai.main
 
 echo "Đang chờ AI pipeline nạp model..."
 for _ in $(seq 1 300); do
@@ -178,7 +178,7 @@ run_agent() {
   trap forward_stop INT TERM
 
   while (( ! stopping )); do
-    "$PYTHON_BIN" -u agent.py &
+    "$PYTHON_BIN" -u -m meeting_ai.agent.worker &
     agent_pid="$!"
     set +e
     wait "$agent_pid"

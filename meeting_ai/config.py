@@ -508,6 +508,12 @@ class Settings:
     timeline_final_settle_seconds: float = float(
         os.getenv("TIMELINE_FINAL_SETTLE_SECONDS", "0.75")
     )
+    # Give the clearer microphone time to finish VAD/WavLM before choosing a
+    # weak mic's early endpoint. Bounded to preserve the meeting timeline.
+    timeline_final_wait_for_turn_close_seconds: float = max(
+        0.0,
+        float(os.getenv("TIMELINE_FINAL_WAIT_FOR_TURN_CLOSE_SECONDS", "6.0")),
+    )
     llm_inline_wait_seconds: float = float(
         os.getenv("LLM_INLINE_WAIT_SECONDS", "0.35")
     )

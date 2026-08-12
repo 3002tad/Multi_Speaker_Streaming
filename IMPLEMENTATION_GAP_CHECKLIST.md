@@ -532,6 +532,12 @@ delete retry không để metadata/object mồ côi.
 
 ### P1-04 — Hoàn tất cấu trúc Meeting AI
 
+**Trạng thái thực thi hiện tại:** `[-]` — đã chuyển entrypoint FastAPI/WebSocket
+và Agent vào package `meeting_ai`; SessionManager, FastAPI factory và Qdrant
+speaker-store boundary đã có. Compatibility wrapper `ai_server.py` và
+`agent.py` vẫn được giữ. Chưa thể đóng task vì streaming regression chưa ổn
+định qua các lần chạy; không thay ASR/DSP/VAD/speaker-ID trong task này.
+
 - [ ] Di chuyển FastAPI/API/WebSocket khỏi `ai_server.py` vào
   `meeting_ai/main.py`, `meeting_ai/api/` và application services.
 - [ ] Hoàn tất SessionManager, TranscriptCoordinator, callback infrastructure
@@ -541,6 +547,54 @@ delete retry không để metadata/object mồ côi.
 
 **Điều kiện đạt:** wrapper cũ/mới pass compatibility + streaming regression;
 WER/CER giữ baseline.
+
+### Nhật ký thực thi — P1-04 — 2026-08-12
+
+- Đã tách `ai_server.py` thành compatibility wrapper và entrypoint
+  `meeting_ai/main.py`; `agent.py` tương tự gọi `meeting_ai.agent.worker`.
+  `scripts/run_demo.sh` dùng module entrypoint mới. FastAPI factory nằm ở
+  `meeting_ai/api/app.py`; SessionManager tách ở `meeting_ai/application/`;
+  profile Qdrant được cô lập trong `meeting_ai/infrastructure/speaker_store.py`.
+  Không chỉnh thuật toán ASR/DSP/VAD/speaker-ID hoặc ngưỡng nhận dạng.
+- Regression harness nay tạo/dừng AI runtime assignment tạm trước/sau LiveKit
+  probe, đúng control-plane thay vì bật static-room fallback. Một lượt đạt:
+  2 final transcript, coverage 100%, WER/CER dưới ngưỡng. Một lượt kế tiếp
+  tạo final trùng ở global turn đầu (3 transcript), WER/CER vượt ngưỡng.
+- Kiểm thử đạt: targeted SessionManager/Agent/contract **22 pass**; full WSL
+  `pytest -q` **165 pass, 6 subtests**; `git diff --check` đạt. Không còn
+  native demo process sau regression cleanup.
+- Blocker để đóng P1-04: cần ổn định hoặc tái lập được duplicate final trong
+  streaming-VAD-finalization mà không thay baseline tuning trong commit
+  refactor. Vì gate WER/CER chưa ổn định, giữ P1-04 là `[-]`.
+- Khắc phục 2026-08-12: arbitration giữ candidate khi global turn còn source
+  active (tối đa 6s), rồi settle tối thiểu 3s sau endpoint để chờ WavLM của
+  mic rõ hơn. Điều này ngăn mic yếu endpoint sớm được publish trước candidate
+  rõ, không thay DSP/ASR/VAD threshold/speaker-ID threshold. `pytest -q
+  tests/test_audio_pipeline.py` đạt **23 pass**; LiveKit dual-mic regression
+  đạt **2 final**, coverage 100%, WER/CER gates pass; full `pytest -q` WSL đạt
+  **165 pass, 6 subtests**. Cần thêm lượt lặp/stress trước khi coi lỗi đã ổn
+  định hoàn toàn và đóng P1-04.
+- Refactor adaptive 2026-08-12: thay settle cứng bằng theo dõi lifecycle
+  finalization từng mic. Coordinator ghi nhận EWMA latency WavLM/finalization,
+  chỉ chờ khi global turn còn source active hoặc còn candidate pending, rồi
+  settle ngắn theo latency quan sát được; 6s chỉ còn safety cap khi mic treo.
+  Không thay decoder, DSP, VAD threshold hay speaker-ID threshold. Audio unit
+  đạt **23 pass**; dual-mic LiveKit regression đạt **2 final**, coverage 100%
+  và toàn bộ WER/CER gate; full `pytest -q` WSL đạt **165 pass, 6 subtests**.
+- E2E full platform 2026-08-12: chạy đúng `scripts/run_e2e_streaming.sh`
+  (P1-06a) sau khi dừng stack cũ nhưng giữ volumes. Lượt đầu fail do AI Core
+  cũ giữ lock local Qdrant nên Agent forward 0 frame; đã dừng đúng process
+  group cũ, không xóa data/runtime. Lượt chạy lại exit **0**: runner hoàn tất
+  runtime → LiveKit fixture → AI callback transcript → Qwen minutes → stop;
+  container và process do runner tạo đã cleanup, Docker không còn container
+  Meeting Service chạy. Không ghi secret vào source.
+- E2E repeat 2026-08-12: chạy `--keep` để kiểm tra persisted result rồi down
+  không `-v`. `E2E_OK`: 1 transcript final, minutes revision 1 DRAFT. Timeline
+  nhận đúng `Thay_Dung` qua voice_profile; raw ASR được phonetic recovery thành
+  `mục 5.2`, `Hadoop Storage`, `HDFS`. Pipeline metadata: ASR final 1282ms,
+  speaker ID 956ms; minutes revision được lưu khoảng 38s sau event final. Mốc
+  media `ended_at` và server `created_at` chưa cùng clock, nên chưa dùng để
+  báo end-to-end delay tuyệt đối; cần chuẩn hóa observability latency ở P1-06.
 
 ### P1-05 — Compose Meeting Platform đầy đủ
 

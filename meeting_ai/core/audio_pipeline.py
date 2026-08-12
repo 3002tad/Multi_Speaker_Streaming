@@ -1258,12 +1258,22 @@ class CoordinatedVadTimeline:
         asr_quality_margin: float = 3.5,
         asr_rms_ratio: float = 0.48,
         final_settle_seconds: float = 0.75,
+        final_wait_for_turn_close_seconds: float = 0.0,
+        final_latency_min_seconds: float = 0.35,
+        final_latency_max_seconds: float = 6.0,
     ) -> None:
         self.frame_freshness_seconds = frame_freshness_seconds
         self.turn_join_gap_seconds = turn_join_gap_seconds
         self.asr_quality_margin = asr_quality_margin
         self.asr_rms_ratio = asr_rms_ratio
         self.final_settle_seconds = final_settle_seconds
+        self.final_wait_for_turn_close_seconds = (
+            final_wait_for_turn_close_seconds
+        )
+        self.final_latency_min_seconds = final_latency_min_seconds
+        self.final_latency_max_seconds = final_latency_max_seconds
+        self._finalization_started: dict[tuple[str, str], float] = {}
+        self._finalization_ewma_seconds = final_settle_seconds
         self._frames: dict[str, _FrameState] = {}
         self._turns: dict[str, VadTurn] = {}
         self._source_turn: dict[str, str] = {}
@@ -1354,6 +1364,32 @@ class CoordinatedVadTimeline:
             turn.end_time = timestamp
         return turn_id
 
+    def finalization_started(self, turn_id: str, source_id: str) -> None:
+        """Track final work started after one source reaches endpoint."""
+        self._finalization_started[(turn_id, source_id)] = time.monotonic()
+
+    def _finalization_finished(self, candidate: FinalCandidate) -> None:
+        started = self._finalization_started.pop(
+            (candidate.turn_id, candidate.source_id), None
+        )
+        if started is None:
+            return
+        observed = max(0.0, time.monotonic() - started)
+        # EWMA adapts to current WavLM/CPU pressure while avoiding one slow
+        # turn making every future endpoint unnecessarily late.
+        self._finalization_ewma_seconds = (
+            0.7 * self._finalization_ewma_seconds + 0.3 * observed
+        )
+
+    def _adaptive_final_wait_seconds(self) -> float:
+        return min(
+            self.final_latency_max_seconds,
+            max(
+                self.final_latency_min_seconds,
+                self._finalization_ewma_seconds * 1.35 + 0.25,
+            ),
+        )
+
     def split_turn(self, source_id: str, *, timestamp: float) -> str:
         """Rotate a long continuous VAD turn at the ASR soft boundary."""
         old_turn_id = self._source_turn.pop(source_id, None)
@@ -1388,9 +1424,43 @@ class CoordinatedVadTimeline:
     async def select_final(self, candidate: FinalCandidate) -> bool:
         async with self._lock:
             self._candidates[candidate.candidate_id] = candidate
+            self._finalization_finished(candidate)
 
-        if self.final_settle_seconds > 0:
-            await asyncio.sleep(self.final_settle_seconds)
+        # A weak microphone can endpoint early, while the clearer microphone
+        # is still speaking and spending time in WavLM.  Publishing the weak
+        # candidate after only ``final_settle_seconds`` makes a late clear
+        # candidate unable to retract it.  Wait only for an *open shared
+        # global turn*, with a bounded timeout for a disconnected microphone.
+        close_deadline = time.monotonic() + self.final_wait_for_turn_close_seconds
+        while self.final_wait_for_turn_close_seconds > 0:
+            turn = self._turns.get(candidate.turn_id)
+            if turn is None or not turn.active_sources:
+                break
+            if time.monotonic() >= close_deadline:
+                break
+            await asyncio.sleep(0.05)
+
+        # Once VAD has closed the global turn, wait only while another source
+        # is still doing WavLM/final work. The wait follows observed latency,
+        # not a fixed three-second delay on every meeting turn.
+        pending_deadline = time.monotonic() + self._adaptive_final_wait_seconds()
+        while time.monotonic() < pending_deadline:
+            pending = any(
+                turn_id == candidate.turn_id
+                for turn_id, _source_id in self._finalization_started
+            )
+            if not pending:
+                break
+            await asyncio.sleep(0.05)
+
+        # A short adaptive settle lets tasks that complete in the same event
+        # loop slice register their candidates before the winner is chosen.
+        settle_seconds = min(
+            self.final_settle_seconds,
+            max(0.05, self._adaptive_final_wait_seconds() * 0.20),
+        )
+        if settle_seconds > 0:
+            await asyncio.sleep(settle_seconds)
 
         async with self._lock:
             current = self._candidates.get(candidate.candidate_id)
