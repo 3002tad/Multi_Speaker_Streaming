@@ -27,6 +27,10 @@ class AIEvent(BaseModel):
 
 router = APIRouter(prefix="/internal/v1")
 
+
+def _content(request: Request):
+    return getattr(request.app.state, "content_store", content_store)
+
 EVENT_TYPES = {
     "session.status",
     "speaker.active",
@@ -64,6 +68,17 @@ def _validate_payload(event: AIEvent) -> None:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="occurred_at must be ISO-8601") from exc
     if event.type not in TRANSCRIPT_EVENT_TYPES:
+        if event.type == "minutes.updated":
+            payload = event.payload
+            if not isinstance(payload.get("analysis_id"), str) or not payload["analysis_id"].strip():
+                raise HTTPException(status_code=422, detail="minutes.updated requires analysis_id")
+            if not isinstance(payload.get("generation_id"), str) or not payload["generation_id"].strip():
+                raise HTTPException(status_code=422, detail="minutes.updated requires generation_id")
+            revision = payload.get("base_transcript_revision")
+            if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+                raise HTTPException(status_code=422, detail="minutes.updated requires base_transcript_revision")
+            if not isinstance(payload.get("document"), dict):
+                raise HTTPException(status_code=422, detail="minutes.updated requires document")
         return
     payload = event.payload
     segment_id = payload.get("segment_id")
@@ -94,6 +109,89 @@ def _validate_payload(event: AIEvent) -> None:
                 raise HTTPException(status_code=422, detail=f"transcript.final requires payload.{key}")
 
 
+def _source_ids(value: object, known_ids: set[str]) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise HTTPException(status_code=422, detail="minutes document requires source_segment_ids")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip() or item in result:
+            raise HTTPException(status_code=422, detail="minutes document has invalid source_segment_ids")
+        if item not in known_ids:
+            raise HTTPException(status_code=409, detail="minutes document cites unknown transcript segment")
+        result.append(item)
+    return result
+
+
+def _validate_minutes_document(document: dict[str, object], known_ids: set[str]) -> None:
+    """Validate the structured document and enforce transcript grounding."""
+    if document.get("schema_version") != 1:
+        raise HTTPException(status_code=422, detail="unsupported minutes document schema_version")
+    meeting = document.get("meeting")
+    if not isinstance(meeting, dict) or not isinstance(meeting.get("title"), str):
+        raise HTTPException(status_code=422, detail="minutes document requires meeting metadata")
+    started_at = meeting.get("started_at")
+    if started_at is not None:
+        if not isinstance(started_at, str):
+            raise HTTPException(status_code=422, detail="minutes document started_at must be ISO-8601")
+        try:
+            datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="minutes document started_at must be ISO-8601") from exc
+    summary = document.get("summary")
+    topics = document.get("topics")
+    if not isinstance(summary, list) or not isinstance(topics, list):
+        raise HTTPException(status_code=422, detail="minutes document summary/topics must be arrays")
+    document_sources: list[str] = []
+    for item in summary:
+        if not isinstance(item, dict) or not isinstance(item.get("content"), str) or not item["content"].strip():
+            raise HTTPException(status_code=422, detail="minutes summary item is invalid")
+        document_sources.extend(_source_ids(item.get("source_segment_ids"), known_ids))
+    for topic in topics:
+        if not isinstance(topic, dict) or not isinstance(topic.get("title"), str) or not topic["title"].strip():
+            raise HTTPException(status_code=422, detail="minutes topic is invalid")
+        topic_sources = _source_ids(topic.get("source_segment_ids"), known_ids)
+        document_sources.extend(topic_sources)
+        for key in ("details", "proposals", "decisions"):
+            items = topic.get(key)
+            if not isinstance(items, list):
+                raise HTTPException(status_code=422, detail=f"minutes topic {key} must be an array")
+            for item in items:
+                if not isinstance(item, dict) or not isinstance(item.get("content"), str) or not item["content"].strip():
+                    raise HTTPException(status_code=422, detail=f"minutes topic {key} item is invalid")
+                document_sources.extend(_source_ids(item.get("source_segment_ids"), known_ids))
+        actions = topic.get("actions")
+        if not isinstance(actions, list):
+            raise HTTPException(status_code=422, detail="minutes topic actions must be an array")
+        for action in actions:
+            if not isinstance(action, dict) or not isinstance(action.get("task"), str) or not action["task"].strip():
+                raise HTTPException(status_code=422, detail="minutes action is invalid")
+            document_sources.extend(_source_ids(action.get("source_segment_ids"), known_ids))
+    top_sources = document.get("source_segment_ids")
+    if not isinstance(top_sources, list):
+        raise HTTPException(status_code=422, detail="minutes document requires source_segment_ids")
+    for source_id in top_sources:
+        if not isinstance(source_id, str) or source_id not in known_ids:
+            raise HTTPException(status_code=409, detail="minutes document cites unknown transcript segment")
+
+
+def _validate_minutes_event(request: Request, event: AIEvent) -> None:
+    payload = event.payload
+    try:
+        UUID(str(payload.get("analysis_id")))
+        UUID(str(payload.get("generation_id")))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="minutes.updated ids must be UUIDs") from exc
+    transcript = _content(request).transcript(event.meeting_id)
+    known_ids = {
+        str(item.get("segment_id"))
+        for item in transcript
+        if isinstance(item, dict) and item.get("segment_id")
+    }
+    if not known_ids:
+        raise HTTPException(status_code=409, detail="minutes.updated requires persisted final transcript")
+    _validate_minutes_document(payload["document"], known_ids)
+
+
 def _validate_runtime(request: Request, event: AIEvent) -> None:
     runtime_service = getattr(request.app.state, "runtime_service", None)
     if runtime_service is None:
@@ -110,6 +208,8 @@ def _validate_runtime(request: Request, event: AIEvent) -> None:
 @router.post("/ai-events", dependencies=[Depends(require_service_key)])
 async def receive_ai_event(request: Request, event: AIEvent) -> dict[str, str]:
     _validate_payload(event)
+    if event.type == "minutes.updated":
+        _validate_minutes_event(request, event)
     repository = getattr(request.app.state, "ai_event_repository", None)
     if repository is not None and repository.has_event(event.event_id):
         return {"status": "duplicate"}
@@ -127,5 +227,32 @@ async def receive_ai_event(request: Request, event: AIEvent) -> dict[str, str]:
         data = {**data, "event_id": str(event.event_id), "meeting_id": str(event.meeting_id), "runtime_session_id": str(event.runtime_session_id)}
         status = repository.accept(data)
     if status == "accepted":
+        if event.type == "minutes.updated":
+            current = _content(request).minutes(event.meeting_id)
+            _content(request).save_minutes(
+                event.meeting_id,
+                event.payload["document"],
+                "DRAFT",
+                int(current.get("revision", 0)),
+            )
+            analysis_service = getattr(request.app.state, "minutes_analysis", None)
+            if analysis_service is not None:
+                analysis_service.callback_status(
+                    UUID(str(event.payload["analysis_id"])),
+                    "SUCCEEDED",
+                )
+        elif event.type == "pipeline.warning" and event.payload.get("code") == "MINUTES_COMPOSITION_FAILED":
+            details = event.payload.get("details")
+            if isinstance(details, dict) and details.get("analysis_id"):
+                analysis_service = getattr(request.app.state, "minutes_analysis", None)
+                if analysis_service is not None:
+                    try:
+                        analysis_service.callback_status(
+                            UUID(str(details["analysis_id"])),
+                            "FAILED",
+                            str(event.payload.get("message") or "minutes composition failed"),
+                        )
+                    except (ValueError, TypeError):
+                        pass
         await sio.emit(event.type, _event_dict(event), room=f"meeting:{event.meeting_id}")
     return {"status": status}

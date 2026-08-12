@@ -224,13 +224,38 @@ class SqlAlchemyAIEventRepository:
         with self._sessions() as session:
             return session.get(AIEventRecord, event_id) is not None
 
+    @staticmethod
+    def _sequence_types(event_type: str) -> set[str]:
+        transcript_types = {
+            "transcript.partial",
+            "transcript.final",
+            "transcript.updated",
+            "transcript.retracted",
+        }
+        return transcript_types if event_type in transcript_types else set()
+
     def accept(self, event: dict) -> str:
         with self._sessions.begin() as session:
             event_id = UUID(str(event["event_id"]))
             if session.get(AIEventRecord, event_id):
                 return "duplicate"
             runtime_id = UUID(str(event["runtime_session_id"]))
-            latest = session.scalar(select(AIEventRecord).where(AIEventRecord.runtime_session_id == runtime_id).order_by(AIEventRecord.sequence.desc()))
+            transcript_types = self._sequence_types(str(event["type"]))
+            latest_query = select(AIEventRecord).where(
+                AIEventRecord.runtime_session_id == runtime_id
+            )
+            if transcript_types:
+                latest_query = latest_query.where(AIEventRecord.event_type.in_(transcript_types))
+            else:
+                latest_query = latest_query.where(~AIEventRecord.event_type.in_(
+                    {
+                        "transcript.partial",
+                        "transcript.final",
+                        "transcript.updated",
+                        "transcript.retracted",
+                    }
+                ))
+            latest = session.scalar(latest_query.order_by(AIEventRecord.sequence.desc()))
             if latest and int(event["sequence"]) <= latest.sequence:
                 return "stale"
             if event["type"] in {
@@ -287,7 +312,7 @@ class InMemoryAIEventRepository:
 
         self._content_store = content_store
         self._events: dict[UUID, dict[str, Any]] = {}
-        self._latest_sequence: dict[UUID, int] = {}
+        self._latest_sequence: dict[tuple[UUID, str], int] = {}
         self._lock = RLock()
 
     def has_event(self, event_id: UUID) -> bool:
@@ -300,10 +325,12 @@ class InMemoryAIEventRepository:
         with self._lock:
             if event_id in self._events:
                 return "duplicate"
-            latest = self._latest_sequence.get(runtime_id)
+            event_type = str(event["type"])
+            domain = "transcript" if event_type.startswith("transcript.") else "control"
+            sequence_key = (runtime_id, domain)
+            latest = self._latest_sequence.get(sequence_key)
             if latest is not None and int(event["sequence"]) <= latest:
                 return "stale"
-            event_type = str(event["type"])
             if event_type in {
                 "transcript.partial",
                 "transcript.final",
@@ -318,7 +345,7 @@ class InMemoryAIEventRepository:
                 if status != "accepted":
                     return status
             self._events[event_id] = dict(event)
-            self._latest_sequence[runtime_id] = int(event["sequence"])
+            self._latest_sequence[sequence_key] = int(event["sequence"])
             return "accepted"
 
     def delete_meeting(self, meeting_id: UUID) -> int:
@@ -326,7 +353,8 @@ class InMemoryAIEventRepository:
             ids = [event_id for event_id, event in self._events.items() if UUID(str(event["meeting_id"])) == meeting_id]
             for event_id in ids:
                 self._events.pop(event_id, None)
-            for runtime_id, sequence in list(self._latest_sequence.items()):
+            for sequence_key in list(self._latest_sequence):
+                runtime_id = sequence_key[0]
                 if not any(UUID(str(event["runtime_session_id"])) == runtime_id for event in self._events.values()):
-                    self._latest_sequence.pop(runtime_id, None)
+                    self._latest_sequence.pop(sequence_key, None)
             return len(ids)

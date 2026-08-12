@@ -75,6 +75,22 @@ curl -fsS http://127.0.0.1:8002/health/ready
 docker compose -p meeting_service ps
 ```
 
+### E2E audio đồng bộ (khuyến nghị thay cho chạy thủ công từng service)
+
+Khi cần kiểm thử một WAV qua LiveKit → Agent → AI → transcript → Qwen minutes,
+dùng runner duy nhất sau. Nó đọc secret từ `/home/ntd/meeting_runtime/.env`,
+không tạo hay commit file `.env` mới.
+
+```bash
+cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
+bash scripts/run_e2e_streaming.sh --audio audio/thayDung_noi.wav
+```
+
+Runner từ chối chạy nếu Meeting Service stack đang tồn tại để tránh tắt nhầm
+container đang được dùng. Dừng stack hiện tại trước, hoặc dùng `--keep` khi cần
+giữ stack sau khi probe đạt. Chi tiết về profile nằm tại
+`configs/e2e/README.md`.
+
 Nếu backend eCabinet cần gọi Meeting Service trong local Docker demo, nối
 container API vào network runtime:
 
@@ -234,4 +250,3 @@ Khi đóng gói ZIP, loại bỏ:
 - `node_modules/`, `dist/`, `__pycache__/`
 - model/cache/Hugging Face/Ollama/Qdrant data
 - Docker volume và runtime output
-

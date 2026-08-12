@@ -27,7 +27,7 @@ class MinutesCompositionError(RuntimeError):
 def empty_minutes_document(
     meeting_title: str = "",
     *,
-    started_at: float | None = None,
+    started_at: float | str | None = None,
 ) -> dict[str, Any]:
     """Return the only document shape accepted by the frontend and storage."""
     return {
@@ -100,7 +100,7 @@ def normalize_minutes_document(
     *,
     meeting_title: str,
     valid_source_ids: Iterable[str],
-    started_at: float | None = None,
+    started_at: float | str | None = None,
 ) -> dict[str, Any]:
     """Validate and reduce an untrusted LLM response to the UI schema.
 
@@ -122,7 +122,7 @@ def normalize_minutes_document(
     existing_started_at = started_at
     if existing_started_at is None:
         candidate_started_at = existing_meeting.get("started_at")
-        if isinstance(candidate_started_at, (int, float)):
+        if isinstance(candidate_started_at, (int, float, str)) and candidate_started_at != "":
             existing_started_at = candidate_started_at
 
     summary = _evidence_items(
@@ -258,7 +258,7 @@ def merge_minutes_delta(
     *,
     meeting_title: str,
     new_source_ids: Iterable[str],
-    started_at: float | None,
+    started_at: float | str | None,
 ) -> dict[str, Any]:
     """Merge a compact LLM delta without rewriting older approved content."""
     if not isinstance(delta, dict):
@@ -386,7 +386,7 @@ def transcript_timeline_document(
     *,
     meeting_title: str,
     segments: Iterable[dict[str, Any]],
-    started_at: float | None,
+    started_at: float | str | None,
 ) -> dict[str, Any]:
     """Build a deterministic official view from final transcript evidence.
 
@@ -892,7 +892,7 @@ class OllamaMinutesComposer:
         meeting_title: str,
         existing_document: dict[str, Any] | None,
         segments: Iterable[dict[str, Any]],
-        started_at: float | None,
+        started_at: float | str | None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         segment_list = list(segments)
         if self.uses_transcript_timeline:

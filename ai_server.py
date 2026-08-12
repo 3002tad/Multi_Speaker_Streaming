@@ -12,7 +12,9 @@ import soundfile as sf
 import uuid
 import subprocess
 import hmac
+import httpx
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from fastapi import (
     FastAPI,
     WebSocket,
@@ -46,6 +48,7 @@ from meeting_ai.core.audio_pipeline import (
     unpack_audio_packet,
 )
 from meeting_ai.config import settings
+from meeting_ai.application.minutes_worker import MinutesWorker, MinutesWorkerError
 from meeting_ai.core.assignment_state import AssignmentStateStore
 from meeting_ai.core.asr_scheduler import ZipformerDecodeScheduler
 from meeting_ai.core.final_turn import choose_redecode_transcript
@@ -1365,6 +1368,100 @@ _ai_agent_status: dict[str, object] = {
 }
 _assignment_state_store = AssignmentStateStore(settings.agent_assignment_state_path)
 
+# Minutes composition is deliberately detached from the audio/event loop. The
+# job registry is only an in-process control-plane guard; evidence and the
+# resulting document remain owned by Meeting Service.
+_minutes_worker = MinutesWorker(settings)
+_minutes_analysis_tasks: set[asyncio.Task] = set()
+_minutes_analysis_jobs: dict[str, dict[str, object]] = {}
+_minutes_sequence_counter = 0
+_minutes_sequence_lock = threading.RLock()
+
+
+def _next_minutes_sequence() -> int:
+    """Return a callback sequence greater than normal Agent event numbers."""
+    global _minutes_sequence_counter
+    with _minutes_sequence_lock:
+        _minutes_sequence_counter = max(
+            _minutes_sequence_counter + 1,
+            int(time.time() * 1000),
+        )
+        return _minutes_sequence_counter
+
+
+def _set_minutes_job(analysis_id: str, status: str, **extra: object) -> None:
+    with _ai_session_lock:
+        _minutes_analysis_jobs[analysis_id] = {
+            **_minutes_analysis_jobs.get(analysis_id, {}),
+            "analysis_id": analysis_id,
+            "status": status,
+            **extra,
+        }
+
+
+async def _run_minutes_analysis(
+    *,
+    runtime_session_id: str,
+    evidence: dict[str, object],
+    callback_url: str,
+) -> None:
+    analysis_id = str(evidence["analysis_id"])
+    _set_minutes_job(analysis_id, "RUNNING")
+    try:
+        event = await _minutes_worker.run(
+            evidence,
+            callback_url=callback_url,
+            sequence=_next_minutes_sequence(),
+        )
+        _set_minutes_job(
+            analysis_id,
+            "SUCCEEDED",
+            event_id=event["event_id"],
+            generation_id=evidence.get("generation_id"),
+        )
+    except Exception as exc:
+        _set_minutes_job(
+            analysis_id,
+            "FAILED",
+            error="minutes composition unavailable",
+        )
+        # Keep the Meeting Service analysis row retryable without leaking the
+        # model response. Warning delivery uses the same internal callback
+        # boundary as transcript events.
+        if callback_url:
+            warning = {
+                "schema_version": 1,
+                "event_id": str(uuid.uuid4()),
+                "type": "pipeline.warning",
+                "meeting_id": str(evidence["meeting_id"]),
+                "runtime_session_id": runtime_session_id,
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+                "sequence": _next_minutes_sequence(),
+                "payload": {
+                    "code": "MINUTES_COMPOSITION_FAILED",
+                    "message": "Không thể tạo biên bản tự động; có thể thử lại.",
+                    "retryable": True,
+                    "details": {
+                        "analysis_id": analysis_id,
+                        "generation_id": evidence.get("generation_id"),
+                        "reason": type(exc).__name__,
+                    },
+                },
+            }
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    response = await client.post(
+                        callback_url,
+                        headers={"X-Service-Key": settings.meeting_service_key},
+                        json=warning,
+                    )
+                    response.raise_for_status()
+            except Exception:
+                # The analysis remains FAILED in the AI process and the
+                # Meeting Service can observe/retry through its control API.
+                pass
+        print(f"[Minutes] composition failed: {type(exc).__name__}")
+
 
 def _assignment_state_payload(session: _AISession) -> dict[str, object]:
     """Return only JSON-safe control-plane data needed by Agent recovery."""
@@ -1435,6 +1532,10 @@ _restore_assignment_state()
 @app.on_event("shutdown")
 async def shutdown_final_turn_redecode() -> None:
     """Release queued replay callers before the AI process exits."""
+    for task in tuple(_minutes_analysis_tasks):
+        task.cancel()
+    if _minutes_analysis_tasks:
+        await asyncio.gather(*_minutes_analysis_tasks, return_exceptions=True)
     await final_turn_redecode.close()
     await zipformer_scheduler.close()
 
@@ -1663,8 +1764,15 @@ async def analyze_ai_evidence(
         raise HTTPException(status_code=422, detail="invalid minutes evidence payload")
     if payload.get("schema_version") != 1:
         raise HTTPException(status_code=422, detail="unsupported minutes evidence schema_version")
+    try:
+        uuid.UUID(str(payload.get("analysis_id")))
+        uuid.UUID(str(payload.get("generation_id")))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="minutes evidence ids must be UUIDs") from exc
     if not isinstance(payload.get("generation_id"), str) or not payload["generation_id"].strip():
         raise HTTPException(status_code=422, detail="minutes evidence requires generation_id")
+    if not isinstance(payload.get("meeting"), dict):
+        raise HTTPException(status_code=422, detail="minutes evidence requires meeting metadata")
     if not isinstance(payload.get("base_transcript_revision"), int) or payload["base_transcript_revision"] < 1:
         raise HTTPException(status_code=422, detail="minutes evidence requires base_transcript_revision")
     if not isinstance(payload.get("segments"), list) or not payload["segments"]:
@@ -1675,14 +1783,38 @@ async def analyze_ai_evidence(
             raise HTTPException(status_code=404, detail="AI session not found")
         if session.status in {"COMPLETED", "FAILED"}:
             raise HTTPException(status_code=409, detail="AI session is no longer active")
-    # Meeting AI will own composition in P1-02, while Meeting Service remains
-    # the owner of persisted minutes revisions. This P1-01 endpoint is only an
-    # acceptance boundary and intentionally never stores evidence in AI.
+        if str(payload.get("meeting_id")) != session.meeting_id:
+            raise HTTPException(status_code=409, detail="minutes evidence meeting does not match AI session")
+        analysis_id = str(payload["analysis_id"])
+        existing_job = _minutes_analysis_jobs.get(analysis_id)
+        if existing_job and existing_job.get("status") in {"RUNNING", "SUCCEEDED"}:
+            return {
+                "status": "accepted",
+                "runtime_session_id": runtime_session_id,
+                "analysis_id": analysis_id,
+                "generation_id": payload.get("generation_id"),
+                "job_status": existing_job.get("status"),
+            }
+        callback = dict(session.payload.get("callback") or {})
+        callback_url = str(callback.get("url") or "").strip()
+        if not callback_url:
+            raise HTTPException(status_code=503, detail="minutes callback is not configured")
+        _set_minutes_job(analysis_id, "RUNNING", runtime_session_id=runtime_session_id)
+        task = asyncio.create_task(
+            _run_minutes_analysis(
+                runtime_session_id=runtime_session_id,
+                evidence=dict(payload),
+                callback_url=callback_url,
+            )
+        )
+        _minutes_analysis_tasks.add(task)
+        task.add_done_callback(_minutes_analysis_tasks.discard)
     return {
         "status": "accepted",
         "runtime_session_id": runtime_session_id,
         "analysis_id": payload.get("analysis_id"),
         "generation_id": payload.get("generation_id"),
+        "job_status": "RUNNING",
     }
 
 

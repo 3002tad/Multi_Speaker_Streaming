@@ -111,8 +111,8 @@ MEETING_ROOM=paperless-demo
 MEETING_CODE=DEMO-001
 
 MINUTES_COMPOSER_ENABLED=true
-# timeline = biên bản theo transcript; llm = tổng hợp bằng Qwen sau final turn
-MINUTES_COMPOSER_MODE=timeline
+# llm = tổng hợp structured bằng Qwen sau final turn; timeline = fallback evidence-only
+MINUTES_COMPOSER_MODE=llm
 MINUTES_COMPOSER_MODEL=qwen2.5:3b
 MINUTES_COMPOSER_NUM_THREADS=12
 

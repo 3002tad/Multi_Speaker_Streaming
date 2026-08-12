@@ -61,7 +61,10 @@ class AIEventRecord(Base):
     meeting_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
     runtime_session_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(80), nullable=False)
-    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Callback sequences can be epoch-millisecond values from AI workers;
+    # they exceed a PostgreSQL 32-bit INTEGER even though they remain small
+    # Python ints.
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -105,7 +108,10 @@ class MinutesAnalysisRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     meeting_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
     runtime_session_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
-    base_transcript_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The revision is a deterministic 63-bit snapshot fingerprint, not a
+    # small row counter.  Keep the database type wide enough for the value
+    # produced by MinutesAnalysisService.
+    base_transcript_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
     evidence_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     error_message: Mapped[str | None] = mapped_column(String, nullable=True)

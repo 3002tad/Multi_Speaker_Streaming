@@ -133,8 +133,9 @@ class Settings:
     )
     # Minutes Composer runs after a final global turn reaches the backend.
     # It must not be used in the realtime ASR path.
-    # The demo baseline composes official minutes asynchronously with
-    # Qwen2.5:3B.  This remains outside the realtime ASR path.
+    # Official minutes are composed asynchronously with Qwen2.5:3B. This
+    # remains outside the realtime ASR path; ``timeline`` is retained only as
+    # an explicit deterministic fallback for older offline probes.
     minutes_composer_enabled: bool = _env_bool(
         "MINUTES_COMPOSER_ENABLED", True
     )
@@ -146,7 +147,7 @@ class Settings:
     # model has passed a meeting-specific quality test; small local models can
     # otherwise turn noisy ASR fragments into invented proposals/decisions.
     minutes_composer_mode: str = os.getenv(
-        "MINUTES_COMPOSER_MODE", "timeline"
+        "MINUTES_COMPOSER_MODE", "llm"
     ).strip().lower()
     minutes_composer_timeout_seconds: float = float(
         os.getenv("MINUTES_COMPOSER_TIMEOUT_SECONDS", "45")

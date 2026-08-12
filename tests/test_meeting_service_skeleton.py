@@ -147,6 +147,113 @@ class MeetingServiceSkeletonTests(unittest.TestCase):
             response = client.post(f"/internal/v1/meetings/{meeting_id}/minutes/analyze")
             self.assertEqual(response.status_code, 409)
 
+    def test_p1_02_minutes_updated_persists_draft_and_is_idempotent(self) -> None:
+        class FakeAI:
+            async def analyze_evidence(self, runtime_id: str, evidence: dict, key: str) -> dict:
+                return {
+                    "status": "accepted",
+                    "runtime_session_id": runtime_id,
+                    "analysis_id": evidence["analysis_id"],
+                    "generation_id": evidence["generation_id"],
+                }
+
+        meeting_id = uuid4()
+        analysis = app.state.minutes_analysis
+        previous_ai = analysis.ai_client
+        analysis.ai_client = FakeAI()
+        try:
+            with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
+                created = client.post(
+                    f"/internal/v1/meetings/{meeting_id}/runtime",
+                    json={"meeting": {"status": "ONGOING", "title": "P1-02 callback"}},
+                )
+                self.assertEqual(created.status_code, 201)
+                runtime_id = created.json()["runtime_session_id"]
+                client.post(
+                    f"/internal/v1/meetings/{meeting_id}/transcript",
+                    json={
+                        "segment_id": "p1-02-segment",
+                        "revision": 1,
+                        "content_text": "Thống nhất kế hoạch triển khai.",
+                        "speaker": {"label": "Dat", "identity_method": "mic_fallback"},
+                        "started_at": "2026-08-12T01:00:01Z",
+                        "ended_at": "2026-08-12T01:00:03Z",
+                    },
+                )
+                requested = client.post(
+                    f"/internal/v1/meetings/{meeting_id}/minutes/analyze",
+                    headers={"Idempotency-Key": "p1-02-request"},
+                )
+                self.assertEqual(requested.status_code, 202)
+                analysis_id = requested.json()["analysis_id"]
+                event = {
+                    "schema_version": 1,
+                    "event_id": str(uuid4()),
+                    "type": "minutes.updated",
+                    "meeting_id": str(meeting_id),
+                    "runtime_session_id": runtime_id,
+                    "occurred_at": "2026-08-12T01:01:00Z",
+                    "sequence": 100,
+                    "payload": {
+                        "analysis_id": analysis_id,
+                        "generation_id": str(uuid4()),
+                        "base_transcript_revision": requested.json()["base_transcript_revision"],
+                        "document": {
+                            "schema_version": 1,
+                            "meeting": {
+                                "title": "P1-02 callback",
+                                "started_at": "2026-08-12T01:00:00Z",
+                            },
+                            "summary": [
+                                {
+                                    "content": "Thống nhất kế hoạch triển khai.",
+                                    "source_segment_ids": ["p1-02-segment"],
+                                }
+                            ],
+                            "topics": [],
+                            "source_segment_ids": ["p1-02-segment"],
+                        },
+                    },
+                }
+                callback_headers = {"X-Service-Key": settings.service_key}
+                accepted = client.post(
+                    "/internal/v1/ai-events", headers=callback_headers, json=event
+                )
+                self.assertEqual(accepted.status_code, 200)
+                self.assertEqual(accepted.json(), {"status": "accepted"})
+                saved = client.get(f"/internal/v1/meetings/{meeting_id}/minutes")
+                self.assertEqual(saved.json()["revision"], 1)
+                self.assertEqual(saved.json()["document"]["summary"][0]["content"], "Thống nhất kế hoạch triển khai.")
+                status = client.get(f"/internal/v1/meetings/{meeting_id}/minutes/analyze")
+                self.assertEqual(status.json()["status"], "SUCCEEDED")
+                duplicate = client.post(
+                    "/internal/v1/ai-events", headers=callback_headers, json=event
+                )
+                self.assertEqual(duplicate.json(), {"status": "duplicate"})
+                self.assertEqual(client.get(f"/internal/v1/meetings/{meeting_id}/minutes").json()["revision"], 1)
+                # Minutes uses the control callback sequence domain; it must
+                # not make later transcript events stale when the AI worker
+                # used a high/independent sequence value.
+                later_transcript = {
+                    **event,
+                    "event_id": str(uuid4()),
+                    "type": "transcript.updated",
+                    "sequence": 1,
+                    "payload": {
+                        "segment_id": "p1-02-segment",
+                        "revision": 2,
+                        "content_text": "Thống nhất kế hoạch triển khai mới.",
+                    },
+                }
+                transcript_response = client.post(
+                    "/internal/v1/ai-events",
+                    headers=callback_headers,
+                    json=later_transcript,
+                )
+                self.assertEqual(transcript_response.json(), {"status": "accepted"})
+        finally:
+            analysis.ai_client = previous_ai
+
     def test_internal_api_requires_service_key(self) -> None:
         meeting_id = uuid4()
         with TestClient(app) as client:

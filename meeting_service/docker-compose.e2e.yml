@@ -1,0 +1,15 @@
+# Local E2E override only.  The AI Core and Agent still run natively in WSL
+# until P1-05 containerizes them; therefore the two directions use different
+# loopback names deliberately.
+services:
+  meeting-service:
+    environment:
+      MEETING_AI_ENABLED: "true"
+      # Docker Desktop container -> native WSL AI Core.
+      MEETING_AI_BASE_URL: http://host.docker.internal:8001
+      # Native WSL Agent -> published Docker Meeting Service port.
+      MEETING_AI_CALLBACK_URL: http://127.0.0.1:8002/internal/v1/ai-events
+      MEETING_SERVICE_KEY: ${MEETING_SERVICE_KEY:?MEETING_SERVICE_KEY is required}
+      MEETING_LIVEKIT_URL: ${LIVEKIT_URL:?LIVEKIT_URL is required}
+      MEETING_LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY is required}
+      MEETING_LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required}

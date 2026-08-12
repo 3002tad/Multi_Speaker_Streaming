@@ -170,8 +170,9 @@
     "minutes_updated_payload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["generation_id", "base_transcript_revision", "document"],
+      "required": ["analysis_id", "generation_id", "base_transcript_revision", "document"],
       "properties": {
+        "analysis_id": {"type": "string", "format": "uuid"},
         "generation_id": {"type": "string", "format": "uuid"},
         "base_transcript_revision": {"type": "integer", "minimum": 1},
         "document": {"$ref": "minutes-document.schema.json"},

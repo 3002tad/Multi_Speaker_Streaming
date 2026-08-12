@@ -46,6 +46,8 @@ INTERNAL_API_KEY=<chuỗi ngẫu nhiên dài tối thiểu 24 ký tự>
 ENABLE_LLM_REFINEMENT=false
 # Biên bản chính thức chạy nền sau transcript.final; không sửa transcript realtime.
 MINUTES_COMPOSER_ENABLED=true
+# llm = Qwen tạo biên bản structured; timeline chỉ là fallback evidence-only.
+MINUTES_COMPOSER_MODE=llm
 MINUTES_COMPOSER_MODEL=qwen2.5:3b
 MINUTES_COMPOSER_NUM_THREADS=12
 MINUTES_COMPOSER_TIMEOUT_SECONDS=45

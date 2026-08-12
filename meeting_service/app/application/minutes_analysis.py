@@ -177,6 +177,18 @@ class MinutesAnalysisService:
         self.repository = repository
         self.ai_client = ai_client
 
+    def callback_status(
+        self,
+        analysis_id: UUID,
+        status: str,
+        error_message: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Apply an AI callback state without exposing evidence to callers."""
+        try:
+            return self.repository.set_status(analysis_id, status, error_message)
+        except LookupError:
+            return None
+
     @staticmethod
     def build_evidence(
         *,

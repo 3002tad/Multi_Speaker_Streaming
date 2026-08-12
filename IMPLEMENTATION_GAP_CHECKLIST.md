@@ -426,12 +426,52 @@ snapshot, façade/UI status và degraded/retry state. P1-02 Qwen composition v�
 
 ### P1-02 — Implement AI minutes composition thật
 
-- [ ] `/internal/v1/sessions/{runtime_id}/analyze` chạy Qwen composer, không
+**Trạng thái thực thi 2026-08-12:** `[x]` — đã nối Ollama/Qwen composer,
+structured validation, callback `minutes.updated` và persistence/broadcast DRAFT.
+Automated gate và full Docker E2E với Ollama/Qwen thật đã đạt. P1-03 revision
+conflict vẫn để riêng.
+
+- [x] `/internal/v1/sessions/{runtime_id}/analyze` chạy Qwen composer, không
   chỉ trả `202`.
-- [ ] AI gửi `minutes.updated` structured document, evidence và generation.
-- [ ] Meeting Service persist DRAFT revision rồi mới Socket.IO broadcast.
+- [x] AI gửi `minutes.updated` structured document, evidence và generation.
+- [x] Meeting Service persist DRAFT revision rồi mới Socket.IO broadcast.
 
 **Điều kiện đạt:** transcript final tạo biên bản có evidence E2E.
+
+### Nhật ký thực thi — P1-02 — 2026-08-12
+
+- Trạng thái: `[x]` — implementation slice và acceptance E2E đã đạt.
+- Meeting AI thêm `MinutesWorker`: nhận evidence bất biến, gọi
+  `OllamaMinutesComposer` với `qwen2.5:3b`, ép `think=false` qua composer hiện có,
+  validate mode `llm`, rồi gửi callback `minutes.updated` bất đồng bộ. AI không
+  ghi database/MinIO và không nằm trên audio/transcript realtime loop.
+- Callback có `analysis_id`, `generation_id`, `base_transcript_revision`,
+  structured document và `generator_meta`. Meeting Service kiểm tra schema,
+  kiểm tra mọi `source_segment_ids` thuộc transcript final đã persist, lưu revision
+  `DRAFT`, cập nhật analysis `SUCCEEDED` và chỉ sau đó broadcast Socket.IO.
+- Thêm degraded callback `pipeline.warning` cho lỗi Qwen; analysis chuyển
+  `FAILED` và UI có thể retry. Sequence transcript/control được tách domain để
+  callback minutes không làm transcript tiếp theo bị stale.
+- Cấu hình mặc định minutes composer là `llm`; `timeline` vẫn tồn tại như
+  fallback explicit cho probe cũ. Không thay đổi ASR/DSP/VAD/speaker-ID.
+- Kiểm thử: targeted P1-02 **54 pass**; full unit/contract/regression suite
+  trong WSL **158 pass**; compile Python đạt; frontend production build và
+  Meeting Service/migration Docker images build đạt. E2E thật dùng
+  `audio/thayDung_noi.wav` qua LiveKit: transcript final được persist với
+  `speaker=Thay_Dung`, phonetic recovery nhận `mục 5.2`/`Hadoop Storage`,
+  `/minutes/analyze` trả `202`, Qwen2.5:3B callback làm analysis `SUCCEEDED`
+  và tạo DRAFT revision 1 có `source_segment_ids`. Thêm migration `0007`
+  cho fingerprint transcript BIGINT và `0008` cho callback sequence BIGINT;
+  migration chạy thành công.
+- Giới hạn: E2E production network/HTTPS chưa chạy; callback E2E local dùng
+  loopback WSL vì Agent chạy ngoài Docker. Chưa kiểm thử conflict manual
+  edit/stale LLM result, thuộc P1-03. Chưa có thay đổi chất lượng ASR;
+  ASR-Q1 vẫn deferred.
+- Đối chiếu merge plan: P1-02 hoàn tất đúng phạm vi biên bản trong phiên họp,
+  additive; không ghi decision/action sang task, conclusion, Văn bản chỉ đạo,
+  document, voting hoặc QLVB. eCabinet Core không đổi schema.
+- Bước tiếp theo: P1-03 — optimistic locking/manual edit, stale result,
+  approved immutability và purge/outbox failure handling.
 
 ### P1-03 — Revision conflict, approved immutability và purge
 
@@ -471,6 +511,10 @@ WER/CER giữ baseline.
 
 ### P1-06 — Config, readiness và operation
 
+- [x] **P1-06a — Profile E2E cục bộ đồng bộ:** một nguồn env runtime, script
+  kiểm tra key/network/health, compose override cho WSL Agent ↔ Docker Meeting
+  Service, probe fixture audio và cleanup có kiểm soát. Không ghi secret vào
+  source hoặc tạo bản `.env` thứ hai.
 - [ ] Tách `.env.meeting`/`.env.ai`, inventory tuning runtime.
 - [ ] Startup fail khi key placeholder/yếu hoặc LiveKit secret thiếu.
 - [ ] Readiness Meeting Service kiểm tra DB/Redis/MinIO/AI; AI kiểm tra
@@ -479,6 +523,25 @@ WER/CER giữ baseline.
 - [ ] Ghi cold-start, peak CPU/RAM, degraded mode và safe shutdown result.
 
 **Điều kiện đạt:** health/readiness/degraded/container restart pass.
+
+### Nhật ký thực thi — P1-06a — 2026-08-12
+
+- Thêm `scripts/run_e2e_streaming.sh`, `tests/livekit_e2e_probe.py` và
+  `meeting_service/docker-compose.e2e.yml`. Runner đọc duy nhất private runtime
+  env, ép `MEETING_SERVICE_KEY=INTERNAL_API_KEY`, kiểm tra health và thực hiện
+  lifecycle audio fixture → transcript final → Qwen minutes → stop runtime.
+- Hướng callback được cấu hình tường minh cho giai đoạn AI/Agent còn chạy WSL:
+  container gọi AI qua `host.docker.internal:8001`; Agent gọi Meeting Service
+  qua `127.0.0.1:8002`. Khi P1-05 container hóa AI/Agent, override này phải
+  đổi sang internal DNS duy nhất `meeting-service:8002`.
+- Kiểm thử: `bash -n scripts/run_e2e_streaming.sh`, Python compile, Compose
+  config với giá trị giả đều đạt. Chạy thật runner với `audio/thayDung_noi.wav`
+  đạt `E2E_OK`: 1 final transcript và minutes revision 1; `pytest -q` trong
+  WSL đạt **158 pass**. Sau cleanup, không còn container hoặc native demo
+  process; volume không bị xóa.
+- Đối chiếu plan: đúng phần config/operation P1-06, không đổi thuật toán
+  ASR/DSP/VAD/speaker-ID hay xâm lấn eCabinet. P1-03 vẫn là bước nghiệp vụ kế
+  tiếp; P1-05 sẽ thay native/WSL bridge bằng Compose full platform.
 
 ## P1 — Frontend, public deployment và acceptance
 
