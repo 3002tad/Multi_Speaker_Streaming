@@ -499,3 +499,44 @@ Giới hạn còn lại:
 additive và không xâm lấn eCabinet. Bước tiếp theo theo thứ tự là P1-04 — hoàn
 tất cấu trúc Meeting AI Core; sau đó P1-05 Compose full platform và đổi bridge
 WSL sang internal DNS.
+
+## Checkpoint — Hoàn tất P1-04: tách TranscriptCoordinator
+
+Đã commit cục bộ theo cặp repository:
+
+- Root / Meeting Service + Meeting AI: branch `feature/meeting-platform-microservices`,
+  commit triển khai `177c66d` — `refactor: extract transcript coordinator`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit hiện tại
+  `022ac25` — không có thay đổi trong checkpoint này.
+- eCabinet là repository local-only và không được push remote.
+
+Phạm vi thay đổi:
+
+- Tách policy publish partial/final ra `meeting_ai/application/TranscriptCoordinator`;
+  partial có throttle theo monotonic clock, reset theo global turn và final chống
+  publish trùng khóa global turn.
+- WebSocket handler chỉ kết nối transport callback; không thay decoder, DSP,
+  VAD, speaker-ID hoặc ngưỡng nhận dạng. Compatibility wrapper `ai_server.py`
+  và `agent.py` vẫn được giữ.
+- Cập nhật checklist P1-04 với bằng chứng kiểm thử và giới hạn còn lại.
+
+Kiểm thử đã chạy:
+
+- Targeted coordinator/SessionManager/Agent/contract: **24 pass, 6 subtests**.
+- Full WSL `pytest -q`: **167 pass, 5 warnings, 6 subtests**.
+- `compileall`, `git diff --check` và compatibility import wrapper: đạt.
+- Streaming regression: `DUAL_MIC_PROBE_OK`, 2/2 interval có transcript,
+  không có `unassigned_tail`, overlap và WER/CER gate đạt.
+- E2E full platform với `audio/thayDung_noi.wav`: `E2E_OK`, 1 final transcript,
+  minutes revision 1, container/process do runner tạo đã cleanup.
+
+Giới hạn còn lại:
+
+- Chất lượng ASR khi nói nhanh và chuẩn hóa clock/latency vẫn thuộc P0-07/P1-06;
+  không mở rộng trong checkpoint này.
+- Chưa container hóa AI Core và LiveKit Agent; vẫn còn bridge process WSL.
+
+Đối chiếu merge plan: P1-04 hoàn tất đúng phạm vi refactor additive, không truy
+cập chéo database/MinIO và không xâm lấn eCabinet. Bước tiếp theo là P1-05:
+Compose đầy đủ AI Core/Agent, mount runtime ngoài source và chuyển callback sang
+internal DNS.
