@@ -114,9 +114,10 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [schema_version, generation_id, meeting, base_transcript_revision, segments]
+              required: [schema_version, analysis_id, generation_id, meeting, base_transcript_revision, segments]
               properties:
                 schema_version: {const: 1}
+                analysis_id: {type: string, format: uuid}
                 generation_id: {type: string, format: uuid}
                 meeting:
                   type: object

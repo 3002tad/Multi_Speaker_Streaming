@@ -5,9 +5,9 @@ info:
   description: >-
     Contract called by the eCabinet BFF. Meeting Service owns runtime,
     transcripts, minutes, exports and realtime state; it never queries the
-    eCabinet database. Minutes analysis is owned by the separate Meeting AI
-    contract (`/internal/v1/sessions/{runtime_session_id}/analyze`) and is
-    deferred to P1-01; this service does not expose `/minutes/analyze`.
+    eCabinet database. Meeting Service creates immutable evidence snapshots
+    from its persisted final transcript, then calls the separate Meeting AI
+    contract (`/internal/v1/sessions/{runtime_session_id}/analyze`).
 servers:
   - url: http://meeting-service:8002
     description: Docker internal network
@@ -201,6 +201,27 @@ paths:
           $ref: "#/components/responses/ProblemResponse"
         "422":
           $ref: "#/components/responses/ProblemResponse"
+  /internal/v1/meetings/{meeting_id}/minutes/analyze:
+    parameters:
+      - $ref: "#/components/parameters/MeetingId"
+    get:
+      operationId: getMeetingMinutesAnalysisStatus
+      responses:
+        "200":
+          $ref: "#/components/responses/MinutesAnalysisResponse"
+    post:
+      operationId: requestMeetingMinutesAnalysis
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          $ref: "#/components/responses/MinutesAnalysisResponse"
+        "404":
+          $ref: "#/components/responses/ProblemResponse"
+        "409":
+          $ref: "#/components/responses/ProblemResponse"
+        "503":
+          $ref: "#/components/responses/ProblemResponse"
   /internal/v1/meetings/{meeting_id}/minutes/review:
     parameters:
       - $ref: "#/components/parameters/MeetingId"
@@ -390,6 +411,19 @@ components:
           type: array
           items: {type: string}
         updated_at: {type: string, format: date-time}
+    MinutesAnalysis:
+      type: object
+      additionalProperties: false
+      required: [meeting_id, status]
+      properties:
+        analysis_id: {type: string, format: uuid}
+        meeting_id: {type: string, format: uuid}
+        runtime_session_id: {type: string, format: uuid}
+        base_transcript_revision: {type: integer, minimum: 1}
+        status: {type: string, enum: [IDLE, PENDING, RUNNING, SUCCEEDED, FAILED]}
+        error_message: {type: [string, "null"]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
     MinutesExport:
       type: object
       additionalProperties: false
@@ -457,6 +491,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/MinutesRevision"
+    MinutesAnalysisResponse:
+      description: Analysis request state. The evidence remains owned by Meeting Service.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MinutesAnalysis"
     ProblemResponse:
       description: Request failed.
       content:

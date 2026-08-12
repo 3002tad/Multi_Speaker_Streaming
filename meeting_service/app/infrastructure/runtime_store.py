@@ -105,6 +105,13 @@ class InMemoryRuntimeStore(RuntimeRepository):
                 "snapshot": dict(snapshot),
             }
 
+    def get_snapshot(self, meeting_id: UUID) -> dict:
+        with self._lock:
+            session = self.get(meeting_id)
+            if session is None:
+                raise LookupError("runtime not found")
+            return dict(self._snapshots.get(session.runtime_session_id, {}))
+
     def delete_meeting(self, meeting_id: UUID) -> int:
         with self._lock:
             ids = [runtime_id for runtime_id, item in self._items.items() if item.meeting_id == meeting_id]

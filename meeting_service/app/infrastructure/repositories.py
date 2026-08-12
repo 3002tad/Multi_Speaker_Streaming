@@ -19,6 +19,7 @@ class RuntimeRepository(Protocol):
     def get_idempotency(self, operation: str, key: str, request_hash: str) -> dict | None: ...
     def put_idempotency(self, operation: str, key: str, request_hash: str, response: dict) -> dict: ...
     def update_snapshot(self, meeting_id: UUID, snapshot: dict) -> dict: ...
+    def get_snapshot(self, meeting_id: UUID) -> dict: ...
     def set_status(self, runtime_id: UUID, status: RuntimeStatus) -> RuntimeSession | None: ...
     def delete_meeting(self, meeting_id: UUID) -> int: ...
 
@@ -189,6 +190,17 @@ class SqlAlchemyRuntimeRepository:
                 "status": record.status,
                 "snapshot": dict(snapshot),
             }
+
+    def get_snapshot(self, meeting_id: UUID) -> dict:
+        with self._sessions() as session:
+            record = session.scalar(
+                select(RuntimeSessionRecord)
+                .where(RuntimeSessionRecord.meeting_id == meeting_id)
+                .order_by(RuntimeSessionRecord.created_at.desc())
+            )
+            if record is None:
+                raise LookupError("runtime not found")
+            return dict(record.meeting_snapshot_json or {})
 
     def set_status(self, runtime_id: UUID, status: RuntimeStatus) -> RuntimeSession | None:
         with self._sessions.begin() as session:

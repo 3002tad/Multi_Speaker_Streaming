@@ -25,6 +25,23 @@ class MeetingAIClient:
             response.raise_for_status()
             return response.json()
 
+    async def analyze_evidence(
+        self,
+        runtime_session_id: str,
+        evidence: dict[str, Any],
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(
+            base_url=self.base_url, headers=self.headers, timeout=self.timeout
+        ) as client:
+            response = await client.post(
+                f"/internal/v1/sessions/{runtime_session_id}/analyze",
+                json=evidence,
+                headers={"Idempotency-Key": idempotency_key},
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def create_enrollment(
         self,
         user_id: str,

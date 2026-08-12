@@ -90,6 +90,31 @@ class MinutesRevisionRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MinutesAnalysisRecord(Base):
+    """Durable control-plane state for a requested AI minutes analysis."""
+
+    __tablename__ = "meeting_minutes_analyses"
+    __table_args__ = (
+        UniqueConstraint(
+            "meeting_id",
+            "base_transcript_revision",
+            name="uq_meeting_minutes_analysis_snapshot",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    meeting_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    runtime_session_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    base_transcript_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    error_message: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class MinutesExportRecord(Base):
     __tablename__ = "meeting_minutes_exports"
     __table_args__ = (UniqueConstraint("meeting_id", "minutes_revision", "format", name="uq_meeting_minutes_export"),)

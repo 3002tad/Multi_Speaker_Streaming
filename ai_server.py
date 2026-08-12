@@ -1651,16 +1651,39 @@ async def analyze_ai_evidence(
     x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
 ) -> dict[str, object]:
     _require_service_key(x_internal_key, x_service_key)
+    required = {
+        "schema_version",
+        "analysis_id",
+        "generation_id",
+        "meeting",
+        "base_transcript_revision",
+        "segments",
+    }
+    if not required.issubset(payload):
+        raise HTTPException(status_code=422, detail="invalid minutes evidence payload")
+    if payload.get("schema_version") != 1:
+        raise HTTPException(status_code=422, detail="unsupported minutes evidence schema_version")
+    if not isinstance(payload.get("generation_id"), str) or not payload["generation_id"].strip():
+        raise HTTPException(status_code=422, detail="minutes evidence requires generation_id")
+    if not isinstance(payload.get("base_transcript_revision"), int) or payload["base_transcript_revision"] < 1:
+        raise HTTPException(status_code=422, detail="minutes evidence requires base_transcript_revision")
+    if not isinstance(payload.get("segments"), list) or not payload["segments"]:
+        raise HTTPException(status_code=422, detail="minutes evidence requires final transcript segments")
     with _ai_session_lock:
         session = _ai_sessions.get(runtime_session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="AI session not found")
         if session.status in {"COMPLETED", "FAILED"}:
             raise HTTPException(status_code=409, detail="AI session is no longer active")
-    # Minutes composition remains owned by Meeting Service.  This endpoint is
-    # intentionally an acceptance boundary for the next async composition
-    # slice; it never stores evidence in AI.
-    return {"status": "accepted", "runtime_session_id": runtime_session_id, "generation_id": payload.get("generation_id")}
+    # Meeting AI will own composition in P1-02, while Meeting Service remains
+    # the owner of persisted minutes revisions. This P1-01 endpoint is only an
+    # acceptance boundary and intentionally never stores evidence in AI.
+    return {
+        "status": "accepted",
+        "runtime_session_id": runtime_session_id,
+        "analysis_id": payload.get("analysis_id"),
+        "generation_id": payload.get("generation_id"),
+    }
 
 
 @app.get("/internal/v1/agent/assignment")

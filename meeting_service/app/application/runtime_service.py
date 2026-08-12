@@ -107,6 +107,9 @@ class RuntimeService:
     def update_snapshot(self, meeting_id: UUID, snapshot: dict) -> dict:
         return self.store.update_snapshot(meeting_id, snapshot)
 
+    def snapshot(self, meeting_id: UUID) -> dict:
+        return self.store.get_snapshot(meeting_id)
+
     async def stop(self, runtime_session_id: UUID, idempotency_key: str | None = None) -> RuntimeSession | None:
         idempotency_key = idempotency_key or f"legacy-stop-{runtime_session_id}"
         operation = f"stop:{runtime_session_id}"

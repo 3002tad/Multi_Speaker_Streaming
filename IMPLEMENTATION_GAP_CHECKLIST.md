@@ -378,10 +378,14 @@ lượng đã biết, không phải P1-01; không tuyên bố WER/CER P0 đã đ
 control-plane/evidence snapshot; không thay đổi ASR, DSP, VAD, speaker ID hoặc
 đọc trực tiếp PostgreSQL/MinIO từ AI.
 
-- [ ] Meeting Service lấy transcript final PostgreSQL, tạo evidence snapshot
+**Trạng thái thực thi 2026-08-12:** `[x]` — đã hoàn tất control-plane/evidence
+snapshot, façade/UI status và degraded/retry state. P1-02 Qwen composition vẫn
+để riêng.
+
+- [x] Meeting Service lấy transcript final PostgreSQL, tạo evidence snapshot
   có `base_transcript_revision` và gọi AI contract.
-- [ ] Không cho AI truy cập PostgreSQL/MinIO trực tiếp.
-- [ ] Thêm eCabinet façade, UI trigger/status và retry/degraded state.
+- [x] Không cho AI truy cập PostgreSQL/MinIO trực tiếp.
+- [x] Thêm eCabinet façade, UI trigger/status và retry/degraded state.
 
 **Điều kiện đạt:** analyze bất đồng bộ, transcript realtime không bị block.
 
@@ -394,6 +398,31 @@ control-plane/evidence snapshot; không thay đổi ASR, DSP, VAD, speaker ID ho
 3. Bổ sung eCabinet façade và UI trigger/status/retry theo quyền hiện có.
 4. Viết contract test, retry/degraded test và xác nhận analyze không chặn
    Socket.IO/partial transcript trước khi sang P1-02.
+
+### Nhật ký thực thi — P1-01 — 2026-08-12
+
+- Trạng thái: `[x]`.
+- Meeting Service thêm bảng/migration `meeting_minutes_analyses`, lưu trạng thái
+  `PENDING/RUNNING/SUCCEEDED/FAILED` và evidence immutable từ transcript final.
+  `base_transcript_revision` là fingerprint tất định của snapshot; không dùng
+  phép cộng revision có thể va chạm khi thêm/sửa segment.
+- `POST/GET /internal/v1/meetings/{meeting_id}/minutes/analyze` chỉ gửi evidence
+  qua internal contract tới Meeting AI. AI acceptance endpoint kiểm tra schema
+  và trả accepted; chưa gọi Qwen hay ghi biên bản trong P1-01.
+- eCabinet thêm façade theo quyền hiện có và nút/status/retry trên MeetingRoom.
+  API public không trả evidence cho UI/BFF. Không service nào cho AI truy cập
+  PostgreSQL hay MinIO của Meeting Service/eCabinet.
+- Kiểm thử: compile Python đạt; full unit/contract suite **155 pass**; frontend
+  production build trong image Docker đạt; migration graph đạt
+  `0006_minutes_analysis (head)`; `git diff --check` đạt.
+- Giới hạn: chưa chạy Docker E2E có Qwen/callback `minutes.updated`; đây là
+  phạm vi P1-02. Khi Meeting AI chưa cấu hình/không phản hồi, trạng thái chuyển
+  `FAILED` để UI có thể retry, transcript realtime vẫn độc lập.
+- Đối chiếu merge plan: đúng P1 control-plane, additive trong Meeting Service và
+  façade session; không sửa document/task/conclusion/voting/qlvb, ASR/DSP/VAD
+  hay speaker identification. eCabinet vẫn local-only, không push.
+- Bước tiếp theo: P1-02 — worker Qwen nhận evidence, tạo structured document và
+  callback `minutes.updated`; sau đó P1-03 xử lý stale result/manual revision.
 
 ### P1-02 — Implement AI minutes composition thật
 

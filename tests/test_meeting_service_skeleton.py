@@ -13,6 +13,7 @@ from meeting_service.app.domain.models import RuntimeStatus
 from meeting_service.app.infrastructure.database import Base, create_session_factory
 from meeting_service.app.infrastructure.repositories import SqlAlchemyAIEventRepository, SqlAlchemyRuntimeRepository
 from meeting_service.app.application.meeting_content import SqlAlchemyMeetingContentRepository
+from meeting_service.app.application.minutes_analysis import MinutesAnalysisService
 from meeting_service.app.infrastructure.runtime_store import InMemoryRuntimeStore
 from meeting_service.app.application.runtime_service import RuntimeService
 from meeting_service.app.config import settings
@@ -25,6 +26,127 @@ IDEMPOTENCY_HEADERS = {
 
 
 class MeetingServiceSkeletonTests(unittest.TestCase):
+    def test_p1_01_evidence_revision_changes_without_segment_revision_collision(self) -> None:
+        meeting_id = uuid4()
+        runtime_id = uuid4()
+        common = {
+            "meeting_id": meeting_id,
+            "runtime_session_id": runtime_id,
+            "meeting_snapshot": {"meeting": {"title": "Kiểm tra revision"}},
+            "previous_document": None,
+        }
+        first, _ = MinutesAnalysisService.build_evidence(
+            **common,
+            transcript=[
+                {
+                    "segment_id": "one",
+                    "revision": 2,
+                    "content_text": "Một đoạn đã chỉnh sửa.",
+                    "started_at": "2026-08-12T01:00:00Z",
+                    "ended_at": "2026-08-12T01:00:02Z",
+                }
+            ],
+        )
+        second, _ = MinutesAnalysisService.build_evidence(
+            **common,
+            transcript=[
+                {
+                    "segment_id": "one",
+                    "revision": 1,
+                    "content_text": "Một đoạn ban đầu.",
+                    "started_at": "2026-08-12T01:00:00Z",
+                    "ended_at": "2026-08-12T01:00:02Z",
+                },
+                {
+                    "segment_id": "two",
+                    "revision": 1,
+                    "content_text": "Đoạn thứ hai.",
+                    "started_at": "2026-08-12T01:00:03Z",
+                    "ended_at": "2026-08-12T01:00:05Z",
+                },
+            ],
+        )
+        self.assertNotEqual(first, second)
+
+    def test_p1_01_minutes_analysis_uses_final_evidence_without_exposing_it(self) -> None:
+        class FakeAI:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict, str]] = []
+
+            async def analyze_evidence(self, runtime_id: str, evidence: dict, key: str) -> dict:
+                self.calls.append((runtime_id, evidence, key))
+                return {
+                    "status": "accepted",
+                    "runtime_session_id": runtime_id,
+                    "analysis_id": evidence["analysis_id"],
+                    "generation_id": evidence["generation_id"],
+                }
+
+        meeting_id = uuid4()
+        fake = FakeAI()
+        analysis = app.state.minutes_analysis
+        previous_ai = analysis.ai_client
+        analysis.ai_client = fake
+        try:
+            with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
+                runtime = client.post(
+                    f"/internal/v1/meetings/{meeting_id}/runtime",
+                    json={
+                        "meeting": {
+                            "status": "ONGOING",
+                            "title": "P1 evidence test",
+                            "started_at": "2026-08-12T01:00:00Z",
+                        },
+                    },
+                )
+                self.assertEqual(runtime.status_code, 201)
+                client.post(
+                    f"/internal/v1/meetings/{meeting_id}/transcript",
+                    json={
+                        "segment_id": "p1-final-1",
+                        "revision": 1,
+                        "content_text": "Nội dung transcript final.",
+                        "speaker": {"label": "Dat", "ecabinet_user_id": str(uuid4())},
+                        "started_at": "2026-08-12T01:00:01Z",
+                        "ended_at": "2026-08-12T01:00:03Z",
+                    },
+                )
+                requested = client.post(
+                    f"/internal/v1/meetings/{meeting_id}/minutes/analyze",
+                    headers=IDEMPOTENCY_HEADERS,
+                )
+                self.assertEqual(requested.status_code, 202)
+                self.assertEqual(requested.json()["status"], "RUNNING")
+                self.assertNotIn("evidence", requested.json())
+                self.assertEqual(len(fake.calls), 1)
+                evidence = fake.calls[0][1]
+                self.assertEqual(evidence["meeting"]["title"], "P1 evidence test")
+                self.assertEqual(evidence["segments"][0]["content_text"], "Nội dung transcript final.")
+                self.assertNotIn("database_url", evidence)
+
+                status = client.get(f"/internal/v1/meetings/{meeting_id}/minutes/analyze")
+                self.assertEqual(status.json()["status"], "RUNNING")
+                self.assertNotIn("evidence", status.json())
+                repeated = client.post(
+                    f"/internal/v1/meetings/{meeting_id}/minutes/analyze",
+                    headers=IDEMPOTENCY_HEADERS,
+                )
+                self.assertEqual(repeated.status_code, 202)
+                self.assertEqual(len(fake.calls), 1)
+        finally:
+            analysis.ai_client = previous_ai
+
+    def test_p1_01_minutes_analysis_rejects_empty_transcript(self) -> None:
+        meeting_id = uuid4()
+        with TestClient(app, headers=IDEMPOTENCY_HEADERS) as client:
+            created = client.post(
+                f"/internal/v1/meetings/{meeting_id}/runtime",
+                json={"meeting": {"status": "ONGOING"}},
+            )
+            self.assertEqual(created.status_code, 201)
+            response = client.post(f"/internal/v1/meetings/{meeting_id}/minutes/analyze")
+            self.assertEqual(response.status_code, 409)
+
     def test_internal_api_requires_service_key(self) -> None:
         meeting_id = uuid4()
         with TestClient(app) as client:

@@ -8,6 +8,10 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request
 from meeting_service.app.application.runtime_service import RuntimeService, RuntimeStateError
 from meeting_service.app.domain.models import RuntimeStatus
 from meeting_service.app.application.meeting_content import MinutesRevisionConflict, MinutesStateConflict, content_store
+from meeting_service.app.application.minutes_analysis import (
+    MinutesAnalysisConflict,
+    MinutesAnalysisService,
+)
 from meeting_service.app.infrastructure.livekit_tokens import LiveKitConfigurationError, issue_livekit_token
 from meeting_service.app.application.docx_export import CONTENT_TYPE, render_minutes_docx
 from meeting_service.app.infrastructure.object_storage import object_storage
@@ -35,6 +39,15 @@ def _ai_client(request: Request):
     if client is None:
         raise HTTPException(status_code=503, detail="Meeting AI is not configured")
     return client
+
+
+def _minutes_analysis(request: Request) -> MinutesAnalysisService:
+    return request.app.state.minutes_analysis
+
+
+def _public_analysis(item: dict[str, object]) -> dict[str, object]:
+    """Never expose the immutable evidence body outside service-to-AI traffic."""
+    return {key: value for key, value in item.items() if key != "evidence"}
 
 
 def _idempotency_key(request: Request) -> str:
@@ -113,12 +126,14 @@ def purge_meeting(meeting_id: UUID, request: Request) -> dict[str, object]:
     content_deleted = _content(request).delete_meeting(meeting_id)
     ai_repository = getattr(request.app.state, "ai_event_repository", None)
     ai_deleted = ai_repository.delete_meeting(meeting_id) if ai_repository else 0
+    analysis_deleted = _minutes_analysis(request).repository.delete_meeting(meeting_id)
     return {
         "meeting_id": str(meeting_id),
         "status": "PURGED",
         "runtime_rows_deleted": runtime_deleted,
         "content_rows_deleted": content_deleted,
         "ai_event_rows_deleted": ai_deleted,
+        "minutes_analysis_rows_deleted": analysis_deleted,
         "export_objects_deleted": export_storage_deleted,
         "export_objects_cleanup_failed": export_storage_cleanup_failed,
     }
@@ -258,6 +273,35 @@ def append_transcript(meeting_id: UUID, request: Request, segment: dict[str, obj
 @router.get("/meetings/{meeting_id}/minutes")
 def get_minutes(meeting_id: UUID, request: Request) -> dict[str, object]:
     return _content(request).minutes(meeting_id)
+
+
+@router.get("/meetings/{meeting_id}/minutes/analyze")
+def minutes_analysis_status(meeting_id: UUID, request: Request) -> dict[str, object]:
+    item = _minutes_analysis(request).repository.get(meeting_id)
+    if item is None:
+        return {"meeting_id": str(meeting_id), "status": "IDLE"}
+    return _public_analysis(item)
+
+
+@router.post("/meetings/{meeting_id}/minutes/analyze", status_code=202)
+async def analyze_minutes(meeting_id: UUID, request: Request) -> dict[str, object]:
+    runtime = _service(request).status(meeting_id)
+    if runtime is None:
+        raise HTTPException(status_code=404, detail="runtime not found")
+    if runtime.status in {RuntimeStatus.COMPLETED, RuntimeStatus.FAILED}:
+        raise HTTPException(status_code=409, detail="runtime is no longer active")
+    try:
+        result = await _minutes_analysis(request).request(
+            meeting_id=meeting_id,
+            runtime_session_id=runtime.runtime_session_id,
+            meeting_snapshot=_service(request).snapshot(meeting_id),
+            transcript=_content(request).transcript(meeting_id),
+            previous_document=_content(request).minutes(meeting_id).get("document"),
+            idempotency_key=_idempotency_key(request),
+        )
+        return _public_analysis(result)
+    except MinutesAnalysisConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.patch("/meetings/{meeting_id}/minutes")
