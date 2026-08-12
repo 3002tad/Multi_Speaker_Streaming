@@ -36,6 +36,31 @@ Người nhận phải tự cấu hình secret từ các file `.env.example`.
 | eCabinet | `feature/meeting-platform-integration` | `75478a5` | Vite proxy cho REST và Socket.IO |
 | Root | `feature/meeting-platform-microservices` | `2f18d6f` | Handoff Day 5 LiveKit |
 
+## Checkpoint P1-04 — 2026-08-12
+
+- Root / Meeting AI + Meeting Service: `f32fcef`
+  (`feature/meeting-platform-microservices`)
+- eCabinet: `022ac25` (local-only, không push; không có thay đổi trong
+  checkpoint này).
+
+Phạm vi: tách entrypoint AI/Agent thành `meeting_ai`, giữ wrapper tương thích
+`ai_server.py` và `agent.py`; bổ sung SessionManager, FastAPI adapter, Qdrant
+speaker-store boundary và runner assignment cho streaming regression. Cơ chế
+arbitration finalization được đổi sang adaptive theo global turn + EWMA latency
+WavLM để tránh transcript final trùng khi mic yếu endpoint sớm.
+
+Kiểm thử đã chạy: full WSL `pytest -q` đạt **165 pass, 6 subtests**; audio
+unit **23 pass**; LiveKit dual-mic regression đạt 2 final, coverage 100% và
+mọi gate WER/CER; E2E P1-06a full platform đạt runtime → LiveKit fixture →
+transcript callback → Qwen minutes revision 1 → stop runtime. E2E test chỉ
+dùng runner/process/container tạm và đã cleanup, không xóa volumes.
+
+Giới hạn: transcript fixture Thầy Dũng vẫn có WER cao với thuật ngữ đặc thù;
+đó là giới hạn ASR baseline, không phải lỗi contract/E2E. UI browser realtime,
+enrollment, playback và Socket.IO acceptance còn thuộc P1-07. Bước tiếp theo:
+hoàn tất các boundary còn lại của P1-04, lặp stress regression rồi chuyển
+sang P1-05 container hóa AI/Agent.
+
 ## Checkpoint hiện tại — 2026-08-07
 
 ### LiveKit workspace
