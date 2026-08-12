@@ -585,3 +585,45 @@ Giới hạn còn lại:
 
 Đối chiếu merge plan: P1-05 hoàn tất đúng container/runtime boundary, additive
 và không xâm lấn eCabinet. Bước tiếp theo theo ưu tiên là P1-06, sau đó P1-07.
+
+## Checkpoint — Hoàn tất P1-06: cấu hình, readiness và vận hành
+
+Đã commit cục bộ theo cặp repository:
+
+- Root / Meeting Service + Meeting AI: branch `feature/meeting-platform-microservices`,
+  commit `7fbdb31` — `feat: harden meeting platform operations`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit hiện tại
+  `022ac25` — không có thay đổi trong checkpoint này.
+- eCabinet là repository local-only và không được push remote.
+
+Phạm vi thay đổi:
+
+- Bổ sung template cấu hình private tách Meeting Service/Meeting AI; strict
+  deployment từ chối key placeholder/yếu, runtime token thiếu và LiveKit thiếu
+  cấu hình. Không có secret hoặc file env runtime nào được commit.
+- Readiness Meeting Service kiểm tra PostgreSQL, Redis, MinIO và Meeting AI;
+  AI báo trạng thái model/Qdrant/Ollama cùng cold-start, CPU/RSS. Qwen warm-up
+  chạy nền nên không chặn realtime transcript.
+- SIGTERM đợi callback minutes trong timeout, đóng final-turn scheduler và
+  Qdrant rõ ràng; bổ sung test configuration/readiness/shutdown. Không thay
+  ASR/DSP/VAD/speaker-ID hoặc ranh giới database giữa các service.
+
+Kiểm thử đã chạy:
+
+- Full WSL `pytest -q`: **174 pass, 7 warnings, 6 subtests pass**.
+- Compile Python, `bash -n` runner và `git diff --check`: đạt.
+- Compose strict khởi động với readiness DB/Redis/MinIO/AI `ok`; Ollama warm-up
+  đạt. SIGTERM AI flush `pending_callbacks=0` và không còn warning Qdrant.
+- E2E containerized với split env private và fixture audio: `E2E_OK`, 1
+  transcript final, minutes revision 1; runner cleanup container/network mà
+  không xóa volume.
+
+Giới hạn còn lại:
+
+- Cảnh báo deprecation `FastAPI on_event` và test JWT key ngắn của legacy test
+  suite còn tồn tại, không thuộc P1-06.
+- P1-07 UI acceptance, P1-08 public Nginx và E2E ngoài mạng chưa thực hiện.
+
+Đối chiếu merge plan: P1-06 hoàn tất đúng config/readiness/operation,
+additive và không xâm lấn eCabinet. Bước tiếp theo là P1-07 — UI acceptance
+MeetingRoom; P1-08 chỉ bắt đầu sau khi P1-07 đạt.
