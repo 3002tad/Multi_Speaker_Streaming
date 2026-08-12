@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from meeting_ai.core.operations import is_placeholder_secret, validate_secret
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _project_env_path = PROJECT_ROOT / ".env"
@@ -64,6 +66,7 @@ def _env_choice_int(name: str, default: int, choices: tuple[int, ...]) -> int:
 
 @dataclass(frozen=True)
 class Settings:
+    strict_config: bool = _env_bool("MEETING_STRICT_CONFIG", False)
     livekit_url: str = os.getenv(
         "LIVEKIT_URL", "wss://livekit.simplething.id.vn"
     )
@@ -172,6 +175,13 @@ class Settings:
     )
     minutes_composer_keep_alive: str | int = _env_keep_alive(
         "MINUTES_COMPOSER_KEEP_ALIVE", "-1"
+    )
+    ollama_warmup_enabled: bool = _env_bool("OLLAMA_WARMUP_ENABLED", True)
+    ollama_warmup_timeout_seconds: float = max(
+        1.0, float(os.getenv("OLLAMA_WARMUP_TIMEOUT_SECONDS", "90"))
+    )
+    shutdown_flush_timeout_seconds: float = max(
+        1.0, float(os.getenv("SHUTDOWN_FLUSH_TIMEOUT_SECONDS", "15"))
     )
     database_path: Path = Path(
         os.getenv("DATABASE_PATH", str(RUNTIME_ROOT / "data" / "meeting.db"))
@@ -597,9 +607,27 @@ class Settings:
             raise RuntimeError(
                 "LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set in .env"
             )
+        if self.strict_config:
+            if is_placeholder_secret(self.livekit_url):
+                raise RuntimeError("LIVEKIT_URL must not be a placeholder")
+            validate_secret("LIVEKIT_API_KEY", self.livekit_api_key, minimum_length=3)
+            validate_secret("LIVEKIT_API_SECRET", self.livekit_api_secret)
+
+    def validate_ai_api_startup(self) -> None:
+        """Reject unsafe deployment secrets before serving internal requests."""
+        if not self.strict_config:
+            return
+        validate_secret("INTERNAL_API_KEY", self.internal_api_key)
+        validate_secret("MEETING_SERVICE_KEY", self.meeting_service_key)
+        if self.internal_api_key != self.meeting_service_key:
+            raise RuntimeError("INTERNAL_API_KEY and MEETING_SERVICE_KEY must match")
+
+    def validate_agent_startup(self) -> None:
+        self.validate_livekit()
+        self.validate_ai_api_startup()
 
     def validate_runtime(self) -> None:
-        self.validate_livekit()
+        self.validate_agent_startup()
         if self.asr_frontend not in {"legacy", "dpdfnet"}:
             raise RuntimeError(
                 "ASR_FRONTEND must be either 'legacy' or 'dpdfnet'"
@@ -615,13 +643,6 @@ class Settings:
             raise RuntimeError(
                 "Speech-enhancement model not found: "
                 f"{self.asr_enhancer_model}"
-            )
-        if (
-            len(self.internal_api_key) < 24
-            or self.internal_api_key.startswith("replace_")
-        ):
-            raise RuntimeError(
-                "INTERNAL_API_KEY must be a random value of at least 24 chars"
             )
 
 

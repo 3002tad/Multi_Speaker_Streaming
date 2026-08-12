@@ -67,11 +67,12 @@ volume `backend_*`.
 ```bash
 cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
 set -a
-source /home/ntd/meeting_runtime/meeting-platform.env
+source /home/ntd/meeting_runtime/.env.meeting
 set +a
-export MEETING_PLATFORM_ENV_FILE=/home/ntd/meeting_runtime/meeting-platform.env
+export MEETING_SERVICE_ENV_FILE=/home/ntd/meeting_runtime/.env.meeting
+export MEETING_AI_ENV_FILE=/home/ntd/meeting_runtime/.env.ai
 
-docker compose --env-file "$MEETING_PLATFORM_ENV_FILE" \
+docker compose --env-file "$MEETING_SERVICE_ENV_FILE" \
   -f meeting_service/docker-compose.yml \
   -f deploy/compose.meeting-platform.yml up -d --build
 ```
@@ -81,7 +82,7 @@ Healthcheck:
 ```bash
 curl -fsS http://127.0.0.1:8002/health/live
 curl -fsS http://127.0.0.1:8002/health/ready
-docker compose --env-file "$MEETING_PLATFORM_ENV_FILE" \
+docker compose --env-file "$MEETING_SERVICE_ENV_FILE" \
   -f meeting_service/docker-compose.yml \
   -f deploy/compose.meeting-platform.yml ps
 ```
@@ -217,7 +218,7 @@ cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming/ecabinet/backend
 docker compose down
 
 cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
-docker compose --env-file "$MEETING_PLATFORM_ENV_FILE" \
+docker compose --env-file "$MEETING_SERVICE_ENV_FILE" \
   -f meeting_service/docker-compose.yml \
   -f deploy/compose.meeting-platform.yml down --remove-orphans
 ```

@@ -745,7 +745,7 @@ async def _run_assignment(
 
 
 async def main() -> None:
-    settings.validate_livekit()
+    settings.validate_agent_startup()
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 

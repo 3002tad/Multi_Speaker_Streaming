@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-
 def _origins() -> list[str]:
     raw = os.getenv("MEETING_ALLOWED_ORIGINS", "http://localhost:5173")
     return [item.strip() for item in raw.split(",") if item.strip()]
@@ -13,8 +12,23 @@ def _bool(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _validate_secret(name: str, value: str, *, minimum_length: int = 24) -> None:
+    normalized = value.strip().lower()
+    placeholder = (
+        not normalized
+        or normalized in {"changeme", "replace_me", "replace-before-public-deploy"}
+        or normalized.startswith(("replace", "change-me", "local-", "example"))
+    )
+    if len(value.strip()) < minimum_length or placeholder:
+        raise RuntimeError(
+            f"{name} must be a non-placeholder random value of at least "
+            f"{minimum_length} characters"
+        )
+
+
 @dataclass(frozen=True)
 class Settings:
+    strict_config: bool = _bool("MEETING_STRICT_CONFIG")
     service_name: str = os.getenv("MEETING_SERVICE_NAME", "meeting-service")
     host: str = os.getenv("MEETING_SERVICE_HOST", "0.0.0.0")
     port: int = int(os.getenv("MEETING_SERVICE_PORT", "8002"))
@@ -37,6 +51,7 @@ class Settings:
         "MEETING_AI_CALLBACK_URL",
         "http://meeting-service:8002/internal/v1/ai-events",
     )
+    redis_url: str = os.getenv("MEETING_REDIS_URL", "")
     runtime_token_secret: str = os.getenv("MEETING_RUNTIME_TOKEN_SECRET", "change-me-runtime-token-secret-32bytes")
     runtime_token_algorithm: str = os.getenv("MEETING_RUNTIME_TOKEN_ALGORITHM", "HS256")
     runtime_token_issuer: str = os.getenv("MEETING_RUNTIME_TOKEN_ISSUER", "ecabinet")
@@ -51,6 +66,23 @@ class Settings:
     minio_bucket: str = os.getenv("MEETING_MINIO_BUCKET", "meeting-minutes")
     minio_secure: bool = os.getenv("MEETING_MINIO_SECURE", "false").lower() == "true"
     export_root: str = os.getenv("MEETING_EXPORT_ROOT", "/tmp/meeting-exports")
+
+    def validate_startup(self) -> None:
+        """Fail closed only for a deployment explicitly marked strict."""
+        if not self.strict_config:
+            return
+        _validate_secret("MEETING_SERVICE_KEY", self.service_key)
+        _validate_secret("MEETING_RUNTIME_TOKEN_SECRET", self.runtime_token_secret, minimum_length=32)
+        if self.persistence_enabled and not self.database_url:
+            raise RuntimeError("MEETING_DATABASE_URL is required when persistence is enabled")
+        if self.persistence_enabled and not self.redis_url:
+            raise RuntimeError("MEETING_REDIS_URL is required when persistence is enabled")
+        if not (self.livekit_url and self.livekit_api_key and self.livekit_api_secret):
+            raise RuntimeError("LiveKit URL, API key and API secret are required")
+        if self.livekit_url.strip().lower().startswith(("replace", "change-me", "example")):
+            raise RuntimeError("MEETING_LIVEKIT_URL must not be a placeholder")
+        _validate_secret("MEETING_LIVEKIT_API_KEY", self.livekit_api_key, minimum_length=3)
+        _validate_secret("MEETING_LIVEKIT_API_SECRET", self.livekit_api_secret)
 
 
 settings = Settings()

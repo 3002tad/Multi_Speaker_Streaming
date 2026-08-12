@@ -43,6 +43,15 @@ from meeting_ai.core.audio_pipeline import (
     unpack_audio_packet,
 )
 from meeting_ai.config import settings
+from meeting_ai.core.operations import (
+    OperationTracker,
+    cancel_and_wait,
+    warm_ollama_model,
+)
+
+# Start before model loading so the operational record includes cold-start.
+_operation_tracker = OperationTracker()
+
 from meeting_ai.api import create_application
 from meeting_ai.application.minutes_worker import MinutesWorker, MinutesWorkerError
 from meeting_ai.application.session_manager import SessionConflict, SessionManager
@@ -1312,6 +1321,7 @@ _minutes_analysis_tasks: set[asyncio.Task] = set()
 _minutes_analysis_jobs: dict[str, dict[str, object]] = {}
 _minutes_sequence_counter = 0
 _minutes_sequence_lock = threading.RLock()
+_ollama_warmup_task: asyncio.Task | None = None
 
 
 def _next_minutes_sequence() -> int:
@@ -1399,15 +1409,48 @@ async def _run_minutes_analysis(
         print(f"[Minutes] composition failed: {type(exc).__name__}")
 
 
+@app.on_event("startup")
+async def start_operational_tasks() -> None:
+    """Start optional Qwen warming after ASR is ready, never before it."""
+    global _ollama_warmup_task
+    settings.validate_ai_api_startup()
+    if (
+        settings.minutes_composer_enabled
+        and settings.minutes_composer_mode == "llm"
+        and settings.ollama_warmup_enabled
+    ):
+        _ollama_warmup_task = asyncio.create_task(
+            warm_ollama_model(
+                tracker=_operation_tracker,
+                base_url=settings.ollama_url,
+                model=settings.minutes_composer_model,
+                keep_alive=settings.minutes_composer_keep_alive,
+                timeout_seconds=settings.ollama_warmup_timeout_seconds,
+            ),
+            name="ollama-minutes-warmup",
+        )
+
+
 @app.on_event("shutdown")
 async def shutdown_final_turn_redecode() -> None:
-    """Release queued replay callers before the AI process exits."""
-    for task in tuple(_minutes_analysis_tasks):
-        task.cancel()
-    if _minutes_analysis_tasks:
-        await asyncio.gather(*_minutes_analysis_tasks, return_exceptions=True)
+    """Flush bounded callbacks and final-turn work before the AI process exits."""
+    started = time.monotonic()
+    if _ollama_warmup_task and not _ollama_warmup_task.done():
+        _ollama_warmup_task.cancel()
+        await asyncio.gather(_ollama_warmup_task, return_exceptions=True)
+    pending_after_timeout = await cancel_and_wait(
+        _minutes_analysis_tasks,
+        settings.shutdown_flush_timeout_seconds,
+    )
     await final_turn_redecode.close()
     await zipformer_scheduler.close()
+    speaker_store.close()
+    elapsed_ms = round((time.monotonic() - started) * 1000)
+    _operation_tracker.finish_shutdown(elapsed_ms)
+    print(
+        "[Operations] safe shutdown "
+        f"elapsed_ms={elapsed_ms} pending_callbacks={pending_after_timeout}"
+    )
 
 @app.get("/")
 async def get_health():
@@ -1443,11 +1486,23 @@ async def meeting_ai_live() -> dict[str, str]:
 async def meeting_ai_ready() -> dict[str, object]:
     # Model initialization happens before the FastAPI server starts.  A
     # successful request therefore means Zipformer/WavLM/VAD are available.
+    try:
+        speaker_profiles = speaker_store.count()
+        qdrant_status = "ok"
+    except Exception as exc:
+        speaker_profiles = None
+        qdrant_status = f"failed:{type(exc).__name__}"
+    operation = _operation_tracker.snapshot()
+    warmup_status = str(operation["ollama_warmup"]["status"])
+    status = "ok" if qdrant_status == "ok" and warmup_status != "degraded" else "degraded"
     return {
-        "status": "ok",
+        "status": status,
         "service": "meeting-ai-core",
         "models": {"zipformer": True, "wavlm": True, "vad": True},
-        "speaker_profiles": speaker_store.count(),
+        "qdrant": {"status": qdrant_status},
+        "speaker_profiles": speaker_profiles,
+        "ollama": operation["ollama_warmup"],
+        "operations": operation,
         "active_session": session_manager.is_active(),
         "active_streams": sorted(active_asr_streams),
         "zipformer_scheduler": zipformer_scheduler.telemetry(),

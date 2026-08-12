@@ -52,8 +52,12 @@ class MinioObjectStorage:
             secret_key=settings.minio_secret_key,
             secure=settings.minio_secure,
         )
-        if not self._client.bucket_exists(settings.minio_bucket):
-            self._client.make_bucket(settings.minio_bucket)
+        self._bucket = settings.minio_bucket
+        if not self._client.bucket_exists(self._bucket):
+            self._client.make_bucket(self._bucket)
+
+    def readiness_check(self) -> bool:
+        return bool(self._client.bucket_exists(self._bucket))
 
     def put(self, key: str, content: bytes, content_type: str) -> None:
         self._client.put_object(

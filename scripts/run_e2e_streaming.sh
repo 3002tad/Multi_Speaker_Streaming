@@ -40,11 +40,12 @@ set -a
 source "$BASE_ENV"
 set +a
 
-required=(LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET INTERNAL_API_KEY OLLAMA_URL)
+required=(LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET INTERNAL_API_KEY OLLAMA_URL MEETING_RUNTIME_TOKEN_SECRET)
 for name in "${required[@]}"; do
   [[ -n "${!name:-}" ]] || { echo "Missing $name in $BASE_ENV" >&2; exit 2; }
 done
 (( ${#INTERNAL_API_KEY} >= 24 )) || { echo "INTERNAL_API_KEY is too short" >&2; exit 2; }
+(( ${#MEETING_RUNTIME_TOKEN_SECRET} >= 32 )) || { echo "MEETING_RUNTIME_TOKEN_SECRET is too short" >&2; exit 2; }
 
 # Make all native and Docker internal callers use exactly the same service key.
 export MEETING_SERVICE_KEY="$INTERNAL_API_KEY"
@@ -54,6 +55,8 @@ export MEETING_AI_CALLBACK_URL=http://meeting-service:8002/internal/v1/ai-events
 export MEETING_RUNTIME_DIR="$RUNTIME_DIR"
 export MEETING_RUNTIME_HOST_PATH="${MEETING_RUNTIME_HOST_PATH:-$RUNTIME_DIR}"
 export MEETING_PLATFORM_ENV_FILE="$BASE_ENV"
+export MEETING_SERVICE_ENV_FILE="${MEETING_SERVICE_ENV_FILE:-$BASE_ENV}"
+export MEETING_AI_ENV_FILE="${MEETING_AI_ENV_FILE:-$BASE_ENV}"
 
 if [[ -n "$("${COMPOSE[@]}" ps -q 2>/dev/null)" ]]; then
   echo "Meeting Service stack is already running; stop it or inspect it manually before this isolated E2E run." >&2

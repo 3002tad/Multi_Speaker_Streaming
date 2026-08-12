@@ -23,6 +23,7 @@ from meeting_service.app.infrastructure.database import create_session_factory
 from meeting_service.app.infrastructure.repositories import InMemoryAIEventRepository, SqlAlchemyAIEventRepository, SqlAlchemyRuntimeRepository
 from meeting_service.app.infrastructure.ai_client import MeetingAIClient
 from meeting_service.app.infrastructure.object_storage import build_object_storage
+from meeting_service.app.infrastructure.readiness import collect_readiness
 
 
 app = FastAPI(title="Meeting Service", version="0.1.0")
@@ -65,6 +66,7 @@ app.include_router(internal_router)
 app.include_router(ai_events_router)
 if settings.persistence_enabled:
     session_factory = create_session_factory(settings.database_url)
+    app.state.session_factory = session_factory
     app.state.runtime_service = RuntimeService(SqlAlchemyRuntimeRepository(session_factory))
     app.state.content_store = SqlAlchemyMeetingContentRepository(session_factory)
     app.state.ai_event_repository = SqlAlchemyAIEventRepository(session_factory)
@@ -89,16 +91,31 @@ if settings.ai_enabled:
     app.state.minutes_analysis.ai_client = app.state.ai_client
 
 
+@app.on_event("startup")
+async def validate_deployment_configuration() -> None:
+    settings.validate_startup()
+
+
 @app.get("/health/live")
 def health_live() -> dict[str, str]:
     return {"status": "ok", "service": settings.service_name}
 
 
 @app.get("/health/ready")
-def health_ready() -> dict[str, str]:
-    # Database/Redis/AI readiness checks are intentionally added in the next
-    # slice; liveness remains independent from those dependencies.
-    return {"status": "ok", "service": settings.service_name}
+def health_ready(request: Request):
+    report = collect_readiness(
+        persistence_enabled=settings.persistence_enabled,
+        session_factory=getattr(request.app.state, "session_factory", None),
+        redis_url=settings.redis_url,
+        object_storage=request.app.state.object_storage,
+        ai_enabled=settings.ai_enabled,
+        ai_base_url=settings.ai_base_url,
+        service_key=settings.service_key,
+    )
+    report["service"] = settings.service_name
+    if report["status"] == "degraded":
+        return JSONResponse(status_code=503, content=report)
+    return report
 
 
 socket_app = socketio.ASGIApp(

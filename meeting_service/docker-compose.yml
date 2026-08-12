@@ -75,10 +75,11 @@ services:
       minio-meeting:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8002/health/live').read()"]
+      test: ["CMD", "python", "-c", "import json; from urllib.request import urlopen; assert json.load(urlopen('http://127.0.0.1:8002/health/ready'))['status'] == 'ok'"]
       interval: 10s
       timeout: 5s
-      retries: 6
+      retries: 18
+      start_period: 120s
     restart: unless-stopped
 
   minio-meeting:

@@ -679,12 +679,12 @@ WER/CER giữ baseline.
   kiểm tra key/network/health, compose override cho WSL Agent ↔ Docker Meeting
   Service, probe fixture audio và cleanup có kiểm soát. Không ghi secret vào
   source hoặc tạo bản `.env` thứ hai.
-- [ ] Tách `.env.meeting`/`.env.ai`, inventory tuning runtime.
-- [ ] Startup fail khi key placeholder/yếu hoặc LiveKit secret thiếu.
-- [ ] Readiness Meeting Service kiểm tra DB/Redis/MinIO/AI; AI kiểm tra
+- [x] Tách `.env.meeting`/`.env.ai`, inventory tuning runtime.
+- [x] Startup fail khi key placeholder/yếu hoặc LiveKit secret thiếu.
+- [x] Readiness Meeting Service kiểm tra DB/Redis/MinIO/AI; AI kiểm tra
   model/VAD/Qdrant/Ollama theo mode.
-- [ ] Qwen warm-up không block transcript; SIGTERM flush final turn/callback.
-- [ ] Ghi cold-start, peak CPU/RAM, degraded mode và safe shutdown result.
+- [x] Qwen warm-up không block transcript; SIGTERM flush final turn/callback.
+- [x] Ghi cold-start, peak CPU/RAM, degraded mode và safe shutdown result.
 
 **Điều kiện đạt:** health/readiness/degraded/container restart pass.
 
@@ -706,6 +706,33 @@ WER/CER giữ baseline.
 - Đối chiếu plan: đúng phần config/operation P1-06, không đổi thuật toán
   ASR/DSP/VAD/speaker-ID hay xâm lấn eCabinet. P1-03 vẫn là bước nghiệp vụ kế
   tiếp; P1-05 sẽ thay native/WSL bridge bằng Compose full platform.
+
+### Nhật ký thực thi — P1-06 — 2026-08-12
+
+- Tách template private config `deploy/meeting-service.env.example` và
+  `deploy/meeting-ai.env.example`; Compose nhận riêng `MEETING_SERVICE_ENV_FILE`
+  và `MEETING_AI_ENV_FILE`. Runtime/model/cache vẫn nằm ngoài source. Template
+  chỉ inventory cấu hình operation, không chứa key thật hoặc tuning ASR.
+- `MEETING_STRICT_CONFIG=true` trong Compose buộc secret nội bộ 24+ ký tự,
+  runtime-token 32+ ký tự và LiveKit secret đầy đủ. Thử nghiệm runtime với env
+  cũ đã fail đúng tại `MEETING_RUNTIME_TOKEN_SECRET`; không sửa `.env`, dùng
+  token ngẫu nhiên chỉ trong shell E2E để xác nhận startup pass.
+- `/health/ready` của Meeting Service kiểm tra PostgreSQL, Redis, MinIO và AI;
+  AI trả model/VAD/Qdrant, trạng thái Ollama và telemetry cold-start/CPU/RSS.
+  Ollama warm-up chạy background nên transcript path không chờ model minutes;
+  lỗi warm-up chuyển readiness AI sang `degraded`, không che giấu ASR ready.
+- SIGTERM AI đợi callback minutes trong timeout, đóng scheduler/final-turn và
+  Qdrant tường minh. Gate runtime ghi `safe shutdown elapsed_ms=1–2`,
+  `pending_callbacks=0`; warning destructor Qdrant đã được loại bỏ.
+- Kiểm thử: compile + full WSL `pytest -q` **174 pass, 7 warnings, 6 subtests**;
+  Compose config strict đạt khi cấp token runtime hợp lệ. Runtime readiness đạt
+  DB/Redis/MinIO/AI `ok`, Ollama `ready`; telemetry thực ghi cold start khoảng
+  51–81 s, warm-up 0.25–17.5 s và peak RSS khoảng 674–675 MB. E2E containerized
+  `audio/thayDung_noi.wav` đạt `E2E_OK`, 1 transcript final, minutes revision 1;
+  runner cleanup không xóa volume.
+- Đối chiếu merge plan: P1-06 hoàn tất đúng config/readiness/operation,
+  không thay ASR/DSP/VAD/speaker-ID và không xâm lấn eCabinet. Bước tiếp theo
+  là P1-07 UI acceptance; P1-08 chỉ bắt đầu sau khi P1-07 đạt.
 
 ## P1 — Frontend, public deployment và acceptance
 

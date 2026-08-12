@@ -48,6 +48,10 @@ class QdrantSpeakerStore:
     def count(self) -> int:
         return int(self._client.count(collection_name=self.collection_name, exact=True).count)
 
+    def close(self) -> None:
+        """Close local Qdrant before interpreter teardown releases its locks."""
+        self._client.close()
+
     def delete_profile(
         self,
         speaker_name: str | None = None,
