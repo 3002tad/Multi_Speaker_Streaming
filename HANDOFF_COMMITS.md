@@ -540,3 +540,48 @@ Giới hạn còn lại:
 cập chéo database/MinIO và không xâm lấn eCabinet. Bước tiếp theo là P1-05:
 Compose đầy đủ AI Core/Agent, mount runtime ngoài source và chuyển callback sang
 internal DNS.
+
+## Checkpoint — Hoàn tất P1-05: Compose Meeting Platform đầy đủ
+
+Đã commit cục bộ theo cặp repository:
+
+- Root / Meeting Service + Meeting AI: branch `feature/meeting-platform-microservices`,
+  commit `be1cf87` — `feat: containerize meeting AI platform`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit hiện tại
+  `022ac25` — không có thay đổi trong checkpoint này.
+- eCabinet là repository local-only và không được push remote.
+
+Phạm vi thay đổi:
+
+- Bổ sung Compose overlay, Dockerfile và dependency lock riêng cho Meeting AI
+  Core và LiveKit Agent; AI/Agent chạy container độc lập với Meeting Service.
+- AI chỉ mount runtime ngoài source tại `/runtime`; model, Hugging Face cache,
+  Qdrant và Ollama không được copy vào image hoặc repository. Agent không mount
+  model/Qdrant.
+- Chuyển đường gọi nội bộ sang DNS Compose `meeting-ai-api`, `meeting-service`
+  và `ollama`; runner E2E không còn khởi chạy `ai_server.py`/`agent.py` native.
+- Thêm profile count vào AI readiness để kiểm tra Qdrant persistence, giữ nguyên
+  ASR/DSP/VAD/speaker-ID và các compatibility wrapper.
+- Cập nhật hướng dẫn vận hành containerized và dọn các build cache/Python cache
+  tái tạo được; không xóa image runtime, volume, model hoặc dữ liệu phiên họp.
+
+Kiểm thử đã chạy:
+
+- `git diff --check`, Compose config và `bash -n scripts/run_e2e_streaming.sh`:
+  đạt.
+- Full WSL `pytest -q`: **167 pass, 5 warnings, 6 subtests pass**.
+- Build thật hai image AI/Agent: đạt.
+- E2E containerized với `audio/thayDung_noi.wav`: `E2E_OK`, 1 transcript final,
+  minutes revision 1; Agent → AI và AI → Meeting Service qua internal DNS trả
+  HTTP 200.
+- Restart AI container giữ Qdrant profile `15 → 15`; sau dọn cache, Meeting
+  Service và Meeting AI healthcheck vẫn `ok`.
+
+Giới hạn còn lại:
+
+- P1-06 chưa hoàn tất readiness đầy đủ, telemetry cold-start/CPU/RAM, Qwen
+  warm-up và graceful SIGTERM flush.
+- P1-07 UI acceptance, P1-08 public Nginx và E2E ngoài mạng chưa thực hiện.
+
+Đối chiếu merge plan: P1-05 hoàn tất đúng container/runtime boundary, additive
+và không xâm lấn eCabinet. Bước tiếp theo theo ưu tiên là P1-06, sau đó P1-07.
