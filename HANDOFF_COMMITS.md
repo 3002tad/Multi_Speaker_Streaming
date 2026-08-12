@@ -432,3 +432,45 @@ Giới hạn còn lại:
 additive và không xâm lấn kiến trúc eCabinet. Bước tiếp theo là P1-02: Qwen
 composer nhận evidence, tạo structured minutes và callback `minutes.updated`; sau
 đó P1-03 xử lý stale result, manual revision và approved immutability.
+
+## Checkpoint — Hoàn tất P1-03: revision guard và purge retry
+
+Đã commit cục bộ theo cặp repository:
+
+- Root / Meeting Service + Meeting AI: branch `feature/meeting-platform-microservices`, commit `27b3b8f` — `feat: enforce minutes revisions and retryable purge`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit hiện tại `022ac25` — không có thay đổi trong checkpoint này.
+- eCabinet là repository local-only và không được push remote.
+
+Phạm vi thay đổi:
+
+- Manual edit dùng optimistic locking `base_revision`; conflict trả `409`.
+- Revision `APPROVED` bất biến; chỉnh sửa sau duyệt chỉ sinh revision `DRAFT`.
+- Evidence minutes lưu `base_minutes_revision` và `generation_id`; callback LLM
+  kiểm tra đúng analysis/transcript snapshot, không ghi đè bản sửa tay hoặc bản
+  đã duyệt. Callback stale trả trạng thái `stale` và worker không retry vô hạn.
+- Thêm tombstone purge bền vững và migration `0009_purge_tombstones`; lỗi xóa
+  object storage được giữ pending để retry, trong khi metadata Meeting Service
+  được cascade/idempotent. Export dọn object nếu DB commit lỗi.
+- Không thay thuật toán ASR/DSP/VAD/speaker-ID, không tạo FK/query chéo và
+  không ghi sang module document/task/conclusion/voting/QLVB của eCabinet.
+
+Kiểm thử đã chạy:
+
+- Focused lifecycle/contract/worker/export: **49 pass**, 6 subtests pass.
+- Full unit/contract suite trong WSL: **162 pass**, 5 warnings, 6 subtests pass.
+- SQLAlchemy SQLite smoke cho APPROVED → DRAFT: đạt.
+- Fault injection DB commit lỗi sau upload: object được cleanup; purge delete
+  lỗi rồi retry: tombstone chuyển `PENDING` → `COMPLETED`.
+- `git diff --check`: đạt; root và eCabinet đều sạch sau commit.
+
+Giới hạn còn lại:
+
+- Docker daemon hiện không khả dụng nên chưa chạy migration/partial-failure trên
+  PostgreSQL/MinIO container thật và chưa chạy lại LiveKit E2E sau thay đổi
+  persistence. Cần chạy gate này khi Docker hoạt động trước acceptance production.
+- E2E production HTTPS/public network vẫn chưa chạy.
+
+Đối chiếu merge plan: P1-03 đạt đúng lifecycle dữ liệu thuộc Meeting Service,
+additive và không xâm lấn eCabinet. Bước tiếp theo theo thứ tự là P1-04 — hoàn
+tất cấu trúc Meeting AI Core; sau đó P1-05 Compose full platform và đổi bridge
+WSL sang internal DNS.
