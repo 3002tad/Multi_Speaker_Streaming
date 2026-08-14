@@ -32,6 +32,10 @@ services:
       - livekit_lan_caddy_config:/config
     ports:
       - "7880:7880/tcp"
+      - "3443:3443/tcp"
+    networks:
+      - default
+      - ecabinet_frontend_default
     depends_on:
       livekit:
         condition: service_started
@@ -59,3 +63,7 @@ services:
 volumes:
   livekit_lan_caddy_data:
   livekit_lan_caddy_config:
+
+networks:
+  ecabinet_frontend_default:
+    external: true

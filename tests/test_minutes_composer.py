@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import asyncio
+import json
 from dataclasses import replace
 from unittest.mock import patch
 
@@ -217,6 +218,30 @@ class MinutesDocumentTests(unittest.TestCase):
             topic["actions"][0]["source_segment_ids"], ["seg-b"]
         )
 
+    def test_fact_delta_does_not_render_one_source_in_every_topic_bucket(self) -> None:
+        expanded = _expand_compact_delta(
+            {
+                "n": "Vận hành hệ thống",
+                "facts": [
+                    {"k": "D", "c": "Trao đổi công việc nhân sự", "e": [0]},
+                    {"k": "P", "c": "Trao đổi công việc nhân sự", "e": [0]},
+                    {"k": "Q", "c": "Trao đổi công việc nhân sự", "e": [0]},
+                ],
+            },
+            [
+                {
+                    "segment_id": "seg-one",
+                    "speaker": "Dat",
+                    "text": "Trao đổi công việc nhân sự.",
+                }
+            ],
+        )
+        topic = expanded["topics"][0]
+        self.assertEqual(len(topic["decisions"]), 1)
+        self.assertEqual(topic["proposals"], [])
+        self.assertEqual(topic["details"], [])
+        self.assertEqual(topic["source_segment_ids"], ["seg-one"])
+
     def test_fact_delta_repairs_misclassified_explicit_assignment(self) -> None:
         expanded = _expand_compact_delta(
             {
@@ -244,6 +269,52 @@ class MinutesDocumentTests(unittest.TestCase):
         self.assertEqual(topic["proposals"], [])
         self.assertEqual(topic["actions"][0]["owner"], "Anh Minh")
         self.assertEqual(topic["actions"][0]["deadline"], "trước ngày 15 tháng 8")
+
+    def test_fact_delta_promotes_explicit_viec_can_lam_to_action(self) -> None:
+        expanded = _expand_compact_delta(
+            {
+                "n": "Vận hành hệ thống",
+                "facts": [
+                    {
+                        "k": "Q",
+                        "c": "Việc cần làm là tổng quan lại hệ thống",
+                        "e": [0],
+                    }
+                ],
+            },
+            [
+                {
+                    "segment_id": "seg-task",
+                    "speaker": "Quản trị viên hệ thống",
+                    "text": "Việc cần làm là tổng quan lại hệ thống.",
+                }
+            ],
+        )
+        topic = expanded["topics"][0]
+        self.assertEqual(topic["decisions"], [])
+        self.assertEqual(topic["proposals"], [])
+        self.assertEqual(topic["actions"][0]["task"], "tổng quan lại hệ thống")
+        self.assertEqual(topic["actions"][0]["source_segment_ids"], ["seg-task"])
+
+    def test_unknown_fact_is_retained_as_speech(self) -> None:
+        expanded = _expand_compact_delta(
+            {
+                "n": "Trao đổi",
+                "facts": [
+                    {"k": "X", "c": "Cần đánh giá thêm phương án", "e": [0]}
+                ],
+            },
+            [
+                {
+                    "segment_id": "seg-speech",
+                    "speaker": "Dat",
+                    "text": "Cần đánh giá thêm phương án.",
+                }
+            ],
+        )
+        topic = expanded["topics"][0]
+        self.assertEqual(topic["proposals"][0]["content"], "Cần đánh giá thêm phương án")
+        self.assertEqual(topic["proposals"][0]["source_segment_ids"], ["seg-speech"])
 
     def test_fact_delta_recovers_a_missing_citation_only_when_grounded(self) -> None:
         expanded = _expand_compact_delta(
@@ -385,6 +456,116 @@ class MinutesDocumentTests(unittest.TestCase):
         self.assertEqual(document["meeting"]["title"], "Họp demo")
         self.assertEqual(document["summary"][0]["source_segment_ids"], ["seg-1"])
         self.assertFalse(metadata["think"])
+
+    def test_empty_llm_delta_falls_back_to_transcript_timeline(self) -> None:
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                # A valid JSON response without grounded facts must not create
+                # a successful but empty minutes revision.
+                return {"message": {"content": "{}"}}
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            async def post(self, url: str, **kwargs: object) -> FakeResponse:
+                return FakeResponse()
+
+        runtime = replace(settings, minutes_composer_mode="llm")
+        with patch("backend.minutes_composer.httpx.AsyncClient", FakeClient):
+            document, metadata = asyncio.run(
+                OllamaMinutesComposer(runtime).compose(
+                    meeting_title="Họp demo",
+                    existing_document=None,
+                    segments=[
+                        {
+                            "segment_id": "seg-empty",
+                            "speaker": "Anh A",
+                            "start_time": 1,
+                            "end_time": 4,
+                            "text": "Nội dung chưa được phân loại.",
+                        }
+                    ],
+                    started_at=1,
+                )
+            )
+        self.assertEqual(metadata["fallback_reason"], "unclassified_evidence_timeline")
+        self.assertEqual(document["topics"][0]["title"], "Nội dung theo timeline")
+        self.assertEqual(
+            document["topics"][0]["details"][0]["source_segment_ids"],
+            ["seg-empty"],
+        )
+
+    def test_ungrounded_llm_fact_is_not_saved_as_decision(self) -> None:
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "facts": [
+                                    {
+                                        "k": "Q",
+                                        "c": "Phát biểu cần người dùng rà soát",
+                                        "e": [0],
+                                    }
+                                ]
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                }
+
+        class FakeClient:
+            def __init__(self, **kwargs: object) -> None:
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            async def post(self, url: str, **kwargs: object) -> FakeResponse:
+                return FakeResponse()
+
+        runtime = replace(settings, minutes_composer_mode="llm")
+        with patch("backend.minutes_composer.httpx.AsyncClient", FakeClient):
+            document, metadata = asyncio.run(
+                OllamaMinutesComposer(runtime).compose(
+                    meeting_title="Họp demo",
+                    existing_document=None,
+                    segments=[
+                        {
+                            "segment_id": "seg-ungrounded",
+                            "speaker": "Anh A",
+                            "start_time": 1,
+                            "end_time": 4,
+                            "text": "Một hai ba bốn năm tổng quan phiên họp.",
+                        }
+                    ],
+                    started_at=1,
+                )
+            )
+        self.assertEqual(metadata["fallback_reason"], "unclassified_evidence_timeline")
+        topic = document["topics"][0]
+        self.assertFalse(topic["decisions"])
+        self.assertEqual(
+            topic["details"][0]["content"],
+            "Một hai ba bốn năm tổng quan phiên họp.",
+        )
 
 
 if __name__ == "__main__":

@@ -44,6 +44,7 @@ class MinutesAnalysisRepository(Protocol):
     def set_status(
         self, analysis_id: UUID, status: str, error_message: str | None = None
     ) -> dict[str, Any]: ...
+    def set_auto_update(self, meeting_id: UUID, enabled: bool) -> dict[str, Any] | None: ...
     def delete_meeting(self, meeting_id: UUID) -> int: ...
 
 
@@ -99,6 +100,21 @@ class InMemoryMinutesAnalysisRepository:
             item = self._items[analysis_id]
             item["status"] = status
             item["error_message"] = error_message
+            item["updated_at"] = datetime.now(timezone.utc).isoformat()
+            return _as_dict(item)
+
+    def set_auto_update(self, meeting_id: UUID, enabled: bool) -> dict[str, Any] | None:
+        with self._lock:
+            candidates = [
+                item for item in self._items.values()
+                if item["meeting_id"] == str(meeting_id)
+            ]
+            if not candidates:
+                return None
+            item = max(candidates, key=lambda value: value["updated_at"])
+            evidence = deepcopy(item.get("evidence") or {})
+            evidence["auto_update_enabled"] = bool(enabled)
+            item["evidence"] = evidence
             item["updated_at"] = datetime.now(timezone.utc).isoformat()
             return _as_dict(item)
 
@@ -174,6 +190,21 @@ class SqlAlchemyMinutesAnalysisRepository:
                 raise LookupError("minutes analysis not found")
             row.status = status
             row.error_message = error_message
+            session.flush()
+            return self._item(row)
+
+    def set_auto_update(self, meeting_id: UUID, enabled: bool) -> dict[str, Any] | None:
+        with self._sessions.begin() as session:
+            row = session.scalar(
+                select(MinutesAnalysisRecord)
+                .where(MinutesAnalysisRecord.meeting_id == meeting_id)
+                .order_by(MinutesAnalysisRecord.updated_at.desc())
+            )
+            if row is None:
+                return None
+            evidence = deepcopy(row.evidence_json or {})
+            evidence["auto_update_enabled"] = bool(enabled)
+            row.evidence_json = evidence
             session.flush()
             return self._item(row)
 
@@ -270,7 +301,7 @@ class MinutesAnalysisService:
         }
         return base_revision, evidence
 
-    async def request(self, *, meeting_id: UUID, runtime_session_id: UUID, meeting_snapshot: dict[str, Any], transcript: list[dict[str, Any]], previous_document: dict[str, Any] | None, idempotency_key: str, previous_revision: int = 0) -> dict[str, Any]:
+    async def request(self, *, meeting_id: UUID, runtime_session_id: UUID, meeting_snapshot: dict[str, Any], transcript: list[dict[str, Any]], previous_document: dict[str, Any] | None, idempotency_key: str, previous_revision: int = 0, auto_generated: bool = False) -> dict[str, Any]:
         base_revision, evidence = self.build_evidence(
             meeting_id=meeting_id,
             runtime_session_id=runtime_session_id,
@@ -279,11 +310,23 @@ class MinutesAnalysisService:
             previous_document=previous_document,
             previous_revision=previous_revision,
         )
+        # The first explicit request enables the bounded auto-update mode.
+        # Subsequent requests inherit this marker in their immutable evidence
+        # snapshot; disabling it is handled by the control endpoint.
+        evidence["auto_update_enabled"] = True
+        evidence["auto_generated"] = bool(auto_generated)
         record, created = self.repository.create_or_get(
             meeting_id, runtime_session_id, base_revision, evidence
         )
-        if not created and record["status"] in {ANALYSIS_PENDING, ANALYSIS_RUNNING, ANALYSIS_SUCCEEDED}:
-            return record
+        if not created:
+            # Clicking analyze again is the explicit way to re-arm auto
+            # updates after the user has previously stopped them, including a
+            # prior FAILED/STALE snapshot that is being retried.
+            if not self.auto_update_status(meeting_id):
+                self.repository.set_auto_update(meeting_id, True)
+                record = self.repository.get_by_id(UUID(record["analysis_id"])) or record
+            if record["status"] in {ANALYSIS_PENDING, ANALYSIS_RUNNING, ANALYSIS_SUCCEEDED}:
+                return record
         if self.ai_client is None:
             return self.repository.set_status(
                 UUID(record["analysis_id"]), ANALYSIS_FAILED, "Meeting AI is not configured"
@@ -303,6 +346,16 @@ class MinutesAnalysisService:
                 UUID(record["analysis_id"]), ANALYSIS_FAILED, "Meeting AI rejected evidence"
             )
         return self.repository.set_status(UUID(record["analysis_id"]), ANALYSIS_RUNNING)
+
+    def auto_update_status(self, meeting_id: UUID) -> bool:
+        item = self.repository.get(meeting_id)
+        if not item:
+            return False
+        evidence = item.get("evidence") or {}
+        return bool(evidence.get("auto_update_enabled"))
+
+    def set_auto_update(self, meeting_id: UUID, enabled: bool) -> dict[str, Any] | None:
+        return self.repository.set_auto_update(meeting_id, enabled)
 
 
 analysis_store = InMemoryMinutesAnalysisRepository()

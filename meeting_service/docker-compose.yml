@@ -1,3 +1,5 @@
+name: meeting_platform
+
 services:
   postgres-meeting:
     image: postgres:16-alpine
@@ -40,6 +42,7 @@ services:
       MEETING_AI_BASE_URL: ${MEETING_AI_BASE_URL:-http://meeting-ai-api:8001}
       MEETING_AI_ENABLED: ${MEETING_AI_ENABLED:-false}
       MEETING_AI_TIMEOUT_SECONDS: ${MEETING_AI_TIMEOUT_SECONDS:-60}
+      MEETING_MINUTES_AUTO_UPDATE_DEBOUNCE_SECONDS: ${MEETING_MINUTES_AUTO_UPDATE_DEBOUNCE_SECONDS:-5}
       MEETING_AI_CALLBACK_URL: ${MEETING_AI_CALLBACK_URL:-http://meeting-service:8002/internal/v1/ai-events}
       MEETING_LIVEKIT_URL: ${MEETING_LIVEKIT_URL:-${LIVEKIT_URL:-}}
       MEETING_LIVEKIT_API_KEY: ${MEETING_LIVEKIT_API_KEY:-${LIVEKIT_API_KEY:-}}

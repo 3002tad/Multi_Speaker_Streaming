@@ -756,18 +756,28 @@ WER/CER giữ baseline.
 
 ### P1-07b — Điều khiển vòng đời runtime từ MeetingRoom
 
-**Trạng thái:** `[-]` — bổ sung sau khi kiểm thử thực tế phát hiện người dùng chỉ
+**Trạng thái:** `[~]` — đang hoàn thiện cơ chế join theo role và capability trước
+  khi mở rộng kiểm thử thực tế; bổ sung sau khi kiểm thử thực tế phát hiện người dùng chỉ
 có thể rời trang, không có thao tác kết thúc runtime rõ ràng. Phạm vi giới hạn
 trong session façade, MeetingRoom và contract lifecycle đã có; không tự động
 dừng khi người dùng đóng tab.
 
 - [ ] BFF trả capability `can_control` cùng runtime status để UI không suy diễn
   quyền chủ trì từ quyền micro.
+- [x] BFF bổ sung `runtime/capabilities`: member/observer được `can_join`,
+  chỉ chair/secretary/admin có `can_control`; runtime chưa mở trả về trạng thái
+  `NOT_STARTED` thay vì buộc role user gọi `runtime/start`.
 - [ ] Chair có nút **Kết thúc họp**: xác nhận, gọi `runtime/stop`, tắt audio
   client sau khi stop thành công và hiển thị trạng thái COMPLETED/FAILED.
 - [ ] Rời trang/đóng tab chỉ leave Socket.IO và LiveKit client; không gọi stop.
 - [ ] Xác nhận `runtime/stop` clear AI assignment để một phiên mới có thể start;
   chạy unit/contract và Docker smoke không xóa volume.
+- [x] Đồng bộ lifecycle giữa Meeting Service và eCabinet: start thành công chuyển
+  `APPROVED → ONGOING`, stop thành công hoặc capability phát hiện runtime
+  `COMPLETED` chuyển meeting sang trạng thái đóng `COMPLETED`; API start/token
+  từ chối phiên `COMPLETED/CANCELLED`.
+- [x] Meetings và MeetingDetail tự polling lifecycle, hiển thị `Đã đóng` và
+  vô hiệu hóa nút bắt đầu lại mà không cần người dùng tải lại trang.
 
 **Điều kiện đạt:** member/observer không thấy hoặc gọi được stop; chair stop
 idempotent, Agent rời room và AI assignment chuyển IDLE/COMPLETED; runtime mới
@@ -777,14 +787,25 @@ có thể khởi động sau đó.
 
 - BFF `runtime/status` nay trả capability `permissions.can_control` từ domain
   session eCabinet; Meeting Service vẫn không nhận role hoặc query eCabinet.
+- BFF bổ sung điểm reconcile lifecycle: chỉ runtime `COMPLETED` mới ghi
+  `meeting_sessions.status=COMPLETED`; không ghi đè `end_time` lịch đã đặt.
+  `start_runtime` kiểm tra cả trạng thái eCabinet và runtime cũ để không thể
+  tạo phiên thứ hai sau khi cuộc họp đã đóng.
+- Public `PATCH /v1/meetings/{id}` cũng giữ `COMPLETED/CANCELLED` là terminal,
+  không cho đổi ngược về `APPROVED/ONGOING` để bypass guard của runtime.
+- `runtime/capabilities` trả `meeting_status`/`lifecycle_closed`, chặn join,
+  publish, control và token khi phiên đã đóng. Trang Meetings và MeetingDetail
+  polling 3 giây để badge chuyển sang `Đã đóng` tự động.
 - MeetingRoom dùng capability này để chỉ render nút **Kết thúc họp** cho chủ
   trì/quyền control. Stop thành công mới đóng local mic/LiveKit; cleanup khi
   rời trang vẫn chỉ leave Socket.IO/LiveKit client, không gọi stop.
-- Kiểm thử: compile BFF route trong container đạt; frontend production build
-  đạt; full Python suite **174 passed**.
-- Còn thiếu gate: chưa bấm stop trên runtime LiveKit thật đang được người dùng
-  kiểm thử, vì thao tác đó sẽ chủ động kết thúc room hiện tại. Cần xác nhận
-  chair/member/observer và start runtime kế tiếp sau stop trong E2E riêng.
+- Kiểm thử: compile Python `ecabinet/backend/app` và `meeting_service/app` đạt;
+  targeted contract/skeleton **41 passed**; full Python suite **179 passed**;
+  frontend Docker image build, recreate và Vite HTTP smoke `200` đạt; log UI
+  không có lỗi compile. `git diff --check` đạt.
+- Còn thiếu gate: chưa chạy browser/LiveKit E2E thật cho stop → badge `Đã đóng`
+  và chưa xác nhận role matrix trên runtime đang hoạt động; cần chạy một phiên
+  test riêng rồi mới chuyển mục này sang `[x]`.
 
 ### P1-07c — Hậu kỳ MeetingRoom và điều hướng sau khi kết thúc
 
@@ -860,7 +881,8 @@ control stop.
 ### P1-08 — Deploy LAN và bàn giao runtime
 
 - [x] Bổ sung Compose LAN LiveKit, tách URL WSS browser và URL Docker Agent.
-- [ ] Cấp chứng chỉ CA nội bộ cho các laptop; deploy frontend eCabinet qua HTTPS LAN.
+- [~] (2026-08-14) Đang cấp CA nội bộ và deploy frontend eCabinet qua HTTPS LAN;
+  LiveKit WSS đã chạy, còn route HTTPS UI cần hoàn tất và kiểm tra trên thiết bị LAN.
 - [ ] Mở tối thiểu `7881/TCP`, `7882/UDP` và HTTPS UI trên firewall host; không public AI, Ollama, PostgreSQL, Redis, MinIO hay internal REST.
 - [ ] Kiểm tra HTTPS UI, `/api`, Socket.IO, LiveKit WSS/UDP từ ba laptop cùng LAN.
 
@@ -872,6 +894,50 @@ không chứa secret. Meeting Service truyền `MEETING_LIVEKIT_AGENT_URL` cho A
 trong Docker, còn token browser vẫn trả `MEETING_LIVEKIT_URL` LAN. Compose
 render pass; contract/LiveKit/EventPublisher test đạt 20 pass. Chưa deploy thật
 vì cần IP LAN cố định, env private và CA được cài trên laptop tham gia.
+
+**Nhật ký thực thi — 2026-08-14:** đã bật lại Docker WSL integration, dựng thành công
+Meeting Platform + eCabinet bằng Compose LAN. Meeting Service/AI đều `healthy`,
+LiveKit WSS `https://<LAN-IP>:7880` và eCabinet UI HTTPS `https://<LAN-IP>:3443`
+trả HTTP 200; API proxy trả 401 đúng khi chưa đăng nhập. CA public đã xuất ra
+Downloads để cài trên điện thoại; private key không xuất. Chưa test được thiết bị
+thứ hai/UDP từ LAN và chưa mở được Windows Firewall do thiếu quyền Administrator.
+
+### Bổ sung kiểm thử runtime — 2026-08-14
+
+- Test 2 ban đầu không đóng được vì `ecabinet_backend-api-1` dùng
+  `MEETING_SERVICE_KEY` khác Meeting Service; các API `runtime/status`,
+  `runtime/capabilities` và `runtime/stop` trả `401`.
+- Đã khởi tạo lại riêng API eCabinet bằng cùng LAN env với Meeting Platform,
+  xác nhận hai container dùng cùng key (không ghi giá trị key vào tài liệu).
+- Đã stop recovery runtime test 2 với idempotency key; Meeting Service trả
+  `COMPLETED`, database eCabinet đã chuyển meeting sang `COMPLETED`, các lần
+  polling capability sau đó trả `200`.
+- Gate browser LiveKit/role E2E vẫn chưa đóng; P1-07b tiếp tục ở trạng thái `[~]`.
+
+### Bổ sung kiểm thử biên bản và chuẩn hóa khóa — 2026-08-14
+
+- Sửa `Minutes Composer`: nếu Qwen trả JSON hợp lệ nhưng không có fact có bằng
+  chứng, hoặc fact không có lexical support từ transcript được trích dẫn, hệ
+  thống không tạo revision rỗng/không biến thành quyết định giả; các đoạn còn
+  thiếu được đưa vào topic timeline để người dùng rà soát.
+- Regression WSL: targeted minutes **21 pass**; full `pytest -q` **180 pass,
+  6 subtests**; `git diff --check` đạt.
+- Rebuild `meeting-ai-api` và `livekit-agent` trong Compose LAN thành công; cả
+  Meeting Service và Meeting AI đều `healthy`. Probe Qwen thật với transcript
+  không phân loại trả `fallback_reason=unclassified_evidence_timeline`, giữ
+  nguyên nội dung và speaker/source evidence; thời gian probe khoảng 21,5 giây
+  trên CPU.
+- Chuẩn hóa bàn giao API key bằng `scripts/validate_meeting_env.sh`: một LAN
+  env riêng được truyền cho eCabinet BFF, Meeting Service và Meeting AI;
+  `MEETING_SERVICE_KEY`/`INTERNAL_API_KEY` phải giống nhau, còn
+  `MEETING_RUNTIME_TOKEN_SECRET` dùng chung giữa BFF và Meeting Service nhưng
+  là khóa khác. Validator chỉ in độ dài/hash rút gọn, không in secret.
+- Revision biên bản cũ đã lưu không bị tự động ghi đè; muốn áp dụng fallback cho
+  dữ liệu cũ cần thao tác reprocess riêng, không xóa dữ liệu âm thầm.
+- Đối chiếu merge plan: thay đổi chỉ nằm ở grounding/fallback minutes, test và
+  tài liệu bàn giao; không thay thuật toán ASR/DSP/VAD/speaker-ID hay module
+  eCabinet khác. P1-07c và gate browser/role E2E vẫn `[~]`; chưa đánh dấu hoàn
+  thành cho tới khi kiểm thử UI thật đạt.
 
 ### P1-09 — Acceptance và bàn giao
 
@@ -885,6 +951,53 @@ vì cần IP LAN cố định, env private và CA được cài trên laptop tha
 
 **Điều kiện đạt:** tất cả Definition of Done mục 15.5 của merge plan có bằng
 chứng test.
+
+### P1-07d — Participant identity và phân loại biên bản an toàn
+
+**Trạng thái:** `[~]` — đã triển khai logic backend/UI, còn phải build container
+và browser acceptance trên stack đang chạy.
+
+- [x] Ghép trạng thái LiveKit với roster eCabinet theo identity contract
+  `user:<user_id>:device:<device_id>`, không so sánh UUID trần với LiveKit identity.
+- [x] Fact không có loại hợp lệ phải được giữ ở nhóm **Đề xuất / phát biểu**;
+  câu có chỉ dấu giao việc như “Việc cần làm …” phải vào **Việc cần làm**.
+- [x] Nút phân tích biên bản là thao tác tường minh để bật auto-update; trước lần
+  bấm đầu transcript chỉ cập nhật transcript nháp, không tự tạo minutes.
+
+**Nhật ký thực thi — 2026-08-14:**
+
+- MeetingRoom ghép `user:<user_id>:device:<device_id>` với roster eCabinet;
+  speaker chưa enroll vẫn hiển thị đúng người tham gia theo token.
+- Khi nhận `minutes.updated`, Meeting Workspace rehydrate bản MinutesResponse
+  bền vững thay vì coi callback AI là bản minutes đầy đủ; revision/status/quyền
+  chỉnh sửa không bị mất sau auto-update.
+- MeetingRoom đã gom layout thành hai cột responsive: control âm thanh/lifecycle,
+  transcript và roster ở cột trái; MinutesEditor chiếm toàn bộ cột phải.
+- MeetingRoom polling cả transcript và runtime status; nếu stop trả tạm `STOPPING`
+  thì khi backend chuyển `COMPLETED` UI tự ngắt mic/LiveKit, hiện trạng thái đóng
+  và mở nút quay lại module Meetings mà không cần reload.
+- Roster card dùng một cột và flex-wrap; badge trạng thái không còn chồng lên tên
+  khi cột trái hẹp hoặc tên dài.
+- Toolbar của trang Meetings tách khỏi phần mô tả, gom ba thao tác ghi danh,
+  tải lại và đăng ký lịch họp; nút có kích thước tối thiểu và không ngắt chữ.
+- Header Meetings dùng grid ở desktop để toolbar căn theo mép trên, không bị
+  phần mô tả nhiều dòng đẩy các nút xuống.
+- Lần phân tích đầu tiên trả `auto_update_enabled=true`; transcript final/updated
+  sau đó được gom trong cửa sổ debounce (mặc định 5 giây) và gửi evidence snapshot
+  mới. Partial không kích hoạt cập nhật.
+- Bổ sung endpoint dừng tự cập nhật; dừng runtime, chuyển REVIEWING/APPROVED hoặc
+  purge cũng hủy job đang chờ. Auto update không ghi đè revision thủ công nhờ CAS.
+- Fact loại lạ chuyển sang nhóm Đề xuất/phát biểu; các mẫu “Việc cần làm là…”,
+  “Cần phải…”, “Anh/Chị X phụ trách…” và “Tôi sẽ…” được đưa vào actions với evidence.
+- Kiểm thử WSL: full unit **179 passed**, contract **13 passed, 6 subtests passed**;
+  targeted worker/lifecycle/auto-update/contract **22 passed**; compileall và
+  `git diff --check` đạt.
+- Giới hạn: Docker daemon hiện không truy cập được từ PowerShell nên chưa build
+  frontend/backend container và chưa chạy browser/LiveKit E2E cho nút tắt auto.
+
+**Điều kiện đạt:** roster hiển thị đúng trạng thái đang vào phòng; không mất fact
+không phân loại được; action item có evidence nguồn; không có request phân tích
+ngầm sau transcript mới; unit/build regression pass.
 
 ## Nhật ký thực thi
 
@@ -1003,3 +1116,25 @@ permission claims. Không phát hiện gap mới ở P0-02.
 - Bước tiếp theo theo thứ tự ưu tiên: P0-04 (idempotency và retry an toàn), P0-05
   (callback/event contract), P0-06 (participant assignment động), sau đó P0-07
   (regression nhiều mic).
+
+### Bổ sung kiểm tra trùng khung biên bản — 2026-08-14
+
+- Phát hiện phiên `c15a0913-6aa7-4430-a6af-899cd511399a` có cùng
+  `source_segment_id` xuất hiện đồng thời ở Chi tiết, Đề xuất/phát biểu và
+  Quyết định/thống nhất; đây là lỗi phân loại evidence của model, không phải
+  lỗi layout UI.
+- Đã thêm cổng độc quyền evidence theo từng chủ đề trong
+  `meeting_ai/application/minutes_composer.py`: ưu tiên Việc cần làm, Quyết
+  định, Đề xuất/phát biểu, rồi mới đến Chi tiết. Evidence không bị mất; chỉ
+  không được render lặp trong nhiều khung.
+- Kiểm thử: `tests/test_minutes_composer.py` **16 pass**; targeted minutes /
+  lifecycle / auto-update **23 pass**; full `pytest -q` **182 pass, 6 subtests**;
+  `git diff --check` đạt. Đã build lại `meeting-ai-api` và `livekit-agent`.
+- Kiểm thử E2E thủ công: người dùng xác nhận bản đã rebuild hoạt động đạt; quy
+  tắc render/biên bản mới được kiểm tra trực tiếp trên UI. Revision 4 của phiên
+  cũ vẫn giữ nguyên dữ liệu đã lưu (không tự ý ghi đè lịch sử); cần tạo revision
+  mới/reprocess hoặc phiên mới nếu muốn áp dụng quy tắc độc quyền cho dữ liệu cũ.
+- Đối chiếu merge plan: thay đổi chỉ ở lớp composition/grounding và test, không
+  đụng thuật toán ASR/DSP/VAD/speaker-ID hoặc module eCabinet. Browser/manual
+  acceptance cho thay đổi này đã đạt; P1-07d vẫn được giữ `[~]` cho tới khi
+  checkpoint đóng gói rà soát toàn bộ checklist còn lại.

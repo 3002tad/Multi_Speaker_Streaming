@@ -191,6 +191,9 @@ def _validate_minutes_event(request: Request, event: AIEvent) -> None:
         expected_generation = str(analysis.get("generation_id") or "")
         if expected_generation and expected_generation != str(payload["generation_id"]):
             raise HTTPException(status_code=409, detail="minutes.updated generation is stale")
+        evidence = analysis.get("evidence") or {}
+        if evidence.get("auto_generated") and not evidence.get("auto_update_enabled"):
+            raise HTTPException(status_code=409, detail="minutes auto-update is disabled")
         expected_transcript_revision = int(analysis.get("base_transcript_revision") or 0)
         if expected_transcript_revision != int(payload["base_transcript_revision"]):
             raise HTTPException(status_code=409, detail="minutes.updated transcript snapshot is stale")
@@ -300,5 +303,12 @@ async def receive_ai_event(request: Request, event: AIEvent) -> dict[str, str]:
                         )
                     except (ValueError, TypeError):
                         pass
+        elif event.type in {"transcript.final", "transcript.updated"}:
+            # Auto-update is armed only after the first explicit analyze
+            # request. The coordinator checks that flag and the DRAFT state,
+            # then debounces a snapshot before calling Meeting AI.
+            coordinator = getattr(request.app.state, "minutes_auto_update", None)
+            if coordinator is not None:
+                coordinator.schedule(event.meeting_id)
         await sio.emit(event.type, _event_dict(event), room=f"meeting:{event.meeting_id}")
     return {"status": status}

@@ -47,6 +47,9 @@ class Settings:
     ai_timeout_seconds: float = max(
         1.0, float(os.getenv("MEETING_AI_TIMEOUT_SECONDS", "60"))
     )
+    minutes_auto_update_debounce_seconds: float = max(
+        0.2, float(os.getenv("MEETING_MINUTES_AUTO_UPDATE_DEBOUNCE_SECONDS", "5"))
+    )
     ai_callback_url: str = os.getenv(
         "MEETING_AI_CALLBACK_URL",
         "http://meeting-service:8002/internal/v1/ai-events",

@@ -51,7 +51,12 @@ def _minutes_analysis(request: Request) -> MinutesAnalysisService:
 
 def _public_analysis(item: dict[str, object]) -> dict[str, object]:
     """Never expose the immutable evidence body outside service-to-AI traffic."""
-    return {key: value for key, value in item.items() if key != "evidence"}
+    result = {key: value for key, value in item.items() if key != "evidence"}
+    evidence = item.get("evidence")
+    result["auto_update_enabled"] = bool(
+        isinstance(evidence, dict) and evidence.get("auto_update_enabled")
+    )
+    return result
 
 
 def _idempotency_key(request: Request) -> str:
@@ -113,6 +118,9 @@ async def delete_enrollment(user_id: str, request: Request) -> Response:
 
 @router.delete("/meetings/{meeting_id}")
 def purge_meeting(meeting_id: UUID, request: Request) -> dict[str, object]:
+    coordinator = getattr(request.app.state, "minutes_auto_update", None)
+    if coordinator is not None:
+        coordinator.disable_now(meeting_id)
     try:
         runtime_deleted = _service(request).purge(meeting_id, _idempotency_key(request))
     except ValueError as exc:
@@ -191,6 +199,11 @@ def update_runtime_snapshot(meeting_id: UUID, request: Request, snapshot: dict[s
 
 @router.post("/runtimes/{runtime_session_id}/stop")
 async def stop_runtime(runtime_session_id: UUID, request: Request) -> dict[str, object]:
+    runtime_before = _service(request).runtime(runtime_session_id)
+    coordinator = getattr(request.app.state, "minutes_auto_update", None)
+    if runtime_before is not None and coordinator is not None:
+        await coordinator.cancel(runtime_before.meeting_id)
+        coordinator.disable_now(runtime_before.meeting_id)
     try:
         session = await _service(request).stop(runtime_session_id, _idempotency_key(request))
     except ValueError as exc:
@@ -326,6 +339,21 @@ async def analyze_minutes(meeting_id: UUID, request: Request) -> dict[str, objec
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.post("/meetings/{meeting_id}/minutes/auto-update/stop")
+async def stop_minutes_auto_update(meeting_id: UUID, request: Request) -> dict[str, object]:
+    runtime = _service(request).status(meeting_id)
+    if runtime is None:
+        raise HTTPException(status_code=404, detail="runtime not found")
+    coordinator = getattr(request.app.state, "minutes_auto_update", None)
+    if coordinator is not None:
+        item = await coordinator.disable(meeting_id)
+    else:
+        item = _minutes_analysis(request).set_auto_update(meeting_id, False)
+    if item is None:
+        raise HTTPException(status_code=404, detail="minutes analysis not found")
+    return _public_analysis(item)
+
+
 @router.patch("/meetings/{meeting_id}/minutes")
 @router.put("/meetings/{meeting_id}/minutes")
 def update_minutes(meeting_id: UUID, request: Request, payload: dict[str, object] = Body(...)) -> dict[str, object]:
@@ -352,6 +380,9 @@ def _transition_minutes(meeting_id: UUID, request: Request, target_status: str) 
     runtime = _service(request).status(meeting_id)
     if runtime is None or runtime.status != RuntimeStatus.COMPLETED:
         raise HTTPException(status_code=409, detail="Minutes can only transition after the runtime has completed")
+    coordinator = getattr(request.app.state, "minutes_auto_update", None)
+    if coordinator is not None:
+        coordinator.disable_now(meeting_id)
     try:
         return _content(request).transition_minutes(meeting_id, target_status)
     except MinutesStateConflict as exc:

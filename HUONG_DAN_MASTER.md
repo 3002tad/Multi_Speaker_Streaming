@@ -44,6 +44,25 @@ docker compose run --rm --no-deps init_data
 docker compose up -d api
 ```
 
+Khi chạy cùng Meeting Platform LAN, phải truyền cùng private env để BFF eCabinet
+gọi được Meeting Service; nếu bỏ qua bước này, endpoint ghi danh sẽ trả `401`:
+
+```bash
+cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
+bash scripts/validate_meeting_env.sh /home/ntd/meeting_runtime/meeting-platform.lan.env
+
+cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming/ecabinet/backend
+docker compose --env-file /home/ntd/meeting_runtime/meeting-platform.lan.env \
+  -p ecabinet_backend -f docker-compose.yml up -d --force-recreate api
+```
+
+Quy tắc bàn giao: `MEETING_SERVICE_KEY` và `INTERNAL_API_KEY` trong **một** file
+`/home/ntd/meeting_runtime/meeting-platform.lan.env` phải giống hệt nhau;
+`MEETING_RUNTIME_TOKEN_SECRET` là khóa khác, dùng chung giữa eCabinet Backend
+và Meeting Service. Không dùng `ecabinet/backend/.env` riêng lẻ cho stack tích
+hợp nếu chưa đồng bộ bằng file này. Script chỉ in độ dài/hash rút gọn, không in
+giá trị bí mật.
+
 Healthcheck:
 
 ```bash
@@ -157,7 +176,10 @@ Luồng kiểm tra:
 8. Bấm **Bắt đầu cuộc họp**.
 9. Kiểm tra runtime chuyển sang Meeting Workspace.
 10. Kiểm tra transcript nguồn và biên bản.
-11. Sửa JSON biên bản và bấm **Lưu revision**.
+11. Bấm **Tạo biên bản từ transcript** lần đầu để tạo bản nháp và bật auto-update.
+12. Nói thêm một đoạn mới; sau khoảng 5 giây yên lặng, biên bản DRAFT sẽ cập nhật.
+13. Bấm **Tắt tự cập nhật** nếu muốn giữ bản hiện tại; transcript realtime vẫn tiếp tục.
+14. Sửa JSON biên bản và bấm **Lưu revision**.
 
 URL workspace:
 
@@ -277,7 +299,8 @@ Không dùng DDNS, Tailscale, port-forward hay LiveKit public.
 2. Sao chép [meeting-platform.lan.env.example](deploy/meeting-platform.lan.env.example)
    ra ngoài source, ví dụ `/home/ntd/meeting_runtime/meeting-platform.lan.env`;
    thay toàn bộ giá trị `replace-with-...` bằng secret ngẫu nhiên.
-3. Đặt `MEETING_LAN_HOST_IP` và `LIVEKIT_PUBLIC_URL=wss://<LAN-IP>:7880`.
+3. Đặt `MEETING_LAN_HOST_IP`, `MEETING_LAN_TLS_HOST=<LAN-IP>` và
+   `LIVEKIT_PUBLIC_URL=wss://<LAN-IP>:7880` (hoặc hostname LAN trỏ về IP đó).
 4. Khởi động:
 
 ```bash
@@ -288,10 +311,12 @@ docker compose --env-file /home/ntd/meeting_runtime/meeting-platform.lan.env \
   -f ../deploy/compose.meeting-platform.lan.yml up -d --build
 ```
 
-5. Cài CA nội bộ do `livekit-lan-tls` tạo cho từng laptop demo, sau đó mở UI
-   eCabinet qua HTTPS. Không dùng UI HTTP cho microphone: trình duyệt sẽ từ
-   chối `getUserMedia` trên origin không an toàn.
+5. Cài CA nội bộ do `livekit-lan-tls` tạo cho từng laptop/điện thoại demo,
+   sau đó mở UI eCabinet tại `https://<LAN-IP>:3443`. CA nằm trong volume
+   Caddy tại `/data/caddy/pki/authorities/local/root.crt`; có thể xuất bằng
+   `docker cp` ra file `.crt`. Không dùng UI HTTP cho microphone: trình duyệt
+   sẽ từ chối `getUserMedia` trên origin không an toàn.
 
-Media LAN dùng `7882/UDP`; `7881/TCP` chỉ là fallback. Chỉ mở hai port đó và
-port HTTPS UI trong firewall của laptop host; không expose Meeting Service,
+Media LAN dùng `7882/UDP`; `7881/TCP` chỉ là fallback. Chỉ mở `3443/TCP`,
+`7880/TCP`, `7881/TCP`, `7882/UDP` trong firewall của laptop host; không expose Meeting Service,
 AI, Ollama, PostgreSQL, Redis hoặc MinIO ra LAN.

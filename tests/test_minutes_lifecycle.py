@@ -24,6 +24,48 @@ def _document(text: str = "Nội dung cuộc họp") -> dict:
 
 
 class MinutesLifecycleTests(unittest.TestCase):
+    def test_first_analyze_enables_auto_update_and_stop_disables_it(self) -> None:
+        meeting_id = uuid4()
+        analysis_service = app.state.minutes_analysis
+        previous_ai = analysis_service.ai_client
+
+        class FakeAI:
+            async def analyze_evidence(self, runtime_id: str, evidence: dict, key: str) -> dict:
+                return {"status": "accepted"}
+
+        analysis_service.ai_client = FakeAI()
+        try:
+            headers = {"Idempotency-Key": f"auto-start-{meeting_id}"}
+            with TestClient(app, headers={**HEADERS, **headers}) as client:
+                created = client.post(
+                    f"/internal/v1/meetings/{meeting_id}/runtime",
+                    json={"meeting": {"status": "ONGOING"}},
+                )
+                self.assertEqual(created.status_code, 201)
+                client.post(
+                    f"/internal/v1/meetings/{meeting_id}/transcript",
+                    json={"segment_id": "auto-seg", "content_text": "Nội dung đầu tiên"},
+                )
+                requested = client.post(
+                    f"/internal/v1/meetings/{meeting_id}/minutes/analyze",
+                    headers={"Idempotency-Key": f"auto-analyze-{meeting_id}"},
+                )
+                self.assertEqual(requested.status_code, 202)
+                self.assertTrue(requested.json()["auto_update_enabled"])
+                stopped = client.post(
+                    f"/internal/v1/meetings/{meeting_id}/minutes/auto-update/stop"
+                )
+                self.assertEqual(stopped.status_code, 200)
+                self.assertFalse(stopped.json()["auto_update_enabled"])
+                rearmed = client.post(
+                    f"/internal/v1/meetings/{meeting_id}/minutes/analyze",
+                    headers={"Idempotency-Key": f"auto-rearm-{meeting_id}"},
+                )
+                self.assertEqual(rearmed.status_code, 202)
+                self.assertTrue(rearmed.json()["auto_update_enabled"])
+        finally:
+            analysis_service.ai_client = previous_ai
+
     def test_manual_edit_uses_cas_and_approved_revision_is_immutable(self) -> None:
         meeting_id = uuid4()
         headers = {**HEADERS, "Idempotency-Key": f"p103-start-{meeting_id}"}

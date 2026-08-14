@@ -12,3 +12,11 @@ https://{$MEETING_LAN_HOST}:7880 {
     tls internal
     reverse_proxy livekit:7880
 }
+
+# HTTPS UI is served through the same internal CA so getUserMedia works on
+# phones/tablets over the office LAN. Vite keeps proxying /api and
+# /meeting-runtime through the UI container.
+https://{$MEETING_LAN_HOST}:3443 {
+    tls internal
+    reverse_proxy ui:3000
+}

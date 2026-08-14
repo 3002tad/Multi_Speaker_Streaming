@@ -18,6 +18,7 @@ from meeting_service.app.application.minutes_analysis import (
     SqlAlchemyMinutesAnalysisRepository,
     analysis_store,
 )
+from meeting_service.app.application.minutes_auto_update import MinutesAutoUpdateCoordinator
 from meeting_service.app.application.purge import SqlAlchemyPurgeTombstoneStore, purge_tombstones
 from meeting_service.app.infrastructure.database import create_session_factory
 from meeting_service.app.infrastructure.repositories import InMemoryAIEventRepository, SqlAlchemyAIEventRepository, SqlAlchemyRuntimeRepository
@@ -81,6 +82,12 @@ else:
     app.state.minutes_analysis = MinutesAnalysisService(analysis_store)
     app.state.purge_tombstones = purge_tombstones
 app.state.object_storage = build_object_storage()
+app.state.minutes_auto_update = MinutesAutoUpdateCoordinator(
+    app.state.minutes_analysis,
+    app.state.content_store,
+    app.state.runtime_service,
+    debounce_seconds=settings.minutes_auto_update_debounce_seconds,
+)
 if settings.ai_enabled:
     app.state.ai_client = MeetingAIClient(
         settings.ai_base_url,

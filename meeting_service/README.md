@@ -10,7 +10,7 @@ in the integration phase.
 From the repository root:
 
 ```powershell
-docker compose --env-file meeting_service/.env -f meeting_service/docker-compose.yml up -d --build
+docker compose -p meeting_platform --env-file meeting_service/.env -f meeting_service/docker-compose.yml up -d --build
 ```
 
 Create `meeting_service/.env` locally from `.env.example`, set a non-default
@@ -19,7 +19,7 @@ Create `meeting_service/.env` locally from `.env.example`, set a non-default
 Run migrations separately when diagnosing startup:
 
 ```powershell
-docker compose --env-file meeting_service/.env -f meeting_service/docker-compose.yml run --rm migration-meeting
+docker compose -p meeting_platform --env-file meeting_service/.env -f meeting_service/docker-compose.yml run --rm migration-meeting
 ```
 
 ## Current scope

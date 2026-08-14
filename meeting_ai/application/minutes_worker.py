@@ -59,6 +59,10 @@ def _callback_event(
     generator_meta: dict[str, Any],
     sequence: int,
 ) -> dict[str, Any]:
+    callback_meta = {
+        **generator_meta,
+        "auto_update": bool(evidence.get("auto_generated")),
+    }
     return {
         "schema_version": 1,
         "event_id": str(uuid4()),
@@ -73,7 +77,7 @@ def _callback_event(
             "base_transcript_revision": int(evidence["base_transcript_revision"]),
             "base_minutes_revision": int(evidence.get("base_minutes_revision") or 0),
             "document": document,
-            "generator_meta": generator_meta,
+            "generator_meta": callback_meta,
         },
     }
 

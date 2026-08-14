@@ -5,12 +5,21 @@ network `meeting_platform_internal`. PostgreSQL, Redis và MinIO vẫn do
 `meeting_service/docker-compose.yml` sở hữu. eCabinet không bị sửa compose,
 database hoặc module hiện có.
 
+Meeting Platform dùng duy nhất Compose project name `meeting_platform`. Luôn
+truyền `-p meeting_platform` khi build/up/down; không build stack này với
+project name `meeting_service`, vì Docker sẽ sinh image/container khác và có
+thể khiến container đang chạy không nhận code mới.
+
 ## Runtime ngoài source
 
-Chuẩn bị hai file private ở ngoài repository: `.env.meeting` dựa trên
-`meeting-service.env.example` và `.env.ai` dựa trên
-`meeting-ai.env.example`. Hai file dùng cùng `MEETING_SERVICE_KEY` /
-`INTERNAL_API_KEY` ngẫu nhiên 24+ ký tự.
+Chế độ Compose tách riêng (tương thích P1-06) dùng hai file private ở ngoài
+repository: `.env.meeting` dựa trên `meeting-service.env.example` và `.env.ai`
+dựa trên `meeting-ai.env.example`. Hai file phải dùng cùng
+`MEETING_SERVICE_KEY`/`INTERNAL_API_KEY` ngẫu nhiên 24+ ký tự.
+
+Đối với bàn giao LAN tích hợp eCabinet, **chỉ dùng một file canonical**
+`/home/ntd/meeting_runtime/meeting-platform.lan.env` cho cả hai Compose project;
+không trộn file split với file LAN trong cùng lần khởi động.
 
 `MEETING_RUNTIME_HOST_PATH` mặc định `/home/ntd/meeting_runtime` được mount
 vào `/runtime` cho duy nhất `meeting-ai-api`. Nó giữ Zipformer, WavLM Hugging
@@ -18,6 +27,18 @@ Face cache, G2P model, Qdrant profile, glossary và log. Agent không mount mode
 hay Qdrant. Ollama giữ model ở `${MEETING_RUNTIME_HOST_PATH}/ollama`.
 
 ## Start
+
+For the integrated LAN handoff, use one private file for eCabinet, Meeting
+Service, AI and LiveKit. Validate it before starting either Compose project:
+
+```bash
+cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
+bash scripts/validate_meeting_env.sh /home/ntd/meeting_runtime/meeting-platform.lan.env
+```
+
+`MEETING_SERVICE_KEY` and `INTERNAL_API_KEY` must be the same value. The
+`MEETING_RUNTIME_TOKEN_SECRET` must be a different value and must match between
+eCabinet Backend and Meeting Service. The validator never prints secret values.
 
 ```bash
 cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming
@@ -78,6 +99,10 @@ docker compose --env-file "$MEETING_SERVICE_ENV_FILE" \
   -f meeting_service/docker-compose.yml \
   -f deploy/compose.meeting-platform.yml up -d --build
 ```
+
+When eCabinet is started as a separate Compose project, pass the same env file
+to its `api` service as documented in `HUONG_DAN_MASTER.md`; otherwise the BFF
+can silently start with a different key and all runtime calls will return 401.
 
 The Compose services run with `MEETING_STRICT_CONFIG=true`: placeholder or
 short internal keys, a missing LiveKit secret, or a missing Redis URL make the
