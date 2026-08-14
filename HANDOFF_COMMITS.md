@@ -677,3 +677,48 @@ eCabinet đúng boundary, không sửa thuật toán ASR/DSP/VAD/speaker-ID. Bư
  tiếp theo theo thứ tự ưu tiên là E2E lifecycle với chair/member/observer,
  xác nhận stop giải phóng AI assignment và phiên mới khởi động được; sau đó
  cập nhật checklist trước khi mở các task P1-08 LAN acceptance.
+
+## Checkpoint — Hoàn thiện MeetingRoom LAN và biên bản tự cập nhật
+
+Đã commit cục bộ theo cặp repository:
+
+- Root / Meeting Service + Meeting AI: branch `feature/meeting-platform-microservices`,
+  commit `46f737f` — `feat(meeting): finalize LAN realtime minutes workflow`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit `52b0e93` —
+  `feat(meeting): complete realtime workspace lifecycle`.
+- eCabinet là repository local-only và **không được push remote**.
+
+Phạm vi thay đổi:
+
+- Hoàn thiện MeetingRoom hai cột: điều khiển mic/playback/lifecycle, transcript,
+  roster và structured minutes; trạng thái runtime được polling/rehydrate để UI
+  chuyển về COMPLETED đúng sau khi kết thúc họp.
+- Minutes chỉ bắt đầu auto-update sau thao tác phân tích đầu tiên; callback có
+  optimistic locking, debounce và dừng tự cập nhật. Fact không rõ loại được giữ
+  ở Đề xuất/phát biểu; action có dấu hiệu giao việc được tách sang Việc cần làm.
+- Composer bổ sung grounding/fallback timeline và cổng độc quyền evidence theo
+  từng chủ đề, tránh cùng transcript xuất hiện đồng thời ở nhiều khung biên bản.
+- Chuẩn hóa LAN LiveKit/Compose với project name duy nhất `meeting_platform`;
+  chuẩn hóa kiểm tra key bằng validator không in secret. Không commit `.env`,
+  token, model, cache, volume hay runtime output.
+
+Kiểm thử đã chạy:
+
+- Full WSL `pytest -q`: **182 passed, 7 warnings, 6 subtests passed**.
+- Targeted composer/lifecycle/auto-update: **23 passed**; `git diff --check` đạt.
+- Build/recreate `meeting_platform-meeting-ai-api` và
+  `meeting_platform-livekit-agent` thành công; Meeting Service và Meeting AI
+  đều healthy.
+- E2E thủ công trên UI đã đạt theo xác nhận của người dùng sau rebuild.
+
+Giới hạn còn lại:
+
+- Revision biên bản đã lưu trước bản sửa không bị ghi đè tự động; tạo revision
+  mới hoặc reprocess để áp dụng quy tắc mới cho dữ liệu cũ.
+- Cảnh báo deprecation FastAPI và JWT key ngắn trong legacy test suite vẫn còn,
+  không thuộc phạm vi checkpoint.
+
+Đối chiếu merge plan: thay đổi nằm trong P1-07d/P1-08 runtime handoff, additive
+và không xâm lấn document, task, conclusion, voting, văn bản chỉ đạo hoặc
+`integration/qlvb`. Bước tiếp theo: đóng gói ZIP source sạch theo Quy tắc đóng
+gói ở đầu file và bàn giao; không push eCabinet.
