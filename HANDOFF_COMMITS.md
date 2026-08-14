@@ -627,3 +627,53 @@ Giới hạn còn lại:
 Đối chiếu merge plan: P1-06 hoàn tất đúng config/readiness/operation,
 additive và không xâm lấn eCabinet. Bước tiếp theo là P1-07 — UI acceptance
 MeetingRoom; P1-08 chỉ bắt đầu sau khi P1-07 đạt.
+
+## Checkpoint — MeetingRoom lifecycle, biên bản Kết luận và roster
+
+Đã commit cục bộ theo cặp repository:
+
+- Root / Meeting Service + Meeting AI: branch `feature/meeting-platform-microservices`,
+  commit `da0999e` — `feat: complete meeting room lifecycle and LAN setup`.
+- eCabinet: branch `feature/meeting-platform-integration`, commit `be925ec` —
+  `feat(meeting): add minutes conclusion and room roster`.
+- eCabinet là repository local-only và **không được push remote**.
+
+Phạm vi thay đổi:
+
+- BFF trả capability `permissions.can_control`; MeetingRoom chỉ hiển thị nút
+  **Kết thúc họp** cho người có quyền điều khiển. Stop không được gọi khi rời
+  trang/đóng tab; sau stop có đường về module Meetings hoặc mở tab Kết luận.
+- MeetingDetail hỗ trợ `?tab=conclusions`, tải minutes/transcript thuộc đúng
+  phiên họp và hiển thị structured minutes read-only; placeholder revision 0
+  không bị coi là biên bản đã tạo.
+- MeetingRoom hiển thị danh sách đại biểu từ eCabinet, vai trò và trạng thái
+  LiveKit đang kết nối ở mức best-effort. API đọc transcript/minutes có timeout
+  hữu hạn để không treo UI khi Meeting Service không sẵn sàng.
+- Bổ sung cấu hình/Compose LAN LiveKit, cập nhật checklist P1-07b/P1-07c và
+  hướng dẫn vận hành; không commit secret, `.env`, model, cache hoặc runtime
+  output.
+
+Kiểm thử đã chạy:
+
+- `git diff --check` ở root và eCabinet: đạt; sau commit `git status` sạch ở
+  cả hai repository.
+- Frontend container `npm run build`: pass (Vite cảnh báo chunk JS lớn hơn
+  500 kB nhưng build thành công).
+- Playwright headless Edge: route `/meetings/{id}?tab=conclusions` render
+  không có console error; MeetingRoom hiển thị roster `3 người`.
+- Full WSL pytest trước checkpoint P1-06: **174 passed, 7 warnings, 6 subtests**;
+  lượt này chỉ thay đổi frontend/docs/compose bổ sung nên chưa chạy lại pytest.
+
+Giới hạn còn lại:
+
+- Chưa bấm stop trên runtime thật để xác nhận điều hướng sau COMPLETED và
+  start phiên kế tiếp, vì thao tác sẽ kết thúc phiên test đang dùng. Browser
+  probe với runtime/session cũ còn trả HTTP 409 LiveKit token.
+- P1-07b/P1-07c chưa được đánh dấu hoàn tất cho đến khi chạy chair/member/
+  observer acceptance và kiểm tra AI assignment chuyển IDLE/COMPLETED.
+
+Đối chiếu merge plan: thay đổi additive, giữ Meeting Service/Meeting AI và
+eCabinet đúng boundary, không sửa thuật toán ASR/DSP/VAD/speaker-ID. Bước
+ tiếp theo theo thứ tự ưu tiên là E2E lifecycle với chair/member/observer,
+ xác nhận stop giải phóng AI assignment và phiên mới khởi động được; sau đó
+ cập nhật checklist trước khi mở các task P1-08 LAN acceptance.
