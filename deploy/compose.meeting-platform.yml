@@ -1,10 +1,7 @@
-# Run together with meeting_service/docker-compose.yml.  The private env file
-# is outside source and is supplied with --env-file; it is also injected into
-# AI/Agent only so secrets are never copied into an image.
+# Run together with meeting_service/docker-compose.yml. Supply exactly one
+# private env file with --env-file; it is never committed or copied into an image.
 services:
   meeting-service:
-    env_file:
-      - ${MEETING_SERVICE_ENV_FILE:?set MEETING_SERVICE_ENV_FILE to the private Meeting Service env file}
     environment:
       MEETING_STRICT_CONFIG: "true"
       MEETING_AI_ENABLED: "true"
@@ -12,6 +9,7 @@ services:
       MEETING_AI_CALLBACK_URL: http://meeting-service:8002/internal/v1/ai-events
       MEETING_SERVICE_KEY: ${MEETING_SERVICE_KEY:-${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}}
       MEETING_RUNTIME_TOKEN_SECRET: ${MEETING_RUNTIME_TOKEN_SECRET:?MEETING_RUNTIME_TOKEN_SECRET is required}
+      MEETING_LIVEKIT_AGENT_URL: ${MEETING_LIVEKIT_AGENT_URL:-${LIVEKIT_INTERNAL_URL:-}}
 
   ollama:
     image: ollama/ollama:latest
@@ -31,8 +29,6 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.meeting-ai
-    env_file:
-      - ${MEETING_AI_ENV_FILE:?set MEETING_AI_ENV_FILE to the private Meeting AI env file}
     environment: &meeting_ai_environment
       MEETING_RUNTIME_DIR: /runtime
       HF_HOME: /runtime/huggingface
@@ -44,6 +40,10 @@ services:
       AI_SERVER_WS_URL: ws://meeting-ai-api:8001
       BACKEND_INTERNAL_URL: http://meeting-service:8002/internal/v1/ai-events
       MEETING_SERVICE_KEY: ${MEETING_SERVICE_KEY:-${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      LIVEKIT_URL: ${LIVEKIT_INTERNAL_URL:-${LIVEKIT_URL:-ws://livekit:7880}}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY is required}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required}
       OLLAMA_URL: http://ollama:11434
       DATABASE_PATH: /runtime/data/meeting.db
       SPEAKER_DATABASE_PATH: /runtime/data/qdrant_speakers
@@ -73,8 +73,6 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.livekit-agent
-    env_file:
-      - ${MEETING_AI_ENV_FILE:?set MEETING_AI_ENV_FILE to the private Meeting AI env file}
     environment:
       <<: *meeting_ai_environment
       AGENT_ASSIGNMENT_ENABLED: "true"

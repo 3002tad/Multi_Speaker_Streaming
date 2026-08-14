@@ -153,7 +153,10 @@ class Settings:
         "MINUTES_COMPOSER_MODE", "llm"
     ).strip().lower()
     minutes_composer_timeout_seconds: float = float(
-        os.getenv("MINUTES_COMPOSER_TIMEOUT_SECONDS", "45")
+        # A CPU-only Qwen 3B cold start may consume roughly 30 seconds before
+        # the first token. Leave enough time for one bounded minutes response
+        # instead of marking a healthy first request as a false failure.
+        os.getenv("MINUTES_COMPOSER_TIMEOUT_SECONDS", "120")
     )
     minutes_composer_debounce_seconds: float = float(
         os.getenv("MINUTES_COMPOSER_DEBOUNCE_SECONDS", "0.4")

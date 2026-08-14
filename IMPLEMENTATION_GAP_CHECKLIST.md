@@ -738,22 +738,140 @@ WER/CER giữ baseline.
 
 ### P1-07 — Hoàn tất MeetingRoom thực tế
 
+- [~] (2026-08-14) Đã hoàn thiện reconnect/rehydrate, playback gain có giới hạn
+  và test hooks cho browser acceptance; còn thiếu E2E enrollment/role trên backend thật.
 - [ ] Test Socket reconnect + REST rehydrate, hai tab cùng meeting,
   transcript update/retraction/minutes update.
-- [ ] Bổ sung playback gain có giới hạn; mặc định off và cảnh báo tai nghe.
+- [x] Regression render minutes với transcript có `speaker` object
+  (`label`/`identity_method`); không được unmount MeetingRoom sau analyze hoặc reload.
+- [x] LiveKit fallback speaker giữ UUID kỹ thuật nhưng truyền `display_name` từ
+  eCabinet vào token, để segment mới không hiển thị UUID thiết bị khi chưa enroll.
+- [x] Frontend dev proxy Socket.IO dùng internal DNS `meeting-service:8002` và
+  TranscriptPanel có REST rehydrate 3 giây như safety net khi Socket.IO bị hụt event.
+- [x] Bổ sung playback gain có giới hạn; mặc định off và cảnh báo tai nghe.
 - [ ] Chạy enrollment browser E2E: record, preview, upload, status, delete.
 - [ ] Kiểm thử chair/member/observer qua backend thật, không chỉ ẩn nút.
 
 **Điều kiện đạt:** reload không mất transcript/minutes; role flows pass.
 
-### P1-08 — Nginx, deploy và public network
+### P1-07b — Điều khiển vòng đời runtime từ MeetingRoom
 
-- [ ] Thêm proxy `/meeting-runtime/socket.io/`; giữ `/ws/` legacy nguyên vẹn.
-- [ ] Build/deploy frontend production dạng release/symlink atomically.
-- [ ] Không public AI 8001, Ollama, PostgreSQL, Redis, MinIO hoặc internal REST.
-- [ ] Kiểm tra HTTPS, `/api`, Socket.IO, LiveKit WSS/UDP từ ngoài mạng.
+**Trạng thái:** `[-]` — bổ sung sau khi kiểm thử thực tế phát hiện người dùng chỉ
+có thể rời trang, không có thao tác kết thúc runtime rõ ràng. Phạm vi giới hạn
+trong session façade, MeetingRoom và contract lifecycle đã có; không tự động
+dừng khi người dùng đóng tab.
 
-**Điều kiện đạt:** public E2E qua `meet.simplething.id.vn` pass.
+- [ ] BFF trả capability `can_control` cùng runtime status để UI không suy diễn
+  quyền chủ trì từ quyền micro.
+- [ ] Chair có nút **Kết thúc họp**: xác nhận, gọi `runtime/stop`, tắt audio
+  client sau khi stop thành công và hiển thị trạng thái COMPLETED/FAILED.
+- [ ] Rời trang/đóng tab chỉ leave Socket.IO và LiveKit client; không gọi stop.
+- [ ] Xác nhận `runtime/stop` clear AI assignment để một phiên mới có thể start;
+  chạy unit/contract và Docker smoke không xóa volume.
+
+**Điều kiện đạt:** member/observer không thấy hoặc gọi được stop; chair stop
+idempotent, Agent rời room và AI assignment chuyển IDLE/COMPLETED; runtime mới
+có thể khởi động sau đó.
+
+**Nhật ký thực thi — 2026-08-14:** `[~]`
+
+- BFF `runtime/status` nay trả capability `permissions.can_control` từ domain
+  session eCabinet; Meeting Service vẫn không nhận role hoặc query eCabinet.
+- MeetingRoom dùng capability này để chỉ render nút **Kết thúc họp** cho chủ
+  trì/quyền control. Stop thành công mới đóng local mic/LiveKit; cleanup khi
+  rời trang vẫn chỉ leave Socket.IO/LiveKit client, không gọi stop.
+- Kiểm thử: compile BFF route trong container đạt; frontend production build
+  đạt; full Python suite **174 passed**.
+- Còn thiếu gate: chưa bấm stop trên runtime LiveKit thật đang được người dùng
+  kiểm thử, vì thao tác đó sẽ chủ động kết thúc room hiện tại. Cần xác nhận
+  chair/member/observer và start runtime kế tiếp sau stop trong E2E riêng.
+
+### P1-07c — Hậu kỳ MeetingRoom và điều hướng sau khi kết thúc
+
+**Trạng thái:** `[-]` — phát sinh từ kiểm thử UI: tab Kết luận của phiên họp
+chưa hiển thị structured minutes, MeetingRoom chưa có roster người tham gia,
+và sau khi kết thúc chưa có đường quay lại module Meetings.
+
+- [x] Tab **Kết luận cuộc họp** của MeetingDetail tải và hiển thị minutes thuộc
+  đúng meeting, không ghi vào module tài liệu/kết luận nghiệp vụ khác.
+- [x] MeetingRoom hiển thị danh sách đại biểu từ eCabinet và trạng thái đang
+  kết nối LiveKit ở mức best-effort.
+- [~] Sau stop thành công có nút quay lại module Meetings và liên kết mở tab
+  Kết luận của phiên vừa kết thúc; không tự động mất bản minutes.
+- [~] Build frontend, kiểm tra route/contract BFF và browser smoke cho cả room
+  đang hoạt động lẫn room đã COMPLETED.
+
+**Điều kiện đạt:** minutes hiển thị đúng trong tab Kết luận; roster không làm
+gián đoạn realtime; chair có đường về `/meetings`, member/observer không thấy
+control stop.
+
+**Nhật ký thực thi — 2026-08-14:** `[~]`
+
+- Đã bổ sung MeetingDetail tải minutes/transcript theo tab `?tab=conclusions`
+  và render read-only structured minutes; bản placeholder revision 0 không bị
+  coi là biên bản đã tạo.
+- Đã bổ sung roster đại biểu từ eCabinet trong MeetingRoom, ghép trạng thái
+  LiveKit đang kết nối theo identity ở mức best-effort.
+- Sau stop, MeetingRoom có hai đường rõ ràng: về `/meetings` hoặc mở lại
+  `/meetings/{id}?tab=conclusions`.
+- Kiểm thử: frontend production build pass; Playwright headless Edge xác nhận
+  tab Kết luận render không lỗi console và MeetingRoom render roster `3 người`.
+- Giới hạn: chưa bấm stop trên runtime đang dùng để xác nhận điều hướng thật,
+  vì thao tác này sẽ kết thúc phiên test hiện tại; browser room probe còn gặp
+  HTTP 409 LiveKit token do runtime/session đang được kiểm thử trước đó.
+
+### Cập nhật P1-07 — 2026-08-14
+
+- Đã sửa MeetingRoom: khi Socket.IO reconnect sẽ gọi REST rehydrate lại
+  transcript, minutes và trạng thái phân tích; không chỉ tải lại transcript.
+- Đã thêm playback gain qua Web Audio, giới hạn `1.0x–2.0x`, mặc định playback
+  vẫn tắt và giữ cảnh báo nên dùng tai nghe. Đã thêm test hooks cho flow
+  enrollment record/preview/upload/delete.
+- Kiểm thử: frontend production build trong container tạm **pass**; toàn bộ
+  pytest suite **174 passed** (gồm contract và Meeting Service).
+- Browser smoke bằng headless Edge với frontend container tạm: `/login` và
+  `MeetingRoom` render pass; playback mặc định off, cảnh báo tai nghe và slider
+  gain `1.0x–2.0x` pass. Backend giả lập không được dùng để kết luận role/audio.
+- Regression 2026-08-14: `MinutesEditor` đã chuẩn hóa speaker label trước khi
+  render evidence. Trước đó API trả object `{label, identity_method}` nhưng UI
+  render trực tiếp object, React throw và màn hình trắng sau `minutes/analyze`
+  hoặc reload. Headless Edge đã reload MeetingRoom có transcript/minutes revision
+  1 và nhấn lại `Tạo biên bản từ transcript`: trang giữ nguyên, console 0 error;
+  frontend production build trong container Linux pass.
+- Regression 2026-08-14: BFF LiveKit token đã truyền `current_user.full_name`
+  (fallback username) sang Meeting Service; token service ký claim `name` bằng
+  `display_name`, thay vì external UUID. Unit test xác nhận claim, full suite
+  **174 passed**; Meeting Service được recreate không xóa volume và readiness
+  đạt. Segment đã persist trước bản vá vẫn giữ nhãn cũ; chỉ segment mới nhận
+  token mới sẽ hiện tên participant nếu chưa được voice profile nhận diện.
+- Regression 2026-08-14: phát hiện Vite trong frontend container gọi
+  `host.docker.internal:8002`; WebSocket upgrade bị `ECONNREFUSED` vì Meeting
+  Service chỉ bind loopback WSL. Frontend dev đã join network
+  `meeting_platform_internal` và proxy qua DNS nội bộ. Bổ sung rehydrate
+  transcript mỗi 3 giây để giữ UI nhất quán nếu một realtime event bị hụt.
+  Playwright xác nhận transcript tăng từ 5 lên 6 không reload sau callback,
+  build production pass; hai segment probe sau đó đã được retract khỏi UI.
+- Giới hạn: chưa chạy browser E2E với backend thật cho hai tab/reconnect,
+  enrollment upload và chair/member/observer; P1-07 chưa đạt điều kiện hoàn tất.
+- Đối chiếu merge plan: thay đổi chỉ ở MeetingRoom/enrollment UI, không thay
+  thuật toán baseline hoặc contract eCabinet; bước tiếp theo là dựng runtime
+  local và chạy browser/role acceptance trước khi mở P1-08.
+
+### P1-08 — Deploy LAN và bàn giao runtime
+
+- [x] Bổ sung Compose LAN LiveKit, tách URL WSS browser và URL Docker Agent.
+- [ ] Cấp chứng chỉ CA nội bộ cho các laptop; deploy frontend eCabinet qua HTTPS LAN.
+- [ ] Mở tối thiểu `7881/TCP`, `7882/UDP` và HTTPS UI trên firewall host; không public AI, Ollama, PostgreSQL, Redis, MinIO hay internal REST.
+- [ ] Kiểm tra HTTPS UI, `/api`, Socket.IO, LiveKit WSS/UDP từ ba laptop cùng LAN.
+
+**Điều kiện đạt:** LAN E2E ba laptop pass, không cần DDNS/Tailscale/port-forward.
+
+**Nhật ký — 2026-08-14:** thêm `deploy/compose.meeting-platform.lan.yml`,
+`LIVEKIT_CONFIG` cho LiveKit self-host, Caddy TLS nội bộ cho WSS và env example
+không chứa secret. Meeting Service truyền `MEETING_LIVEKIT_AGENT_URL` cho Agent
+trong Docker, còn token browser vẫn trả `MEETING_LIVEKIT_URL` LAN. Compose
+render pass; contract/LiveKit/EventPublisher test đạt 20 pass. Chưa deploy thật
+vì cần IP LAN cố định, env private và CA được cài trên laptop tham gia.
 
 ### P1-09 — Acceptance và bàn giao
 

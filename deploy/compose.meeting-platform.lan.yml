@@ -1,0 +1,61 @@
+# LAN-only LiveKit for the handoff/demo stack. Run with the base Compose files.
+# No DDNS, public reverse proxy, TURN or port forwarding is required.
+services:
+  livekit:
+    image: livekit/livekit-server:v1.9.8
+    environment:
+      LIVEKIT_CONFIG: |
+        port: 7880
+        log_level: info
+        rtc:
+          use_external_ip: false
+          node_ip: ${MEETING_LAN_HOST_IP:?set MEETING_LAN_HOST_IP to the Docker host LAN IPv4}
+          udp_port: 7882
+          tcp_port: 7881
+        keys:
+          ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY is required}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required}
+    ports:
+      - "7881:7881/tcp"
+      - "7882:7882/udp"
+    restart: unless-stopped
+
+  livekit-lan-tls:
+    image: caddy:2.8-alpine
+    environment:
+      # Keep the WebRTC node address as an IP, but terminate HTTPS on a
+      # hostname. Browsers commonly omit SNI for an IP literal, which prevents
+      # Caddy from selecting its internal certificate.
+      MEETING_LAN_HOST: ${MEETING_LAN_TLS_HOST:?set MEETING_LAN_TLS_HOST to a LAN hostname (or livekit.localhost for local development)}
+    volumes:
+      - ../deploy/Caddyfile.livekit-lan:/etc/caddy/Caddyfile:ro
+      - livekit_lan_caddy_data:/data
+      - livekit_lan_caddy_config:/config
+    ports:
+      - "7880:7880/tcp"
+    depends_on:
+      livekit:
+        condition: service_started
+    restart: unless-stopped
+
+  meeting-service:
+    environment:
+      MEETING_LIVEKIT_URL: ${LIVEKIT_PUBLIC_URL:?set LIVEKIT_PUBLIC_URL to wss://LAN-HOST:7880}
+      MEETING_LIVEKIT_AGENT_URL: ws://livekit:7880
+    depends_on:
+      livekit:
+        condition: service_started
+
+  meeting-ai-api:
+    environment:
+      LIVEKIT_URL: ws://livekit:7880
+
+  livekit-agent:
+    environment:
+      LIVEKIT_URL: ws://livekit:7880
+    depends_on:
+      livekit:
+        condition: service_started
+
+volumes:
+  livekit_lan_caddy_data:
+  livekit_lan_caddy_config:

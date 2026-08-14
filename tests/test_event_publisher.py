@@ -106,7 +106,7 @@ class EventPublisherTests(unittest.IsolatedAsyncioTestCase):
         )
         await publisher.close()
         self.assertEqual(client.calls, 2)
-        self.assertEqual(publisher.sequence, 2)
+        self.assertGreater(publisher.sequence, 2)
         self.assertEqual(publisher._segment_revisions["revision-1"], 2)
 
 

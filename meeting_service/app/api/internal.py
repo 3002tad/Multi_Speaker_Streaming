@@ -238,6 +238,7 @@ def meeting_livekit_token(meeting_id: UUID, request: Request, payload: dict[str,
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="runtime_session_id must be a UUID") from exc
     user_id = str(payload.get("user_id") or "")
+    display_name = str(payload.get("display_name") or user_id).strip()
     device_id = str(payload.get("device_id") or "")
     if not user_id or not device_id:
         raise HTTPException(status_code=422, detail="user_id and device_id are required")
@@ -247,7 +248,7 @@ def meeting_livekit_token(meeting_id: UUID, request: Request, payload: dict[str,
         meeting_id,
         runtime_session_id,
         identity=identity,
-        name=user_id,
+        name=display_name or user_id,
         metadata={
             "user_id": user_id,
             "device_id": device_id,

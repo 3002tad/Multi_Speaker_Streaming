@@ -268,3 +268,30 @@ Khi đóng gói ZIP, loại bỏ:
 - `node_modules/`, `dist/`, `__pycache__/`
 - model/cache/Hugging Face/Ollama/Qdrant data
 - Docker volume và runtime output
+# Chạy demo LAN (không public)
+
+Chế độ LAN chạy toàn bộ Meeting Platform, gồm LiveKit, trên laptop Docker/WSL.
+Không dùng DDNS, Tailscale, port-forward hay LiveKit public.
+
+1. Xác định IPv4 LAN của laptop host và đặt cố định/reserve DHCP.
+2. Sao chép [meeting-platform.lan.env.example](deploy/meeting-platform.lan.env.example)
+   ra ngoài source, ví dụ `/home/ntd/meeting_runtime/meeting-platform.lan.env`;
+   thay toàn bộ giá trị `replace-with-...` bằng secret ngẫu nhiên.
+3. Đặt `MEETING_LAN_HOST_IP` và `LIVEKIT_PUBLIC_URL=wss://<LAN-IP>:7880`.
+4. Khởi động:
+
+```bash
+cd /mnt/d/VNPT/Code/Multi_Speaker_Streaming/meeting_service
+docker compose --env-file /home/ntd/meeting_runtime/meeting-platform.lan.env \
+  -p meeting_platform -f docker-compose.yml \
+  -f ../deploy/compose.meeting-platform.yml \
+  -f ../deploy/compose.meeting-platform.lan.yml up -d --build
+```
+
+5. Cài CA nội bộ do `livekit-lan-tls` tạo cho từng laptop demo, sau đó mở UI
+   eCabinet qua HTTPS. Không dùng UI HTTP cho microphone: trình duyệt sẽ từ
+   chối `getUserMedia` trên origin không an toàn.
+
+Media LAN dùng `7882/UDP`; `7881/TCP` chỉ là fallback. Chỉ mở hai port đó và
+port HTTPS UI trong firewall của laptop host; không expose Meeting Service,
+AI, Ollama, PostgreSQL, Redis hoặc MinIO ra LAN.

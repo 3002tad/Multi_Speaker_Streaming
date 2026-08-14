@@ -63,10 +63,22 @@ class LiveKitTokenServiceTests(unittest.TestCase):
             runtime_id = created.json()["runtime_session_id"]
             response = client.post(
                 f"/internal/v1/meetings/{meeting_id}/tokens",
-                json={"runtime_session_id": runtime_id, "user_id": str(uuid4()), "device_id": "browser"},
+                json={
+                    "runtime_session_id": runtime_id,
+                    "user_id": str(uuid4()),
+                    "display_name": "Nguyễn Văn A",
+                    "device_id": "browser",
+                },
             )
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["runtime_session_id"], runtime_id)
+            claims = jwt.decode(
+                response.json()["token"],
+                settings.livekit_api_secret,
+                algorithms=["HS256"],
+                options={"verify_exp": False},
+            )
+            self.assertEqual(claims["name"], "Nguyễn Văn A")
 
 
 if __name__ == "__main__":

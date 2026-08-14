@@ -79,7 +79,7 @@ class RuntimeService:
                         "meeting_id": str(meeting_id),
                         "assignment_generation": 1,
                         "livekit": {
-                            "url": settings.livekit_url,
+                            "url": settings.livekit_agent_url or settings.livekit_url,
                             "room": session.livekit_room,
                         },
                         "callback": {

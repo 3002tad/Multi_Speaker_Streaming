@@ -57,6 +57,10 @@ class Settings:
     runtime_token_issuer: str = os.getenv("MEETING_RUNTIME_TOKEN_ISSUER", "ecabinet")
     runtime_token_audience: str = os.getenv("MEETING_RUNTIME_TOKEN_AUDIENCE", "meeting-service")
     livekit_url: str = os.getenv("MEETING_LIVEKIT_URL", "")
+    # Browser clients need the LAN-reachable WSS endpoint, while the Agent
+    # should remain on the private Docker network. Keeping those endpoints
+    # distinct prevents a container from hairpinning through the LAN router.
+    livekit_agent_url: str = os.getenv("MEETING_LIVEKIT_AGENT_URL", "")
     livekit_api_key: str = os.getenv("MEETING_LIVEKIT_API_KEY", "")
     livekit_api_secret: str = os.getenv("MEETING_LIVEKIT_API_SECRET", "")
     livekit_token_ttl_seconds: int = int(os.getenv("MEETING_LIVEKIT_TOKEN_TTL_SECONDS", "900"))

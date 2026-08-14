@@ -1,0 +1,14 @@
+# Caddy creates a private CA for the office-LAN demo. Install its root CA on
+# every participating laptop before opening the MeetingRoom over HTTPS.
+#
+# WebRTC clients connecting to an IP literal commonly omit SNI.  Without a
+# default, Caddy cannot choose the internally-issued certificate and rejects
+# the TLS handshake before the LiveKit WebSocket reaches the proxy.
+{
+    default_sni {$MEETING_LAN_HOST}
+}
+
+https://{$MEETING_LAN_HOST}:7880 {
+    tls internal
+    reverse_proxy livekit:7880
+}

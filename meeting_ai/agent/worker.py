@@ -79,12 +79,23 @@ class EventPublisher:
 
     def __init__(self, assignment: dict | None = None) -> None:
         self.assignment = assignment or {}
-        self.sequence = 0
         self.callback = dict(self.assignment.get("callback") or {})
         self.runtime_session_id = str(
             self.assignment.get("runtime_session_id") or ""
         )
         self.meeting_id = str(self.assignment.get("meeting_id") or "")
+        # Meeting Service orders transcript callbacks per runtime.  A LiveKit
+        # track can be torn down and recreated while the runtime remains
+        # active, and an Agent process can restart independently.  Starting
+        # every new publisher from zero made valid callbacks silently return
+        # ``status=stale`` after such a reconnect.  A wall-clock cursor keeps
+        # a new Agent epoch above prior callbacks without giving this AI-only
+        # component access to Meeting Service persistence.
+        self.sequence = (
+            int(time.time() * 1000)
+            if self.runtime_session_id and self.meeting_id
+            else 0
+        )
         self._spool: deque[dict] = deque()
         self._max_spool = 256
         self._max_attempts = 5
@@ -208,6 +219,18 @@ class EventPublisher:
             timeout=5.0,
         )
         response.raise_for_status()
+        response_json = getattr(response, "json", None)
+        try:
+            body = response_json() if callable(response_json) else {}
+        except (TypeError, ValueError):
+            body = {}
+        status = str((body or {}).get("status") or "accepted")
+        if status == "stale":
+            print(
+                "[callback] Meeting Service từ chối event stale "
+                f"runtime={self.runtime_session_id} "
+                f"sequence={item['event'].get('sequence')}"
+            )
 
     def _enqueue(self, item: dict) -> None:
         if len(self._spool) >= self._max_spool:
