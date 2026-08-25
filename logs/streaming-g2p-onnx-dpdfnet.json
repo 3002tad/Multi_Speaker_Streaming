@@ -1,0 +1,167 @@
+{
+  "status": "passed",
+  "backend_url": "http://127.0.0.1:8000",
+  "probe_exit_code": 0,
+  "checks": {
+    "probe_ok": true,
+    "transcript_count": 2,
+    "all_intervals_have_segments": true,
+    "unassigned_tail_count": 0,
+    "all_matches_overlap": true,
+    "wer_threshold": true,
+    "cer_threshold": true,
+    "global_turn_metadata": true,
+    "quality_metadata": true
+  },
+  "matches": [
+    {
+      "voice": "thayDung_noi",
+      "expected_range": [
+        0.0,
+        15.0
+      ],
+      "overlap": 1.0,
+      "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+      "hypothesis": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LĨNH VỰC A ĐỐT SORES THÌ NÓ GỒM CÓ LÀ HDS VÀ HPASE THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "segment_count": 1,
+      "wer": 0.5,
+      "cer": 0.4109,
+      "source_id": "user-5939d13c5c1c",
+      "speaker": "Thay_Dung",
+      "global_turn_ids": [
+        "turn-d04083ce76d74312939e1a2343e81bd9"
+      ],
+      "signal_snr_db": 45.18,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 1935,
+      "pipeline_ms": 10406,
+      "refinement_ms": 18984
+    },
+    {
+      "voice": "thayPhuoc_noi",
+      "expected_range": [
+        15.0,
+        30.0
+      ],
+      "overlap": 0.9713,
+      "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+      "hypothesis": "LÀM QUÉT NÀY NỌ ĐỒ ĐÓ LÀM THẦY CÓ QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÂU",
+      "segment_count": 1,
+      "wer": 0.2857,
+      "cer": 0.2789,
+      "source_id": "user-eb5b82e766f6",
+      "speaker": "Thay_Phuoc",
+      "global_turn_ids": [
+        "turn-1d6b48c009284210814f4aaf7a82c64c"
+      ],
+      "signal_snr_db": 46.24,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 1125,
+      "pipeline_ms": 13655,
+      "refinement_ms": null
+    }
+  ],
+  "transcripts": [
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-583b0cc7851c4274ad6cec148211233f",
+      "source_id": "user-5939d13c5c1c",
+      "speaker": "Thay_Dung",
+      "speaker_id": "Thay_Dung",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9546,
+      "speaker_margin": 0.067,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 1935,
+      "raw_text": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LĨNH VỰC A ĐỐT SORES THÌ NÓ GỒM CÓ LÀ HDS VÀ HPASE THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "phonetic_recovered_text": "THÌ Ở ĐÂY mục 5.2 HỌ NÓI VỀ CÁI LĨNH VỰC A ĐỐT SORES THÌ NÓ GỒM CÓ LÀ HDS VÀ HBase THÌ LÀ hệ thống tập tin PHÂN TÁN",
+      "phonetic_recovery_applied": true,
+      "phonetic_replacements": [
+        {
+          "from": "MỘT NĂM CHẤM HAI",
+          "to": "mục 5.2",
+          "score": 0.8917,
+          "key_score": 1.0,
+          "g2p_score": 0.8333,
+          "backend": "g2p_onnx",
+          "alias": "một năm chấm hai"
+        },
+        {
+          "from": "HPASE",
+          "to": "HBase",
+          "score": 0.9278,
+          "key_score": 1.0,
+          "g2p_score": 0.8889,
+          "backend": "g2p_onnx",
+          "alias": "hpase"
+        },
+        {
+          "from": "HỆ THỐNG TẬP TIN",
+          "to": "hệ thống tập tin",
+          "score": 0.8796,
+          "key_score": 1.0,
+          "g2p_score": 0.8148,
+          "backend": "g2p_onnx",
+          "alias": "hệ thống tập tin"
+        }
+      ],
+      "text": "THÌ Ở ĐÂY mục 5.2 HỌ NÓI VỀ CÁI LĨNH VỰC A ĐỐT SORES THÌ NÓ GỒM CÓ LÀ HDS VÀ HBase THÌ LÀ hệ thống tập tin PHÂN TÁN",
+      "start_time": 1785292445.53,
+      "end_time": 1785292460.65,
+      "refinement_ms": 18984,
+      "pipeline_ms": 10406,
+      "signal_rms": 0.079038,
+      "signal_snr_db": 45.18,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-d04083ce76d74312939e1a2343e81bd9",
+      "refinement_pending": false,
+      "revision": 2,
+      "timestamp": 1785292487.3472438,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785292487.350982
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-d4a3d00093134be4bd56f693ed0a32b2",
+      "source_id": "user-eb5b82e766f6",
+      "speaker": "Thay_Phuoc",
+      "speaker_id": "Thay_Phuoc",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.915,
+      "speaker_margin": 0.0428,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 1125,
+      "raw_text": "LÀM QUÉT NÀY NỌ ĐỒ ĐÓ LÀM THẦY CÓ QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÂU",
+      "phonetic_recovered_text": "làm web NÀY NỌ ĐỒ ĐÓ LÀM THẦY CÓ QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÂU",
+      "phonetic_recovery_applied": true,
+      "phonetic_replacements": [
+        {
+          "from": "LÀM QUÉT",
+          "to": "làm web",
+          "score": 0.805,
+          "key_score": 1.0,
+          "g2p_score": 0.7,
+          "backend": "g2p_onnx",
+          "alias": "làm quét"
+        }
+      ],
+      "text": "Làm quét này nọ đồ đó làm thầy có quét này nọ đồ bán cho thành thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để làm được rất nhiều chuyện ngay kể chuyện người ta học một cái câu",
+      "start_time": 1785292460.09,
+      "end_time": 1785292475.1,
+      "refinement_ms": null,
+      "pipeline_ms": 13655,
+      "signal_rms": 0.077322,
+      "signal_snr_db": 46.24,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-1d6b48c009284210814f4aaf7a82c64c",
+      "refinement_pending": true,
+      "revision": 1,
+      "timestamp": 1785292488.823794,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785292488.825579
+    }
+  ],
+  "demo_log": null
+}

@@ -1,0 +1,59 @@
+{
+  "engine": "phowhisper-medium-vi-telephony-ct2",
+  "model": "models/phowhisper-medium-vi-telephony-ct2",
+  "settings": {
+    "language": "vi",
+    "compute_type": "int8",
+    "cpu_threads": 6,
+    "num_workers": 1,
+    "queue_limit": 32,
+    "beam_size": 5,
+    "internal_vad": false,
+    "condition_on_previous_text": false
+  },
+  "model_load_ms": 85321.87,
+  "total_audio_seconds": 30.0,
+  "wall_seconds": 27.816,
+  "wall_rtf": 0.9272,
+  "mean_wer": 0.3643,
+  "mean_cer": 0.2595,
+  "queue_ms": {
+    "p50": 6144.28,
+    "p90": 11059.7,
+    "max": 12288.55
+  },
+  "decode_ms": {
+    "p50": 13860.42,
+    "p90": 15121.59,
+    "max": 15436.88
+  },
+  "peak_rss_mib": 1743.1,
+  "items": [
+    {
+      "key": "thayDung_noi",
+      "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+      "hypothesis": "rồi thì ở đây luật năm chấm hai họ nói về cơ lớp đầu tiên cơ lớp là adolf schorch thì nó gồm có hdms và hbiz về hdms thì là cái hệ thống đầu tiên phân tán",
+      "wer": 0.5,
+      "cer": 0.3488,
+      "audio_seconds": 15.0,
+      "queue_ms": 0.02,
+      "decode_ms": 12283.96,
+      "rtf": 0.8189,
+      "avg_logprob": -0.2359,
+      "no_speech_prob": 0.0
+    },
+    {
+      "key": "thayPhuoc_noi",
+      "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+      "hypothesis": "làm web này nọ đồ đất làm hệ thống web này nọ đồ bán trở thành thành phố như cũ không có đại vật nhưng mà người ta nghiệp quê sống thì người ta dùng tinh học ứng dụng tinh học để làm được rất nhiều chuyện ngay cả chỉ người ta học một cái công thức để làm những chuyện gì đó để trong bí thư",
+      "wer": 0.2286,
+      "cer": 0.1701,
+      "audio_seconds": 15.0,
+      "queue_ms": 12288.55,
+      "decode_ms": 15436.88,
+      "rtf": 1.0291,
+      "avg_logprob": -0.1619,
+      "no_speech_prob": 0.0
+    }
+  ]
+}

@@ -1,0 +1,222 @@
+{
+  "status": "passed",
+  "backend_url": "http://127.0.0.1:8000",
+  "probe_exit_code": 0,
+  "checks": {
+    "probe_ok": true,
+    "transcript_count": 3,
+    "all_intervals_have_segments": true,
+    "unassigned_tail_count": 0,
+    "all_matches_overlap": true,
+    "wer_threshold": true,
+    "cer_threshold": true,
+    "global_turn_metadata": true,
+    "quality_metadata": true
+  },
+  "matches": [
+    {
+      "voice": "thayDung_noi",
+      "expected_range": [
+        0.0,
+        15.0
+      ],
+      "overlap": 1.0,
+      "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+      "hypothesis": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP ADOLF STORES THÌ NÓ GỒM CÓ LÀ HDS VÀ H P N",
+      "segment_count": 1,
+      "wer": 0.625,
+      "cer": 0.5271,
+      "source_id": "user-93cedb4dab86",
+      "speaker": "Thay_Dung",
+      "global_turn_ids": [
+        "turn-fea7c3276aee4f9fb975f1a4465d194e"
+      ],
+      "signal_snr_db": 44.71,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 2272,
+      "pipeline_ms": 3850,
+      "refinement_ms": 7266,
+      "refinement": null,
+      "phonetic_replacements": [
+        {
+          "from": "MỘT NĂM CHẤM HAI",
+          "to": "mục 5.2",
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "một năm chấm hai"
+        },
+        {
+          "from": "HDS",
+          "to": "HDFS",
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "h d s"
+        }
+      ]
+    },
+    {
+      "voice": "thayPhuoc_noi",
+      "expected_range": [
+        15.0,
+        30.0
+      ],
+      "overlap": 0.9787,
+      "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+      "hypothesis": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀ PHẢI ĐÓNG QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ MÌNH LÀM ĐƯỢC RẤT LÀ NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "segment_count": 2,
+      "wer": 0.2,
+      "cer": 0.1667,
+      "source_id": "user-c4a8fd0eff90",
+      "speaker": "Thay_Phuoc",
+      "global_turn_ids": [
+        "turn-476c6faab727498db2726b7171a34aa5",
+        "turn-e6cb695bec2d41b9b99230274c8720de"
+      ],
+      "signal_snr_db": 46.1,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 1790,
+      "pipeline_ms": 3098,
+      "refinement_ms": 5750,
+      "refinement": null,
+      "phonetic_replacements": [
+        {
+          "from": "LÀM QUÉT",
+          "to": "làm web",
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "làm quét"
+        }
+      ]
+    }
+  ],
+  "transcripts": [
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-fdaf5f20990c4e2ea5120b683b4f8bd2",
+      "source_id": "user-93cedb4dab86",
+      "speaker": "Thay_Dung",
+      "speaker_id": "Thay_Dung",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9531,
+      "speaker_margin": 0.1071,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 2272,
+      "raw_text": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP ADOLF STORES THÌ NÓ GỒM CÓ LÀ HDS VÀ H P N",
+      "phonetic_recovered_text": "THÌ Ở ĐÂY mục 5.2 HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP ADOLF STORES THÌ NÓ GỒM CÓ LÀ HDFS VÀ H P N",
+      "phonetic_recovery_applied": true,
+      "phonetic_replacements": [
+        {
+          "from": "MỘT NĂM CHẤM HAI",
+          "to": "mục 5.2",
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "một năm chấm hai"
+        },
+        {
+          "from": "HDS",
+          "to": "HDFS",
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "h d s"
+        }
+      ],
+      "text": "THÌ Ở ĐÂY mục 5.2 HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP ADOLF STORES THÌ NÓ GỒM CÓ LÀ HDFS VÀ H P N",
+      "start_time": 1785294658.47,
+      "end_time": 1785294673.53,
+      "refinement_ms": 7266,
+      "pipeline_ms": 3850,
+      "signal_rms": 0.077994,
+      "signal_snr_db": 44.71,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-fea7c3276aee4f9fb975f1a4465d194e",
+      "refinement_pending": false,
+      "revision": 2,
+      "timestamp": 1785294682.0632973,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785294682.0645616
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-7c1ebc9bf981447e8cd7c47c9de68e13",
+      "source_id": "user-c4a8fd0eff90",
+      "speaker": "Thay_Phuoc",
+      "speaker_id": "Thay_Phuoc",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9276,
+      "speaker_margin": 0.0672,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 1790,
+      "raw_text": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀ PHẢI ĐÓNG QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ MÌNH LÀM ĐƯỢC RẤT LÀ NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC",
+      "phonetic_recovered_text": "làm web NÀY NỌ RỒI ĐÓ LÀ PHẢI ĐÓNG QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ MÌNH LÀM ĐƯỢC RẤT LÀ NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC",
+      "phonetic_recovery_applied": true,
+      "phonetic_replacements": [
+        {
+          "from": "LÀM QUÉT",
+          "to": "làm web",
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "làm quét"
+        }
+      ],
+      "text": "làm web NÀY NỌ RỒI ĐÓ LÀ PHẢI ĐÓNG QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ MÌNH LÀM ĐƯỢC RẤT LÀ NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC",
+      "start_time": 1785294673.79,
+      "end_time": 1785294688.83,
+      "refinement_ms": 5750,
+      "pipeline_ms": 3098,
+      "signal_rms": 0.075546,
+      "signal_snr_db": 46.1,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-476c6faab727498db2726b7171a34aa5",
+      "refinement_pending": false,
+      "revision": 2,
+      "timestamp": 1785294695.7019358,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785294695.703661
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-b421a3e3c215431f868f9385aaf6f101",
+      "source_id": "user-c4a8fd0eff90",
+      "speaker": "Mic B",
+      "speaker_id": null,
+      "identity_method": "mic_fallback",
+      "speaker_confidence": null,
+      "speaker_margin": null,
+      "speaker_consensus": null,
+      "speaker_id_ms": 912,
+      "raw_text": "CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "phonetic_recovered_text": "CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "phonetic_recovery_applied": false,
+      "phonetic_replacements": [],
+      "text": "CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "start_time": 1785294688.57,
+      "end_time": 1785294695.19,
+      "refinement_ms": 915,
+      "pipeline_ms": 1729,
+      "signal_rms": 0.032955,
+      "signal_snr_db": 40.78,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-e6cb695bec2d41b9b99230274c8720de",
+      "refinement_pending": false,
+      "revision": 1,
+      "timestamp": 1785294697.0071645,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785294697.008683
+    }
+  ],
+  "demo_log": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/output/streaming-regression-demo.log"
+}

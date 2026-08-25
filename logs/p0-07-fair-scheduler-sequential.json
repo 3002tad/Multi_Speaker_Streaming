@@ -1,0 +1,343 @@
+{
+  "status": "passed",
+  "backend_url": "http://127.0.0.1:8000",
+  "probe_inter_turn_silence": 1.25,
+  "probe_connection_warmup": 15.0,
+  "probe_exit_code": 0,
+  "checks": {
+    "probe_ok": true,
+    "transcript_count": 4,
+    "all_intervals_have_segments": true,
+    "unassigned_tail_count": 0,
+    "all_matches_overlap": true,
+    "wer_threshold": true,
+    "cer_threshold": true,
+    "global_turn_metadata": true,
+    "quality_metadata": true
+  },
+  "matches": [
+    {
+      "voice": "thayDung_noi",
+      "expected_range": [
+        0.0,
+        15.0
+      ],
+      "overlap": 0.9487,
+      "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+      "hypothesis": "RỒI THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LỚP ĐẦU TIÊN LỚP ADOLF THÌ NÓ GỒM CÓ LÀ HDX VÀ H P LÀ HỆ THỐNG THÔNG TIN PHÂN TÁN",
+      "segment_count": 2,
+      "wer": 0.4062,
+      "cer": 0.3798,
+      "source_id": "user-814ae4fff9f7",
+      "speaker": "Thay_Dung",
+      "global_turn_ids": [
+        "turn-2685d8524ddb47aab0cd165ff709911a",
+        "turn-07da8e6ad1674ede85666fceec78069f"
+      ],
+      "signal_snr_db": 46.72,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 1332,
+      "pipeline_ms": 2124,
+      "refinement_ms": 0,
+      "refinement": {
+        "backend": "disabled_for_minutes_composer",
+        "decision": "SOURCE_TRANSCRIPT_ONLY"
+      },
+      "phonetic_replacements": [
+        {
+          "from": "MỘT NĂM CHẤM HAI",
+          "to": "mục 5.2",
+          "start": 14,
+          "end": 30,
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "một năm chấm hai"
+        },
+        {
+          "from": "LỚP ADOLF",
+          "to": "lớp Hadoop Storage",
+          "start": 58,
+          "end": 67,
+          "score": 0.875,
+          "key_score": 0.875,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "lớp adols"
+        },
+        {
+          "from": "HDX",
+          "to": "HDFS",
+          "start": 85,
+          "end": 88,
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "hdx"
+        }
+      ]
+    },
+    {
+      "voice": "thayPhuoc_noi",
+      "expected_range": [
+        16.25,
+        31.25
+      ],
+      "overlap": 0.914,
+      "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+      "hypothesis": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGHE KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG TƯƠNG LAI KHÔNG CÓ CHUYỆN",
+      "segment_count": 2,
+      "wer": 0.1571,
+      "cer": 0.1361,
+      "source_id": "user-f6dd4a28b54d",
+      "speaker": "Thay_Phuoc",
+      "global_turn_ids": [
+        "turn-0513ed1fc60a4ef2b49e5b813511efcb",
+        "turn-89f31d6aa49d4dbfa158165aa559d556"
+      ],
+      "signal_snr_db": 46.55,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 936,
+      "pipeline_ms": 1862,
+      "refinement_ms": 0,
+      "refinement": {
+        "backend": "disabled_for_minutes_composer",
+        "decision": "SOURCE_TRANSCRIPT_ONLY"
+      },
+      "phonetic_replacements": [
+        {
+          "from": "LÀM QUÉT",
+          "to": "làm web",
+          "start": 0,
+          "end": 8,
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "làm quét"
+        }
+      ]
+    }
+  ],
+  "transcripts": [
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-db538e76ee0744b5b11998692cdd06cc",
+      "source_id": "user-814ae4fff9f7",
+      "speaker": "Thay_Dung",
+      "speaker_id": "Thay_Dung",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9391,
+      "speaker_margin": 0.1334,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 1332,
+      "raw_text": "RỒI THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LỚP ĐẦU TIÊN LỚP ADOLF THÌ NÓ GỒM CÓ LÀ HDX VÀ H P",
+      "final_asr_text": "RỒI THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LỚP ĐẦU TIÊN LỚP ADOLF THÌ NÓ GỒM CÓ LÀ HDX VÀ H P",
+      "final_turn_redecode": {
+        "status": "disabled",
+        "selected": false,
+        "decision": "streaming_fallback"
+      },
+      "phonetic_recovered_text": "RỒI THÌ Ở ĐÂY mục 5.2 HỌ NÓI VỀ CÁI LỚP ĐẦU TIÊN lớp Hadoop Storage THÌ NÓ GỒM CÓ LÀ HDFS VÀ H P",
+      "phonetic_recovery_applied": true,
+      "phonetic_replacements": [
+        {
+          "from": "MỘT NĂM CHẤM HAI",
+          "to": "mục 5.2",
+          "start": 14,
+          "end": 30,
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "một năm chấm hai"
+        },
+        {
+          "from": "LỚP ADOLF",
+          "to": "lớp Hadoop Storage",
+          "start": 58,
+          "end": 67,
+          "score": 0.875,
+          "key_score": 0.875,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "lớp adols"
+        },
+        {
+          "from": "HDX",
+          "to": "HDFS",
+          "start": 85,
+          "end": 88,
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "hdx"
+        }
+      ],
+      "refinement": {
+        "backend": "disabled_for_minutes_composer",
+        "decision": "SOURCE_TRANSCRIPT_ONLY"
+      },
+      "text": "Rồi thì ở đây mục 5.2 họ nói về cái lớp đầu tiên lớp Hadoop Storage thì nó gồm có là HDFS và h p.",
+      "start_time": 1786347722.65,
+      "end_time": 1786347734.13,
+      "refinement_ms": 0,
+      "pipeline_ms": 2124,
+      "signal_rms": 0.089214,
+      "signal_snr_db": 46.72,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-2685d8524ddb47aab0cd165ff709911a",
+      "discovered_topic": null,
+      "refinement_pending": false,
+      "is_refinement_update": false,
+      "revision": 1,
+      "timestamp": 1786347736.29906,
+      "meeting_id": "paperless-demo",
+      "created_at": 1786347736.3014379
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-b1ec6fe8d6c54384ad8d2f1667a8f32c",
+      "source_id": "user-814ae4fff9f7",
+      "speaker": "Thay_Dung",
+      "speaker_id": "Thay_Dung",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9514,
+      "speaker_margin": 0.097,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 654,
+      "raw_text": "LÀ HỆ THỐNG THÔNG TIN PHÂN TÁN",
+      "final_asr_text": "LÀ HỆ THỐNG THÔNG TIN PHÂN TÁN",
+      "final_turn_redecode": {
+        "status": "disabled",
+        "selected": false,
+        "decision": "streaming_fallback"
+      },
+      "phonetic_recovered_text": "LÀ HỆ THỐNG THÔNG TIN PHÂN TÁN",
+      "phonetic_recovery_applied": false,
+      "phonetic_replacements": [],
+      "refinement": {
+        "backend": "disabled_for_minutes_composer",
+        "decision": "SOURCE_TRANSCRIPT_ONLY"
+      },
+      "text": "Là hệ thống thông tin phân tán.",
+      "start_time": 1786347734.9,
+      "end_time": 1786347739.47,
+      "refinement_ms": 0,
+      "pipeline_ms": 1419,
+      "signal_rms": 0.067885,
+      "signal_snr_db": 43.32,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-07da8e6ad1674ede85666fceec78069f",
+      "discovered_topic": null,
+      "refinement_pending": false,
+      "is_refinement_update": false,
+      "revision": 1,
+      "timestamp": 1786347740.9316921,
+      "meeting_id": "paperless-demo",
+      "created_at": 1786347740.933066
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-861a74a14d3e4204a09516ae06e00ed9",
+      "source_id": "user-f6dd4a28b54d",
+      "speaker": "Thay_Phuoc",
+      "speaker_id": "Thay_Phuoc",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9341,
+      "speaker_margin": 0.0575,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 936,
+      "raw_text": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGHE KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG",
+      "final_asr_text": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGHE KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG",
+      "final_turn_redecode": {
+        "status": "disabled",
+        "selected": false,
+        "decision": "streaming_fallback"
+      },
+      "phonetic_recovered_text": "làm web NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGHE KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG",
+      "phonetic_recovery_applied": true,
+      "phonetic_replacements": [
+        {
+          "from": "LÀM QUÉT",
+          "to": "làm web",
+          "start": 0,
+          "end": 8,
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": null,
+          "backend": "grapheme",
+          "alias": "làm quét"
+        }
+      ],
+      "refinement": {
+        "backend": "disabled_for_minutes_composer",
+        "decision": "SOURCE_TRANSCRIPT_ONLY"
+      },
+      "text": "làm web Này nọ rồi đó làm hệ thống web này nọ đồ bán cho thành thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để làm được rất nhiều chuyện nghe kể chuyện người ta học một cái công thức để làm cái chuyện gì đó để trong.",
+      "start_time": 1786347740.19,
+      "end_time": 1786347756.91,
+      "refinement_ms": 0,
+      "pipeline_ms": 1862,
+      "signal_rms": 0.075817,
+      "signal_snr_db": 46.55,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-0513ed1fc60a4ef2b49e5b813511efcb",
+      "discovered_topic": null,
+      "refinement_pending": false,
+      "is_refinement_update": false,
+      "revision": 1,
+      "timestamp": 1786347758.8185153,
+      "meeting_id": "paperless-demo",
+      "created_at": 1786347758.8198102
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-3c4682cf678e4a39986cf08e3d062cf0",
+      "source_id": "user-f6dd4a28b54d",
+      "speaker": "Thay_Phuoc",
+      "speaker_id": "Thay_Phuoc",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9388,
+      "speaker_margin": 0.0704,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 1009,
+      "raw_text": "TRONG TƯƠNG LAI KHÔNG CÓ CHUYỆN",
+      "final_asr_text": "TRONG TƯƠNG LAI KHÔNG CÓ CHUYỆN",
+      "final_turn_redecode": {
+        "status": "disabled",
+        "selected": false,
+        "decision": "streaming_fallback"
+      },
+      "phonetic_recovered_text": "TRONG TƯƠNG LAI KHÔNG CÓ CHUYỆN",
+      "phonetic_recovery_applied": false,
+      "phonetic_replacements": [],
+      "refinement": {
+        "backend": "disabled_for_minutes_composer",
+        "decision": "SOURCE_TRANSCRIPT_ONLY"
+      },
+      "text": "Trong tương lai không có chuyện.",
+      "start_time": 1786347740.19,
+      "end_time": 1786347758.03,
+      "refinement_ms": 0,
+      "pipeline_ms": 1776,
+      "signal_rms": 0.073711,
+      "signal_snr_db": 43.99,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-89f31d6aa49d4dbfa158165aa559d556",
+      "discovered_topic": null,
+      "refinement_pending": false,
+      "is_refinement_update": false,
+      "revision": 1,
+      "timestamp": 1786347759.8775225,
+      "meeting_id": "paperless-demo",
+      "created_at": 1786347759.879165
+    }
+  ],
+  "demo_log": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/output/streaming-regression-demo.log"
+}

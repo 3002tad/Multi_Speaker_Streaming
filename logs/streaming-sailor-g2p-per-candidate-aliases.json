@@ -1,0 +1,242 @@
+{
+  "status": "passed",
+  "backend_url": "http://127.0.0.1:8000",
+  "probe_exit_code": 0,
+  "checks": {
+    "probe_ok": true,
+    "transcript_count": 3,
+    "all_intervals_have_segments": true,
+    "unassigned_tail_count": 0,
+    "all_matches_overlap": true,
+    "wer_threshold": true,
+    "cer_threshold": true,
+    "global_turn_metadata": true,
+    "quality_metadata": true
+  },
+  "matches": [
+    {
+      "voice": "thayDung_noi",
+      "expected_range": [
+        0.0,
+        15.0
+      ],
+      "overlap": 1.0,
+      "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+      "hypothesis": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP APOLIS THÌ NÓ GỒM CÓ LÀ HDX VÀ HPASE THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "segment_count": 1,
+      "wer": 0.4375,
+      "cer": 0.3798,
+      "source_id": "user-90fbcc40204c",
+      "speaker": "Thay_Dung",
+      "global_turn_ids": [
+        "turn-51c4ca130fa24a1abf3afb2d3265fee2"
+      ],
+      "signal_snr_db": 45.03,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 572,
+      "pipeline_ms": 2167,
+      "refinement_ms": 573,
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 0,
+        "candidates": [],
+        "decision": "SKIPPED_NO_CANDIDATE"
+      },
+      "phonetic_replacements": []
+    },
+    {
+      "voice": "thayPhuoc_noi",
+      "expected_range": [
+        15.0,
+        30.0
+      ],
+      "overlap": 0.9967,
+      "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+      "hypothesis": "LÀM QUÉT NÀY NỌ NỮA ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM NHỮNG CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "segment_count": 2,
+      "wer": 0.1429,
+      "cer": 0.1327,
+      "source_id": "user-3093fdc704c6",
+      "speaker": "Thay_Phuoc",
+      "global_turn_ids": [
+        "turn-39bb85b3e3c642b79dcb1e2a8ae1940d",
+        "turn-2af6f2aea3e24b6089cf7fd032c2402a"
+      ],
+      "signal_snr_db": 46.77,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 931,
+      "pipeline_ms": 3049,
+      "refinement_ms": 10328,
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 1,
+        "candidates": [
+          {
+            "id": 0,
+            "start": 0,
+            "end": 8,
+            "from": "LÀM QUÉT",
+            "to": "làm web",
+            "g2p_score": 1.0,
+            "score": 1.0,
+            "decision": "REJECT"
+          }
+        ],
+        "decision": "BATCHED",
+        "accepted_count": 0,
+        "candidate_text": "LÀM QUÉT NÀY NỌ NỮA ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM NHỮNG CHUYỆN"
+      },
+      "phonetic_replacements": [
+        {
+          "from": "LÀM QUÉT",
+          "to": "làm web",
+          "start": 0,
+          "end": 8,
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": 1.0,
+          "backend": "g2p_onnx",
+          "alias": "làm quét"
+        }
+      ]
+    }
+  ],
+  "transcripts": [
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-e2d75ac0eff14461b2f9e8193166b120",
+      "source_id": "user-90fbcc40204c",
+      "speaker": "Thay_Dung",
+      "speaker_id": "Thay_Dung",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9577,
+      "speaker_margin": 0.0883,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 572,
+      "raw_text": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP APOLIS THÌ NÓ GỒM CÓ LÀ HDX VÀ HPASE THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "phonetic_recovered_text": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP APOLIS THÌ NÓ GỒM CÓ LÀ HDX VÀ HPASE THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "phonetic_recovery_applied": false,
+      "phonetic_replacements": [],
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 0,
+        "candidates": [],
+        "decision": "SKIPPED_NO_CANDIDATE"
+      },
+      "text": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP APOLIS THÌ NÓ GỒM CÓ LÀ HDX VÀ HPASE THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "start_time": 1785295477.31,
+      "end_time": 1785295492.36,
+      "refinement_ms": 573,
+      "pipeline_ms": 2167,
+      "signal_rms": 0.079206,
+      "signal_snr_db": 45.03,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-51c4ca130fa24a1abf3afb2d3265fee2",
+      "refinement_pending": false,
+      "revision": 1,
+      "timestamp": 1785295494.6602721,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785295494.6617048
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-6035b4670baa476586c262f0b95e1088",
+      "source_id": "user-3093fdc704c6",
+      "speaker": "Thay_Phuoc",
+      "speaker_id": "Thay_Phuoc",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9691,
+      "speaker_margin": 0.1216,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 931,
+      "raw_text": "LÀM QUÉT NÀY NỌ NỮA ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM NHỮNG CHUYỆN",
+      "phonetic_recovered_text": "LÀM QUÉT NÀY NỌ NỮA ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM NHỮNG CHUYỆN",
+      "phonetic_recovery_applied": true,
+      "phonetic_replacements": [
+        {
+          "from": "LÀM QUÉT",
+          "to": "làm web",
+          "start": 0,
+          "end": 8,
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": 1.0,
+          "backend": "g2p_onnx",
+          "alias": "làm quét"
+        }
+      ],
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 1,
+        "candidates": [
+          {
+            "id": 0,
+            "start": 0,
+            "end": 8,
+            "from": "LÀM QUÉT",
+            "to": "làm web",
+            "g2p_score": 1.0,
+            "score": 1.0,
+            "decision": "REJECT"
+          }
+        ],
+        "decision": "BATCHED",
+        "accepted_count": 0,
+        "candidate_text": "LÀM QUÉT NÀY NỌ NỮA ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM NHỮNG CHUYỆN"
+      },
+      "text": "LÀM QUÉT NÀY NỌ NỮA ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM NHỮNG CHUYỆN",
+      "start_time": 1785295492.36,
+      "end_time": 1785295507.55,
+      "refinement_ms": 10328,
+      "pipeline_ms": 3049,
+      "signal_rms": 0.078853,
+      "signal_snr_db": 46.77,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-39bb85b3e3c642b79dcb1e2a8ae1940d",
+      "refinement_pending": false,
+      "revision": 2,
+      "timestamp": 1785295519.7479365,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785295519.7495794
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-96a21baa861d44f8a0b6415833cde4bb",
+      "source_id": "user-3093fdc704c6",
+      "speaker": "Mic B",
+      "speaker_id": null,
+      "identity_method": "mic_fallback",
+      "speaker_confidence": null,
+      "speaker_margin": null,
+      "speaker_consensus": null,
+      "speaker_id_ms": 1342,
+      "raw_text": "CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "phonetic_recovered_text": "CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "phonetic_recovery_applied": false,
+      "phonetic_replacements": [],
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 1,
+        "candidates": [],
+        "decision": "SKIPPED_NO_CANDIDATE"
+      },
+      "text": "CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "start_time": 1785295507.55,
+      "end_time": 1785295513.61,
+      "refinement_ms": 1346,
+      "pipeline_ms": 4971,
+      "signal_rms": 0.022852,
+      "signal_snr_db": 39.78,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-2af6f2aea3e24b6089cf7fd032c2402a",
+      "refinement_pending": false,
+      "revision": 1,
+      "timestamp": 1785295518.7226577,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785295518.7246485
+    }
+  ],
+  "demo_log": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/output/streaming-regression-demo.log"
+}

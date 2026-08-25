@@ -1,0 +1,113 @@
+{
+  "results": [
+    {
+      "mode": "light",
+      "frontend": "legacy",
+      "denoiser_model_type": "dpdfnet",
+      "denoiser_model_path": "/home/ntd/meeting_runtime/models/dpdfnet_baseline.onnx",
+      "alignment_delay_ms": 40.0,
+      "enhancer": "none",
+      "max_active_paths": 8,
+      "chunk_size": 32,
+      "final_padding_seconds": 0.66,
+      "blank_penalty": 0.4,
+      "hotwords": [],
+      "postprocess": "phonetic",
+      "final_turn_redecode": false,
+      "mean_wer": 0.3334,
+      "mean_cer": 0.2939,
+      "realtime_factor": 0.0863,
+      "items": [
+        {
+          "voice": "PhuongLongChanh_00086",
+          "reference": "mọi người sẽ xây dựng và mọi người sẽ chủ động thực hiện còn về cái kinh tế số và xã hội số thì ở đây có tám cái tiêu chí thì trong đó là có bốn cái tiêu chí đánh về giá xã hội và bốn tiêu chí về địa phương sẽ tự chủ động để",
+          "hypothesis": "MÌNH SẼ XÂY DỰNG VÀ MÌNH SẼ CHỦ ĐỘNG THỰC HIỆN CÒN VỀ CÁI KINH TẾ SỐ VÀ XÃ HỘI SỐ THÌ ĐÂY CÒN CÓ TÁM CÁI TIÊU CHÍ TRONG ĐÓ LÀ CÓ BỐN TIÊU CHÍ VỀ KINH TẾ XÃ HỘI VÀ CÓ Ý KIẾN VỀ ĐỊA PHƯƠNG CŨNG SẼ TỰ ĐỘNG CHỦ ĐỘNG ĐỂ",
+          "wer": 0.2807,
+          "cer": 0.2634,
+          "audio_seconds": 14.352,
+          "processing_seconds": 1.121,
+          "deletions": 7,
+          "insertions": 5,
+          "substitutions": 5,
+          "enhancement": {
+            "frontend": "legacy_dsp",
+            "processed_seconds": 14.4,
+            "voiced_seconds": 13.3,
+            "average_noise_gain": 0.9314,
+            "average_gain": 2.3196,
+            "minimum_gain": 1.24,
+            "maximum_gain": 2.5,
+            "peak_limited_frames": 0
+          }
+        },
+        {
+          "voice": "PhuongLongChanh_00269",
+          "reference": "các cái tiêu chí mà quan trọng nhất mục tiêu trong năm hai năm sau này mình thực hiện và đi kèm các tiêu chí đó thì VNPT có các giải pháp để hỗ trợ cũng như là triển khai trong thời gian sắp tới",
+          "hypothesis": "CÁC CÁI TIÊU CHÍ MÀ QUAN TRỌNG NHẤT VÀ MỤC TIÊU TRONG CÁI NĂM HAI SÁU NÀY THỰC HIỆN VÀ ĐI KÈM CÁC TIÊU CHÍ ĐÓ THÌ ƯU TIÊN CÓ CÁC GIẢI PHÁP ĐỂ HỖ TRỢ CŨNG NHƯ LÀ TRIỂN KHAI TRONG THỜI GIAN SẮP TỚI",
+          "wer": 0.1556,
+          "cer": 0.1186,
+          "audio_seconds": 13.424,
+          "processing_seconds": 1.107,
+          "deletions": 2,
+          "insertions": 3,
+          "substitutions": 2,
+          "enhancement": {
+            "frontend": "legacy_dsp",
+            "processed_seconds": 13.5,
+            "voiced_seconds": 12.8,
+            "average_noise_gain": 0.9365,
+            "average_gain": 2.3252,
+            "minimum_gain": 1.24,
+            "maximum_gain": 2.4977,
+            "peak_limited_frames": 0
+          }
+        },
+        {
+          "voice": "PhuongLongChanh_00076",
+          "reference": "dạ thì trên màn hình em đang show cho quý anh chị xem đây là cái mô hình chuyển đổi số cấp xã thì nó sẽ gồm có bốn lớp dạ cái lớp đầu tiên đó là cái lớp hạ tầng số và an ninh mạng trong đây thì sẽ có hai",
+          "hypothesis": "DẠ THÌ TRÊN MÀN HÌNH XEM ĐÂY LÀ CÁI MÔ HÌNH CHUYỂN ĐỔI SỐ CÁC XÃ THÌ NÓ SẼ GỒM CÓ BỐN LỚP VÀ CÁI LỚP ĐẦU TIÊN ĐÓ LÀ LỚP HỌC SỐ AN NINH MẠNG CHO NÊN SẼ CÓ HAI",
+          "wer": 0.3077,
+          "cer": 0.2808,
+          "audio_seconds": 13.936,
+          "processing_seconds": 1.1,
+          "deletions": 11,
+          "insertions": 0,
+          "substitutions": 5,
+          "enhancement": {
+            "frontend": "legacy_dsp",
+            "processed_seconds": 14.0,
+            "voiced_seconds": 13.0,
+            "average_noise_gain": 0.9337,
+            "average_gain": 2.3574,
+            "minimum_gain": 1.24,
+            "maximum_gain": 2.4998,
+            "peak_limited_frames": 0
+          }
+        },
+        {
+          "voice": "PhuongLongChanh_00629",
+          "reference": "cung cấp những thông tin cũng như là số liệu học sinh này chất lượng này rồi các lớp là số trẻ là nam nữ sĩ số là rồi có mặt rồi khó khăn các em học sinh có",
+          "hypothesis": "CÔNG TÁC QUAN TÂM CỦA SỐ LƯỢNG HỌC SINH CHẤT LƯỢNG RỒI CÁC lớp Hadoop Storage TRẺ AM HIỂU CHỈ SỐ LÀ CÓ MẶT RỒI KHÓ KHĂN LÀ VỀ CÁC EM LÀ HỌC SINH KHÓ KHĂN",
+          "wer": 0.5897,
+          "cer": 0.5128,
+          "audio_seconds": 14.128,
+          "processing_seconds": 1.35,
+          "deletions": 12,
+          "insertions": 9,
+          "substitutions": 7,
+          "raw_hypothesis": "CÔNG TÁC QUAN TÂM CỦA SỐ LƯỢNG HỌC SINH CHẤT LƯỢNG RỒI CÁC LỚP SỐ TRẺ AM HIỂU CHỈ SỐ LÀ CÓ MẶT RỒI KHÓ KHĂN LÀ VỀ CÁC EM LÀ HỌC SINH KHÓ KHĂN",
+          "enhancement": {
+            "frontend": "legacy_dsp",
+            "processed_seconds": 14.2,
+            "voiced_seconds": 11.1,
+            "average_noise_gain": 0.8596,
+            "average_gain": 2.4445,
+            "minimum_gain": 1.24,
+            "maximum_gain": 2.5,
+            "peak_limited_frames": 0
+          }
+        }
+      ]
+    }
+  ]
+}

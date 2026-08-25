@@ -1,0 +1,87 @@
+{
+  "status": "passed",
+  "mics": 2,
+  "schedule": "sequential",
+  "connection_warmup": 30.0,
+  "finalization_wait": 15.0,
+  "all_sources_have_partial": true,
+  "all_sources_have_final": true,
+  "sources": {
+    "PhuongLongChanh_00086": {
+      "source_id": "user-d8f56cf39232",
+      "partial_count": 20,
+      "final_count": 1,
+      "first_partial_seconds": 10.784,
+      "first_final_seconds": 27.34,
+      "final_texts": [
+        "Kinh tế số và xã hội số thì đây là có tám cái tiêu chí trong đó là có bốn tiêu chí dẫn đến xã hội có ý kiến về địa phương cũng sẽ tự động chủ động."
+      ]
+    },
+    "PhuongLongChanh_00269": {
+      "source_id": "user-6e562cb95da7",
+      "partial_count": 16,
+      "final_count": 1,
+      "first_partial_seconds": 51.645,
+      "first_final_seconds": 65.476,
+      "final_texts": [
+        "Kinh tế mà quan trọng nhất là mục tiêu trong năm hai nghìn sáu trăm và đi kèm các tiêu chí đó thì tuyên truyền qua các dự án để hỗ trợ cũng như là triển khai trong thời gian sắp tới."
+      ]
+    }
+  },
+  "event_count": 43,
+  "stored_final_count": 2,
+  "meeting_dictionary_reset": true,
+  "quality": {
+    "final_count": 2,
+    "duplicate_segment_ids": 0,
+    "all_sources_have_final": true,
+    "mean_wer": 0.441,
+    "mean_cer": 0.4062,
+    "matches": [
+      {
+        "voice": "PhuongLongChanh_00086",
+        "segment_count": 1,
+        "reference": "mọi người sẽ xây dựng và mọi người sẽ chủ động thực hiện còn về cái kinh tế số và xã hội số thì ở đây có tám cái tiêu chí thì trong đó là có bốn cái tiêu chí đánh về giá xã hội và bốn tiêu chí về địa phương sẽ tự chủ động để",
+        "hypothesis": "KINH TẾ SỐ VÀ XÃ HỘI SỐ THÌ ĐÂY LÀ CÓ TÁM CÁI TIÊU CHÍ TRONG ĐÓ LÀ CÓ BỐN TIÊU CHÍ DẪN ĐẾN XÃ HỘI CÓ Ý KIẾN VỀ ĐỊA PHƯƠNG CŨNG SẼ TỰ ĐỘNG CHỦ ĐỘNG",
+        "wer": 0.5263,
+        "cer": 0.5134
+      },
+      {
+        "voice": "PhuongLongChanh_00269",
+        "segment_count": 1,
+        "reference": "các cái tiêu chí mà quan trọng nhất mục tiêu trong năm hai năm sau này mình thực hiện và đi kèm các tiêu chí đó thì VNPT có các giải pháp để hỗ trợ cũng như là triển khai trong thời gian sắp tới",
+        "hypothesis": "KINH TẾ MÀ QUAN TRỌNG NHẤT LÀ MỤC TIÊU TRONG NĂM HAI NGHÌN SÁU TRĂM VÀ ĐI KÈM CÁC TIÊU CHÍ ĐÓ THÌ TUYÊN TRUYỀN QUA CÁC DỰ ÁN ĐỂ HỖ TRỢ CŨNG NHƯ LÀ TRIỂN KHAI TRONG THỜI GIAN SẮP TỚI",
+        "wer": 0.3556,
+        "cer": 0.299
+      }
+    ]
+  },
+  "offline_baseline": {
+    "mean_wer": 0.2182,
+    "mean_cer": 0.191,
+    "items": [
+      {
+        "voice": "PhuongLongChanh_00086",
+        "wer": 0.2807,
+        "cer": 0.2634
+      },
+      {
+        "voice": "PhuongLongChanh_00269",
+        "wer": 0.1556,
+        "cer": 0.1186
+      }
+    ]
+  },
+  "zipformer_scheduler": {
+    "submitted": 1408,
+    "completed": 1408,
+    "pending": 0,
+    "active_streams": 0,
+    "max_pending": 1,
+    "max_wait_ms": 53.5,
+    "max_queue_wait_ms": 0.4,
+    "mean_operation_ms": 1.9,
+    "max_operation_ms": 53.4
+  },
+  "demo_log": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/output/concurrent-streaming-demo.log"
+}

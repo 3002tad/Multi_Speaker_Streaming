@@ -1,0 +1,280 @@
+{
+  "status": "passed",
+  "backend_url": "http://127.0.0.1:8000",
+  "probe_exit_code": 0,
+  "checks": {
+    "probe_ok": true,
+    "transcript_count": 3,
+    "all_intervals_have_segments": true,
+    "unassigned_tail_count": 1,
+    "all_matches_overlap": true,
+    "wer_threshold": true,
+    "cer_threshold": true,
+    "global_turn_metadata": true,
+    "quality_metadata": true
+  },
+  "matches": [
+    {
+      "voice": "thayDung_noi",
+      "expected_range": [
+        0.0,
+        15.0
+      ],
+      "overlap": 1.0,
+      "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+      "hypothesis": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LỚP ĐẦU TIÊN LỚP LÀ ADOPTORIS THÌ NÓ GỒM CÓ LÀ HDX VÀ HPASE RỒI HPS THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "segment_count": 1,
+      "wer": 0.4688,
+      "cer": 0.3721,
+      "source_id": "user-8d6a6f6383e6",
+      "speaker": "Thay_Dung",
+      "global_turn_ids": [
+        "turn-a5f21769ba554b5e86865cbf7b399608"
+      ],
+      "signal_snr_db": 45.11,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 1019,
+      "pipeline_ms": 2644,
+      "refinement_ms": 1020,
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 0,
+        "candidates": [],
+        "decision": "SKIPPED_NO_CANDIDATE"
+      },
+      "phonetic_replacements": []
+    },
+    {
+      "voice": "thayPhuoc_noi",
+      "expected_range": [
+        15.0,
+        30.0
+      ],
+      "overlap": 0.9973,
+      "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+      "hypothesis": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ MÌNH LÀM ĐƯỢC RẤT LÀ NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "segment_count": 2,
+      "wer": 0.1571,
+      "cer": 0.1429,
+      "source_id": "user-8225c6c0ead0",
+      "speaker": "Thay_Phuoc",
+      "global_turn_ids": [
+        "turn-ab468a8c65474dca993585ddea4eab37",
+        "turn-9b49360911f34d5ca84213d7bc8880cc"
+      ],
+      "signal_snr_db": 46.76,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 1370,
+      "pipeline_ms": 3862,
+      "refinement_ms": 11315,
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 1,
+        "candidates": [
+          {
+            "id": 0,
+            "start": 0,
+            "end": 8,
+            "from": "LÀM QUÉT",
+            "to": "làm web",
+            "g2p_score": 1.0,
+            "score": 1.0,
+            "decision": "REJECT"
+          }
+        ],
+        "model_response": "{\n  \"decision\": {\n    \"candidate_id\": 1,\n    \"justification\": \"The candidate 'L",
+        "decision": "BATCHED",
+        "accepted_count": 0,
+        "candidate_text": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ MÌNH LÀM ĐƯỢC RẤT LÀ NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN"
+      },
+      "phonetic_replacements": [
+        {
+          "from": "LÀM QUÉT",
+          "to": "làm web",
+          "start": 0,
+          "end": 8,
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": 1.0,
+          "backend": "g2p_onnx",
+          "alias": "làm quét"
+        }
+      ]
+    }
+  ],
+  "transcripts": [
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-59934b5817f7473691a3438ee3d1ecc9",
+      "source_id": "user-8d6a6f6383e6",
+      "speaker": "Thay_Dung",
+      "speaker_id": "Thay_Dung",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9479,
+      "speaker_margin": 0.0922,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 1019,
+      "raw_text": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LỚP ĐẦU TIÊN LỚP LÀ ADOPTORIS THÌ NÓ GỒM CÓ LÀ HDX VÀ HPASE RỒI HPS THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "phonetic_recovered_text": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LỚP ĐẦU TIÊN LỚP LÀ ADOPTORIS THÌ NÓ GỒM CÓ LÀ HDX VÀ HPASE RỒI HPS THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "phonetic_recovery_applied": false,
+      "phonetic_replacements": [],
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 0,
+        "candidates": [],
+        "decision": "SKIPPED_NO_CANDIDATE"
+      },
+      "text": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LỚP ĐẦU TIÊN LỚP LÀ ADOPTORIS THÌ NÓ GỒM CÓ LÀ HDX VÀ HPASE RỒI HPS THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "start_time": 1785295574.37,
+      "end_time": 1785295589.47,
+      "refinement_ms": 1020,
+      "pipeline_ms": 2644,
+      "signal_rms": 0.079825,
+      "signal_snr_db": 45.11,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-a5f21769ba554b5e86865cbf7b399608",
+      "refinement_pending": false,
+      "revision": 1,
+      "timestamp": 1785295592.1613724,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785295592.1626446
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-6be53d1e8349485185bd1f0eb5b68af8",
+      "source_id": "user-8225c6c0ead0",
+      "speaker": "Thay_Phuoc",
+      "speaker_id": "Thay_Phuoc",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9366,
+      "speaker_margin": 0.0969,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 1370,
+      "raw_text": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ MÌNH LÀM ĐƯỢC RẤT LÀ NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN",
+      "phonetic_recovered_text": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ MÌNH LÀM ĐƯỢC RẤT LÀ NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN",
+      "phonetic_recovery_applied": true,
+      "phonetic_replacements": [
+        {
+          "from": "LÀM QUÉT",
+          "to": "làm web",
+          "start": 0,
+          "end": 8,
+          "score": 1.0,
+          "key_score": 1.0,
+          "g2p_score": 1.0,
+          "backend": "g2p_onnx",
+          "alias": "làm quét"
+        }
+      ],
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 1,
+        "candidates": [
+          {
+            "id": 0,
+            "start": 0,
+            "end": 8,
+            "from": "LÀM QUÉT",
+            "to": "làm web",
+            "g2p_score": 1.0,
+            "score": 1.0,
+            "decision": "REJECT"
+          }
+        ],
+        "model_response": "{\n  \"decision\": {\n    \"candidate_id\": 1,\n    \"justification\": \"The candidate 'L",
+        "decision": "BATCHED",
+        "accepted_count": 0,
+        "candidate_text": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ MÌNH LÀM ĐƯỢC RẤT LÀ NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN"
+      },
+      "text": "LÀM QUÉT NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG QUÉT NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ MÌNH LÀM ĐƯỢC RẤT LÀ NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN",
+      "start_time": 1785295589.41,
+      "end_time": 1785295604.42,
+      "refinement_ms": 11315,
+      "pipeline_ms": 3862,
+      "signal_rms": 0.07943,
+      "signal_snr_db": 46.76,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-ab468a8c65474dca993585ddea4eab37",
+      "refinement_pending": false,
+      "revision": 2,
+      "timestamp": 1785295617.9286067,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785295617.9297833
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-0ac39d65449744788e7721057d176ba6",
+      "source_id": "user-8225c6c0ead0",
+      "speaker": "Mic B",
+      "speaker_id": null,
+      "identity_method": "mic_fallback",
+      "speaker_confidence": null,
+      "speaker_margin": null,
+      "speaker_consensus": null,
+      "speaker_id_ms": 3005,
+      "raw_text": "CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "phonetic_recovered_text": "CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "phonetic_recovery_applied": false,
+      "phonetic_replacements": [],
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 1,
+        "candidates": [],
+        "decision": "SKIPPED_NO_CANDIDATE"
+      },
+      "text": "CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "start_time": 1785295604.43,
+      "end_time": 1785295610.43,
+      "refinement_ms": 3022,
+      "pipeline_ms": 6328,
+      "signal_rms": 0.023714,
+      "signal_snr_db": 40.02,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-9b49360911f34d5ca84213d7bc8880cc",
+      "refinement_pending": false,
+      "revision": 1,
+      "timestamp": 1785295616.8678696,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785295616.8691914
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-7ffa3ebb4d2a42f5a9667bdb84007843",
+      "source_id": "user-8d6a6f6383e6",
+      "speaker": "Mic A",
+      "speaker_id": null,
+      "identity_method": "mic_fallback",
+      "speaker_confidence": null,
+      "speaker_margin": null,
+      "speaker_consensus": null,
+      "speaker_id_ms": 4,
+      "raw_text": "TRONG CÁI CHUYỆN KINH TẾ",
+      "phonetic_recovered_text": "TRONG CÁI CHUYỆN KINH TẾ",
+      "phonetic_recovery_applied": false,
+      "phonetic_replacements": [],
+      "refinement": {
+        "backend": "sailor_candidate_batch",
+        "context_turn_count": 1,
+        "candidates": [],
+        "decision": "SKIPPED_NO_CANDIDATE"
+      },
+      "text": "TRONG CÁI CHUYỆN KINH TẾ",
+      "start_time": 1785295605.63,
+      "end_time": 1785295613.96,
+      "refinement_ms": 12,
+      "pipeline_ms": 2714,
+      "signal_rms": 0.001233,
+      "signal_snr_db": 22.37,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-e2dd307912e94b0b87036b04da5317b2",
+      "refinement_pending": false,
+      "revision": 1,
+      "timestamp": 1785295617.448143,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785295617.450783
+    }
+  ],
+  "demo_log": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/output/streaming-regression-demo.log"
+}

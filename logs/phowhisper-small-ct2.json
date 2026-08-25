@@ -1,0 +1,59 @@
+{
+  "engine": "phowhisper-small-ct2",
+  "model": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/models/PhoWhisper-small-ct2",
+  "settings": {
+    "language": "vi",
+    "compute_type": "int8",
+    "cpu_threads": 6,
+    "num_workers": 1,
+    "queue_limit": 32,
+    "beam_size": 5,
+    "internal_vad": false,
+    "condition_on_previous_text": false
+  },
+  "model_load_ms": 166304.77,
+  "total_audio_seconds": 30.0,
+  "wall_seconds": 9.306,
+  "wall_rtf": 0.3102,
+  "mean_wer": 0.3553,
+  "mean_cer": 0.2707,
+  "queue_ms": {
+    "p50": 2173.78,
+    "p90": 3912.76,
+    "max": 4347.51
+  },
+  "decode_ms": {
+    "p50": 4618.7,
+    "p90": 4839.95,
+    "max": 4895.26
+  },
+  "peak_rss_mib": 1185.9,
+  "items": [
+    {
+      "key": "thayDung_noi",
+      "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+      "hypothesis": "rồi thì ở đây mục năm chấm hai họ nói về cái lứa đầu tiên là đốp sâu rít thì nó gồm có hát đẹp s và hát bây hát đẹp s thì là cái hệ thống thuật tiên phân tán.",
+      "wer": 0.625,
+      "cer": 0.4496,
+      "audio_seconds": 15.0,
+      "queue_ms": 0.04,
+      "decode_ms": 4342.15,
+      "rtf": 0.2895,
+      "avg_logprob": -0.1305,
+      "no_speech_prob": 0.0
+    },
+    {
+      "key": "thayPhuoc_noi",
+      "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+      "hypothesis": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để làm được rất nhiều chuyện ngay cả chuyện người ta học một cái cái công thức để làm những chuyện gì đó để trong cái.",
+      "wer": 0.0857,
+      "cer": 0.0918,
+      "audio_seconds": 15.0,
+      "queue_ms": 4347.51,
+      "decode_ms": 4895.26,
+      "rtf": 0.3264,
+      "avg_logprob": -0.057,
+      "no_speech_prob": 0.0
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "results": [
+    {
+      "mode": "light",
+      "enhancer": "none",
+      "max_active_paths": 16,
+      "audio_dir": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/audio",
+      "truth_csv": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/audio/truth.csv",
+      "enhancer_model": null,
+      "mean_wer": 0.2447,
+      "mean_cer": 0.1973,
+      "realtime_factor": 0.0894,
+      "items": [
+        {
+          "voice": "thayDung_noi",
+          "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+          "hypothesis": "RỒI THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LỚP ĐẦU TIÊN LỚP ADOLF SORUS THÌ NÓ GỒM CÓ LÀ HD VÀ HPASE THÌ LÀ CÁI HỆ THỐNG TẬP T PHÂN TÁN",
+          "wer": 0.375,
+          "cer": 0.2791,
+          "audio_seconds": 15.0,
+          "processing_seconds": 1.264
+        },
+        {
+          "voice": "thayPhuoc_noi",
+          "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+          "hypothesis": "LÀM WEB NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ",
+          "wer": 0.1143,
+          "cer": 0.1156,
+          "audio_seconds": 15.0,
+          "processing_seconds": 1.268
+        }
+      ]
+    }
+  ]
+}

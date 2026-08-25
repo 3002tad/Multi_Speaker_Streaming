@@ -1,0 +1,87 @@
+{
+  "status": "passed",
+  "mics": 2,
+  "schedule": "simultaneous",
+  "connection_warmup": 15,
+  "finalization_wait": 12.0,
+  "all_sources_have_partial": true,
+  "all_sources_have_final": true,
+  "sources": {
+    "PhuongLongChanh_00086": {
+      "source_id": "user-f04e2140a8df",
+      "partial_count": 7,
+      "final_count": 1,
+      "first_partial_seconds": 15.424,
+      "first_final_seconds": 21.974,
+      "final_texts": [
+        "Ý kiến về địa phương cũng sẽ tự lập và chủ động để."
+      ]
+    },
+    "PhuongLongChanh_00269": {
+      "source_id": "user-67ad4395d36e",
+      "partial_count": 4,
+      "final_count": 1,
+      "first_partial_seconds": 15.432,
+      "first_final_seconds": 21.085,
+      "final_texts": [
+        "Khi cái phong trào cũng như là triển khai trong thời kỳ sắp tới."
+      ]
+    }
+  },
+  "event_count": 18,
+  "stored_final_count": 2,
+  "meeting_dictionary_reset": true,
+  "quality": {
+    "final_count": 2,
+    "duplicate_segment_ids": 0,
+    "all_sources_have_final": true,
+    "mean_wer": 0.8451,
+    "mean_cer": 0.7823,
+    "matches": [
+      {
+        "voice": "PhuongLongChanh_00086",
+        "segment_count": 1,
+        "reference": "mọi người sẽ xây dựng và mọi người sẽ chủ động thực hiện còn về cái kinh tế số và xã hội số thì ở đây có tám cái tiêu chí thì trong đó là có bốn cái tiêu chí đánh về giá xã hội và bốn tiêu chí về địa phương sẽ tự chủ động để",
+        "hypothesis": "Ý KIẾN VỀ ĐỊA PHƯƠNG CŨNG SẼ TỰ LẬP VÀ CHỦ ĐỘNG ĐỂ",
+        "wer": 0.9123,
+        "cer": 0.8482
+      },
+      {
+        "voice": "PhuongLongChanh_00269",
+        "segment_count": 1,
+        "reference": "các cái tiêu chí mà quan trọng nhất mục tiêu trong năm hai năm sau này mình thực hiện và đi kèm các tiêu chí đó thì VNPT có các giải pháp để hỗ trợ cũng như là triển khai trong thời gian sắp tới",
+        "hypothesis": "KHI CÁI PHONG TRÀO CŨNG NHƯ LÀ TRIỂN KHAI TRONG THỜI KỲ SẮP TỚI",
+        "wer": 0.7778,
+        "cer": 0.7165
+      }
+    ]
+  },
+  "offline_baseline": {
+    "mean_wer": 0.2182,
+    "mean_cer": 0.191,
+    "items": [
+      {
+        "voice": "PhuongLongChanh_00086",
+        "wer": 0.2807,
+        "cer": 0.2634
+      },
+      {
+        "voice": "PhuongLongChanh_00269",
+        "wer": 0.1556,
+        "cer": 0.1186
+      }
+    ]
+  },
+  "zipformer_scheduler": {
+    "submitted": 0,
+    "completed": 0,
+    "pending": 0,
+    "active_streams": 0,
+    "max_pending": 0,
+    "max_wait_ms": 0.0,
+    "max_queue_wait_ms": 0.0,
+    "mean_operation_ms": 0.0,
+    "max_operation_ms": 0.0
+  },
+  "demo_log": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/output/concurrent-streaming-demo.log"
+}

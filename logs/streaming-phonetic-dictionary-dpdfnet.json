@@ -1,0 +1,186 @@
+{
+  "status": "passed",
+  "backend_url": "http://127.0.0.1:8000",
+  "probe_exit_code": 0,
+  "checks": {
+    "probe_ok": true,
+    "transcript_count": 3,
+    "all_intervals_have_segments": true,
+    "unassigned_tail_count": 0,
+    "all_matches_overlap": true,
+    "wer_threshold": true,
+    "cer_threshold": true,
+    "global_turn_metadata": true,
+    "quality_metadata": true
+  },
+  "matches": [
+    {
+      "voice": "thayDung_noi",
+      "expected_range": [
+        0.0,
+        15.0
+      ],
+      "overlap": 1.0,
+      "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+      "hypothesis": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP APOLIS THÌ NÓ GỒM CÓ LÀ HD VÀ HPASE THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "segment_count": 1,
+      "wer": 0.4375,
+      "cer": 0.3798,
+      "source_id": "user-ed4f8e90c471",
+      "speaker": "Mic A",
+      "global_turn_ids": [
+        "turn-514ec341243541f987351c2bd44c9478"
+      ],
+      "signal_snr_db": 44.93,
+      "clipping_ratio": 0.0,
+      "identity_method": "mic_fallback",
+      "speaker_id_ms": 1767,
+      "pipeline_ms": 2930,
+      "refinement_ms": 10673
+    },
+    {
+      "voice": "thayPhuoc_noi",
+      "expected_range": [
+        15.0,
+        30.0
+      ],
+      "overlap": 0.9973,
+      "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+      "hypothesis": "LÀM WEB NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "segment_count": 2,
+      "wer": 0.1143,
+      "cer": 0.1054,
+      "source_id": "user-3a3ccfa1cac6",
+      "speaker": "Thay_Phuoc",
+      "global_turn_ids": [
+        "turn-03502238d4bd4b629299378094419eec",
+        "turn-75f5bc1775764d2587c84bf63b43fa6c"
+      ],
+      "signal_snr_db": 46.64,
+      "clipping_ratio": 0.0,
+      "identity_method": "voice_profile",
+      "speaker_id_ms": 1699,
+      "pipeline_ms": 2976,
+      "refinement_ms": 10036
+    }
+  ],
+  "transcripts": [
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-021c9a86f2004311a9e50e9508dac774",
+      "source_id": "user-ed4f8e90c471",
+      "speaker": "Mic A",
+      "speaker_id": null,
+      "identity_method": "mic_fallback",
+      "speaker_confidence": null,
+      "speaker_margin": null,
+      "speaker_consensus": null,
+      "speaker_id_ms": 1767,
+      "raw_text": "THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP APOLIS THÌ NÓ GỒM CÓ LÀ HD VÀ HPASE THÌ LÀ HỆ THỐNG TẬP TIN PHÂN TÁN",
+      "phonetic_recovered_text": "THÌ Ở ĐÂY mục 5.2 HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP APOLIS THÌ NÓ GỒM CÓ LÀ HD VÀ HBase THÌ LÀ hệ thống tập tin PHÂN TÁN",
+      "phonetic_recovery_applied": true,
+      "phonetic_replacements": [
+        {
+          "from": "MỘT NĂM CHẤM HAI",
+          "to": "mục 5.2",
+          "score": 1.0,
+          "alias": "một năm chấm hai"
+        },
+        {
+          "from": "HPASE",
+          "to": "HBase",
+          "score": 1.0,
+          "alias": "hpase"
+        },
+        {
+          "from": "HỆ THỐNG TẬP TIN",
+          "to": "hệ thống tập tin",
+          "score": 1.0,
+          "alias": "hệ thống tập tin"
+        }
+      ],
+      "text": "THÌ Ở ĐÂY mục 5.2 HỌ NÓI VỀ CÁI LĨNH ĐẦU TIÊN LỚP APOLIS THÌ NÓ GỒM CÓ LÀ HDFS và HBase THÌ LÀ hệ thống tập tin PHÂN TÁN",
+      "start_time": 1785291118.19,
+      "end_time": 1785291133.31,
+      "refinement_ms": 10673,
+      "pipeline_ms": 2930,
+      "signal_rms": 0.078811,
+      "signal_snr_db": 44.93,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-514ec341243541f987351c2bd44c9478",
+      "refinement_pending": false,
+      "revision": 2,
+      "timestamp": 1785291144.8525243,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785291144.8544345
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-56da509a2c8b4897848b57350b7fa8c8",
+      "source_id": "user-3a3ccfa1cac6",
+      "speaker": "Thay_Phuoc",
+      "speaker_id": "Thay_Phuoc",
+      "identity_method": "voice_profile",
+      "speaker_confidence": 0.9408,
+      "speaker_margin": 0.0865,
+      "speaker_consensus": 1.0,
+      "speaker_id_ms": 1699,
+      "raw_text": "LÀM WEB NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM",
+      "phonetic_recovered_text": "làm web NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM",
+      "phonetic_recovery_applied": true,
+      "phonetic_replacements": [
+        {
+          "from": "LÀM WEB",
+          "to": "làm web",
+          "score": 1.0,
+          "alias": "làm web"
+        }
+      ],
+      "text": "làm web NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM",
+      "start_time": 1785291133.23,
+      "end_time": 1785291148.24,
+      "refinement_ms": 10036,
+      "pipeline_ms": 2976,
+      "signal_rms": 0.079524,
+      "signal_snr_db": 46.64,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-03502238d4bd4b629299378094419eec",
+      "refinement_pending": false,
+      "revision": 2,
+      "timestamp": 1785291159.2582338,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785291159.2605135
+    },
+    {
+      "type": "transcript.final",
+      "segment_id": "seg-6cacab31cb0a497e920b576a74524ecd",
+      "source_id": "user-3a3ccfa1cac6",
+      "speaker": "Mic B",
+      "speaker_id": null,
+      "identity_method": "mic_fallback",
+      "speaker_confidence": null,
+      "speaker_margin": null,
+      "speaker_consensus": null,
+      "speaker_id_ms": 1779,
+      "raw_text": "LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "phonetic_recovered_text": "LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ TRONG TRONG CÁI CHUYỆN KINH TẾ",
+      "phonetic_recovery_applied": false,
+      "phonetic_replacements": [],
+      "text": "Làm cái chuyện gì để trong cái chuyện kinh tế?",
+      "start_time": 1785291148.24,
+      "end_time": 1785291154.5,
+      "refinement_ms": 6116,
+      "pipeline_ms": 2932,
+      "signal_rms": 0.024063,
+      "signal_snr_db": 40.23,
+      "clipping_ratio": 0.0,
+      "global_turn_id": "turn-75f5bc1775764d2587c84bf63b43fa6c",
+      "refinement_pending": false,
+      "revision": 2,
+      "timestamp": 1785291161.5284562,
+      "meeting_id": "paperless-demo",
+      "created_at": 1785291161.529743
+    }
+  ],
+  "demo_log": null
+}

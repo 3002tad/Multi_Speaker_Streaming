@@ -1,0 +1,135 @@
+{
+  "status": "passed",
+  "mics": 4,
+  "connection_warmup": 15,
+  "finalization_wait": 30,
+  "all_sources_have_partial": true,
+  "all_sources_have_final": true,
+  "sources": {
+    "PhuongLongChanh_00086": {
+      "source_id": "user-0ae1f6d00021",
+      "partial_count": 16,
+      "final_count": 3,
+      "first_partial_seconds": 1.918,
+      "first_final_seconds": 11.701,
+      "final_texts": [
+        "Thực hiện con qua đây kinh tế số và xã hội số.",
+        "Sau đó là công bố tuyên truyền về địa phương sẽ tự động.",
+        "Chủ động để."
+      ]
+    },
+    "PhuongLongChanh_00269": {
+      "source_id": "user-b437fc4188e5",
+      "partial_count": 17,
+      "final_count": 2,
+      "first_partial_seconds": 2.803,
+      "first_final_seconds": 10.773,
+      "final_texts": [
+        "Kinh tế mà quan trọng nhất bảo lưu trong hai năm.",
+        "Và các tiêu chí đó thì việc có các vi phạm để hỗ trợ cũng như là triển khai trong thời gian sắp tới."
+      ]
+    },
+    "PhuongLongChanh_00076": {
+      "source_id": "user-a2a89c0ae791",
+      "partial_count": 18,
+      "final_count": 2,
+      "first_partial_seconds": 3.5,
+      "first_final_seconds": 9.655,
+      "final_texts": [
+        "Xem đây là cái mô hình chuyển đổi số đặc sắc.",
+        "Chắc là có bốn nhóm và cái lớp đầu tiên chúng ta làm cho lớp hạ tầng số và an ninh mạng cho bé thì sẽ có hai."
+      ]
+    },
+    "PhuongLongChanh_00629": {
+      "source_id": "user-fe1f98c97ca7",
+      "partial_count": 6,
+      "final_count": 2,
+      "first_partial_seconds": 4.497,
+      "first_final_seconds": 8.659,
+      "final_texts": [
+        "Chất lượng rồi các lớp.",
+        "Lớp lớp năng động."
+      ]
+    }
+  },
+  "event_count": 84,
+  "stored_final_count": 9,
+  "meeting_dictionary_reset": true,
+  "quality": {
+    "final_count": 9,
+    "duplicate_segment_ids": 0,
+    "all_sources_have_final": true,
+    "mean_wer": 0.6085,
+    "mean_cer": 0.5513,
+    "matches": [
+      {
+        "voice": "PhuongLongChanh_00086",
+        "segment_count": 3,
+        "reference": "mọi người sẽ xây dựng và mọi người sẽ chủ động thực hiện còn về cái kinh tế số và xã hội số thì ở đây có tám cái tiêu chí thì trong đó là có bốn cái tiêu chí đánh về giá xã hội và bốn tiêu chí về địa phương sẽ tự chủ động để",
+        "hypothesis": "THỰC HIỆN CON QUA ĐÂY KINH TẾ SỐ VÀ XÃ HỘI SỐ SAU ĐÓ LÀ CÔNG BỐ TUYÊN TRUYỀN VỀ ĐỊA PHƯƠNG SẼ TỰ ĐỘNG CHỦ ĐỘNG ĐỂ",
+        "wer": 0.6842,
+        "cer": 0.6295
+      },
+      {
+        "voice": "PhuongLongChanh_00269",
+        "segment_count": 2,
+        "reference": "các cái tiêu chí mà quan trọng nhất mục tiêu trong năm hai năm sau này mình thực hiện và đi kèm các tiêu chí đó thì VNPT có các giải pháp để hỗ trợ cũng như là triển khai trong thời gian sắp tới",
+        "hypothesis": "KINH TẾ MÀ QUAN TRỌNG NHẤT BẢO LƯU TRONG HAI NĂM VÀ CÁC TIÊU CHÍ ĐÓ THÌ VIỆC CÓ CÁC VI PHẠM ĐỂ HỖ TRỢ CŨNG NHƯ LÀ TRIỂN KHAI TRONG THỜI GIAN SẮP TỚI",
+        "wer": 0.3778,
+        "cer": 0.3196
+      },
+      {
+        "voice": "PhuongLongChanh_00076",
+        "segment_count": 2,
+        "reference": "dạ thì trên màn hình em đang show cho quý anh chị xem đây là cái mô hình chuyển đổi số cấp xã thì nó sẽ gồm có bốn lớp dạ cái lớp đầu tiên đó là cái lớp hạ tầng số và an ninh mạng trong đây thì sẽ có hai",
+        "hypothesis": "XEM ĐÂY LÀ CÁI MÔ HÌNH CHUYỂN ĐỔI SỐ ĐẶC SẮC CHẮC LÀ CÓ BỐN NHÓM VÀ CÁI LỚP ĐẦU TIÊN CHÚNG TA LÀM CHO LỚP HẠ TẦNG SỐ VÀ AN NINH MẠNG CHO BÉ THÌ SẼ CÓ HAI",
+        "wer": 0.5,
+        "cer": 0.4483
+      },
+      {
+        "voice": "PhuongLongChanh_00629",
+        "segment_count": 2,
+        "reference": "cung cấp những thông tin cũng như là số liệu học sinh này chất lượng này rồi các lớp là số trẻ là nam nữ sĩ số là rồi có mặt rồi khó khăn các em học sinh có",
+        "hypothesis": "CHẤT LƯỢNG RỒI CÁC LỚP LỚP NĂNG ĐỘNG",
+        "wer": 0.8718,
+        "cer": 0.8077
+      }
+    ],
+    "within_locked_tolerance": false
+  },
+  "baseline": {
+    "mean_wer": 0.3126,
+    "mean_cer": 0.278,
+    "items": [
+      {
+        "voice": "PhuongLongChanh_00086",
+        "wer": 0.2807,
+        "cer": 0.2634
+      },
+      {
+        "voice": "PhuongLongChanh_00269",
+        "wer": 0.1556,
+        "cer": 0.1186
+      },
+      {
+        "voice": "PhuongLongChanh_00076",
+        "wer": 0.25,
+        "cer": 0.2365
+      },
+      {
+        "voice": "PhuongLongChanh_00629",
+        "wer": 0.5641,
+        "cer": 0.4936
+      }
+    ]
+  },
+  "zipformer_scheduler": {
+    "submitted": 2102,
+    "completed": 2102,
+    "pending": 0,
+    "active_streams": 0,
+    "max_pending": 4,
+    "max_wait_ms": 117.7
+  },
+  "demo_log": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/output/concurrent-streaming-demo.log"
+}

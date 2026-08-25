@@ -1,0 +1,348 @@
+{
+  "model": "qwen2.5:3b",
+  "runtime": {
+    "threads": 12,
+    "temperature": 0.0,
+    "batch_size": 1,
+    "timeout_seconds": 35.0,
+    "max_output_tokens": 140,
+    "max_context_chars": 3200,
+    "context_window": 2048
+  },
+  "meeting_title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+  "updates": [
+    {
+      "batch": 1,
+      "status": "ok",
+      "metadata": {
+        "model": "qwen2.5:3b",
+        "think": false,
+        "elapsed_ms": 8455,
+        "evidence_segment_count": 1,
+        "mode": "incremental_delta",
+        "response_chars": 193,
+        "load_ms": 180,
+        "prompt_eval_count": 431,
+        "prompt_eval_ms": 1360,
+        "eval_count": 61,
+        "eval_ms": 6788
+      },
+      "document": {
+        "schema_version": 1,
+        "meeting": {
+          "title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+          "started_at": 0.0
+        },
+        "summary": [],
+        "topics": [
+          {
+            "title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+            "details": [],
+            "proposals": [],
+            "decisions": [
+              {
+                "content": "Thống nhất phạm vi thí điểm phần mềm AI của VNPT cho ba cơ quan doanh nghiệp trong quý ba.",
+                "source_segment_ids": [
+                  "seg-001"
+                ],
+                "speaker": "Chị Lan"
+              }
+            ],
+            "actions": [],
+            "source_segment_ids": [
+              "seg-001"
+            ]
+          }
+        ],
+        "source_segment_ids": [
+          "seg-001"
+        ]
+      },
+      "checks": {
+        "only_valid_source_ids": true,
+        "all_processed_ids_marked": true,
+        "mentions_pilot": true,
+        "has_decision": true,
+        "has_action": false,
+        "has_owner": false,
+        "has_deadline": false
+      }
+    },
+    {
+      "batch": 2,
+      "status": "ok",
+      "metadata": {
+        "model": "qwen2.5:3b",
+        "think": false,
+        "elapsed_ms": 6436,
+        "evidence_segment_count": 1,
+        "mode": "incremental_delta",
+        "response_chars": 139,
+        "load_ms": 170,
+        "prompt_eval_count": 449,
+        "prompt_eval_ms": 1814,
+        "eval_count": 47,
+        "eval_ms": 4427
+      },
+      "document": {
+        "schema_version": 1,
+        "meeting": {
+          "title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+          "started_at": 0.0
+        },
+        "summary": [],
+        "topics": [
+          {
+            "title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+            "details": [],
+            "proposals": [],
+            "decisions": [
+              {
+                "content": "Thống nhất phạm vi thí điểm phần mềm AI của VNPT cho ba cơ quan doanh nghiệp trong quý ba.",
+                "source_segment_ids": [
+                  "seg-001"
+                ],
+                "speaker": "Chị Lan"
+              },
+              {
+                "content": "Thống nhất chọn đề xuất của Anh Minh",
+                "source_segment_ids": [
+                  "seg-002"
+                ],
+                "speaker": "Anh Minh"
+              }
+            ],
+            "actions": [],
+            "source_segment_ids": [
+              "seg-001",
+              "seg-002"
+            ]
+          }
+        ],
+        "source_segment_ids": [
+          "seg-001",
+          "seg-002"
+        ]
+      },
+      "checks": {
+        "only_valid_source_ids": true,
+        "all_processed_ids_marked": true,
+        "mentions_pilot": true,
+        "has_decision": true,
+        "has_action": false,
+        "has_owner": false,
+        "has_deadline": false
+      }
+    },
+    {
+      "batch": 3,
+      "status": "ok",
+      "metadata": {
+        "model": "qwen2.5:3b",
+        "think": false,
+        "elapsed_ms": 6799,
+        "evidence_segment_count": 1,
+        "mode": "incremental_delta",
+        "response_chars": 153,
+        "load_ms": 175,
+        "prompt_eval_count": 457,
+        "prompt_eval_ms": 1218,
+        "eval_count": 50,
+        "eval_ms": 5381
+      },
+      "document": {
+        "schema_version": 1,
+        "meeting": {
+          "title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+          "started_at": 0.0
+        },
+        "summary": [],
+        "topics": [
+          {
+            "title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+            "details": [],
+            "proposals": [],
+            "decisions": [
+              {
+                "content": "Thống nhất phạm vi thí điểm phần mềm AI của VNPT cho ba cơ quan doanh nghiệp trong quý ba.",
+                "source_segment_ids": [
+                  "seg-001"
+                ],
+                "speaker": "Chị Lan"
+              },
+              {
+                "content": "Thống nhất chọn đề xuất của Anh Minh",
+                "source_segment_ids": [
+                  "seg-002"
+                ],
+                "speaker": "Anh Minh"
+              },
+              {
+                "content": "Thống nhất chọn phương án thí điểm cổng trợ lý AI.",
+                "source_segment_ids": [
+                  "seg-003"
+                ],
+                "speaker": "Chị Lan"
+              }
+            ],
+            "actions": [],
+            "source_segment_ids": [
+              "seg-001",
+              "seg-002",
+              "seg-003"
+            ]
+          }
+        ],
+        "source_segment_ids": [
+          "seg-001",
+          "seg-002",
+          "seg-003"
+        ]
+      },
+      "checks": {
+        "only_valid_source_ids": true,
+        "all_processed_ids_marked": true,
+        "mentions_pilot": true,
+        "has_decision": true,
+        "has_action": false,
+        "has_owner": false,
+        "has_deadline": false
+      }
+    },
+    {
+      "batch": 4,
+      "status": "ok",
+      "metadata": {
+        "model": "qwen2.5:3b",
+        "think": false,
+        "elapsed_ms": 8239,
+        "evidence_segment_count": 1,
+        "mode": "incremental_delta",
+        "response_chars": 185,
+        "load_ms": 192,
+        "prompt_eval_count": 452,
+        "prompt_eval_ms": 1228,
+        "eval_count": 62,
+        "eval_ms": 6794
+      },
+      "document": {
+        "schema_version": 1,
+        "meeting": {
+          "title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+          "started_at": 0.0
+        },
+        "summary": [],
+        "topics": [
+          {
+            "title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+            "details": [],
+            "proposals": [],
+            "decisions": [
+              {
+                "content": "Thống nhất phạm vi thí điểm phần mềm AI của VNPT cho ba cơ quan doanh nghiệp trong quý ba.",
+                "source_segment_ids": [
+                  "seg-001"
+                ],
+                "speaker": "Chị Lan"
+              },
+              {
+                "content": "Thống nhất chọn đề xuất của Anh Minh",
+                "source_segment_ids": [
+                  "seg-002"
+                ],
+                "speaker": "Anh Minh"
+              },
+              {
+                "content": "Thống nhất chọn phương án thí điểm cổng trợ lý AI.",
+                "source_segment_ids": [
+                  "seg-003"
+                ],
+                "speaker": "Chị Lan"
+              }
+            ],
+            "actions": [],
+            "source_segment_ids": [
+              "seg-001",
+              "seg-002",
+              "seg-003"
+            ]
+          }
+        ],
+        "source_segment_ids": [
+          "seg-001",
+          "seg-002",
+          "seg-003",
+          "seg-004"
+        ]
+      },
+      "checks": {
+        "only_valid_source_ids": true,
+        "all_processed_ids_marked": true,
+        "mentions_pilot": true,
+        "has_decision": true,
+        "has_action": false,
+        "has_owner": false,
+        "has_deadline": false
+      }
+    }
+  ],
+  "final_document": {
+    "schema_version": 1,
+    "meeting": {
+      "title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+      "started_at": 0.0
+    },
+    "summary": [],
+    "topics": [
+      {
+        "title": "Triển khai phần mềm AI của VNPT cho các cơ quan doanh nghiệp",
+        "details": [],
+        "proposals": [],
+        "decisions": [
+          {
+            "content": "Thống nhất phạm vi thí điểm phần mềm AI của VNPT cho ba cơ quan doanh nghiệp trong quý ba.",
+            "source_segment_ids": [
+              "seg-001"
+            ],
+            "speaker": "Chị Lan"
+          },
+          {
+            "content": "Thống nhất chọn đề xuất của Anh Minh",
+            "source_segment_ids": [
+              "seg-002"
+            ],
+            "speaker": "Anh Minh"
+          },
+          {
+            "content": "Thống nhất chọn phương án thí điểm cổng trợ lý AI.",
+            "source_segment_ids": [
+              "seg-003"
+            ],
+            "speaker": "Chị Lan"
+          }
+        ],
+        "actions": [],
+        "source_segment_ids": [
+          "seg-001",
+          "seg-002",
+          "seg-003"
+        ]
+      }
+    ],
+    "source_segment_ids": [
+      "seg-001",
+      "seg-002",
+      "seg-003",
+      "seg-004"
+    ]
+  },
+  "final_checks": {
+    "completed_all_batches": true,
+    "all_sources_preserved": true,
+    "mentions_pilot": true,
+    "has_decision": true,
+    "has_action": false,
+    "has_owner": false,
+    "has_deadline": false
+  }
+}

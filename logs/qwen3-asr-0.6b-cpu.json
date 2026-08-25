@@ -1,0 +1,38 @@
+{
+  "model": "Qwen/Qwen3-ASR-0.6B",
+  "backend": "transformers-cpu",
+  "worker_count": 1,
+  "language": "Vietnamese",
+  "model_load_seconds": 385.619,
+  "total_audio_seconds": 30.0,
+  "total_processing_seconds": 19.491,
+  "realtime_factor": 0.6497,
+  "mean_wer": 0.3317,
+  "mean_cer": 0.2369,
+  "items": [
+    {
+      "voice": "thayDung_noi",
+      "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+      "hypothesis": "rồi thì ở đây đục năm hai họ nói về cái lớp đầu tiên cái lớp là adobe source thì nó gồm có là hds và hbase thì hds thì là cái hệ thống tập tin phân tán",
+      "recognized_language": "Vietnamese",
+      "audio_seconds": 15.0,
+      "queue_wait_seconds": 385.733,
+      "processing_seconds": 7.885,
+      "realtime_factor": 0.5257,
+      "wer": 0.4062,
+      "cer": 0.2868
+    },
+    {
+      "voice": "thayPhuoc_noi",
+      "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+      "hypothesis": "làm web này nọ rồi đó làm hệ thống web này nọ bán cho thành thành phố nhưng như cũ không có đời chết nhưng mà người ta dù quê sống thì người ta dùng tinh học ứng dụng tinh học để làm được rất nhiều chuyện nghe kể chuyện người ta học một cái cái công thức để làm cái chuyện gì đó để trong trong cái",
+      "recognized_language": "Vietnamese",
+      "audio_seconds": 15.0,
+      "queue_wait_seconds": 393.621,
+      "processing_seconds": 11.606,
+      "realtime_factor": 0.7737,
+      "wer": 0.2571,
+      "cer": 0.1871
+    }
+  ]
+}

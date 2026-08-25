@@ -1,0 +1,39 @@
+{
+  "results": [
+    {
+      "mode": "light",
+      "enhancer": "dpdfnet_baseline",
+      "mean_wer": 0.2759,
+      "mean_cer": 0.2167,
+      "realtime_factor": 0.1738,
+      "items": [
+        {
+          "voice": "thayDung_noi",
+          "reference": "rồi thì ở đây mục 5.2 họ nói về lớp đầu tiên lớp hadoop storage thì nó gồm có HDFS và HBase. HDFS là cái hệ thống tập tin phân tán",
+          "hypothesis": "RỒI THÌ Ở ĐÂY MỘT NĂM CHẤM HAI HỌ NÓI VỀ CÁI LỚP ĐẦU TIÊN LỚP ADOLF STORES THÌ NÓ GỒM ĐÓ LÀ HD VÀ HPASE LÀ HỆ THỐNG TẬP T PHÂN TÁN",
+          "wer": 0.4375,
+          "cer": 0.3178,
+          "audio_seconds": 15.0,
+          "processing_seconds": 2.581,
+          "enhancement": {
+            "average_mix": 0.2599,
+            "peak_mix": 0.603
+          }
+        },
+        {
+          "voice": "thayPhuoc_noi",
+          "reference": "làm web này nọ đồ đó làm hệ thống web này nọ đồ bán cho thành phố như cũ không có vấn đề gì hết nhưng mà người ta về quê sống thì người ta dùng tin học ứng dụng tin học để mà làm được rất nhiều chuyện ngay cả chuyện người ta học một cái công thức để làm một cái chuyện gì đó để trong cái chuyện",
+          "hypothesis": "LÀM WEB NÀY NỌ RỒI ĐÓ LÀM HỆ THỐNG WEB NÀY NỌ ĐỒ BÁN CHO THÀNH THÀNH PHỐ NHƯ CŨ KHÔNG CÓ VẤN ĐỀ GÌ HẾT NHƯNG MÀ NGƯỜI TA VỀ QUÊ SỐNG THÌ NGƯỜI TA DÙNG TIN HỌC ỨNG DỤNG TIN HỌC ĐỂ LÀM ĐƯỢC RẤT NHIỀU CHUYỆN NGAY KỂ CHUYỆN NGƯỜI TA HỌC MỘT CÁI CÔNG THỨC ĐỂ LÀM CÁI CHUYỆN GÌ ĐÓ ĐỂ",
+          "wer": 0.1143,
+          "cer": 0.1156,
+          "audio_seconds": 15.0,
+          "processing_seconds": 2.494,
+          "enhancement": {
+            "average_mix": 0.1223,
+            "peak_mix": 0.4358
+          }
+        }
+      ]
+    }
+  ]
+}

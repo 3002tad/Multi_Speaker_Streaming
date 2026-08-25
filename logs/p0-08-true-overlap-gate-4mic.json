@@ -1,0 +1,134 @@
+{
+  "status": "passed",
+  "mics": 4,
+  "schedule": "simultaneous",
+  "connection_warmup": 45.0,
+  "finalization_wait": 12.0,
+  "all_sources_have_partial": true,
+  "all_sources_have_final": true,
+  "sources": {
+    "PhuongLongChanh_00086": {
+      "source_id": "user-6e4b20e73c4f",
+      "partial_count": 20,
+      "final_count": 1,
+      "first_partial_seconds": 16.197,
+      "first_final_seconds": 33.382,
+      "final_texts": [
+        "Sẽ chủ động thực hiện còn kinh tế số và xã hội số thì đây là có tám cái tiêu chí là có bốn tiêu chí về vật chất xã hội của địa phương cũng sẽ tự động chủ động để."
+      ]
+    },
+    "PhuongLongChanh_00269": {
+      "source_id": "user-76b15b0db446",
+      "partial_count": 16,
+      "final_count": 1,
+      "first_partial_seconds": 17.243,
+      "first_final_seconds": 31.256,
+      "final_texts": [
+        "Mà quan trọng nhất và mục tiêu trong năm hai sáu này thực hiện và đi kèm các tiêu chí nhỏ để kinh tế có các biện pháp để phòng thờ cũng như là triển khai trong thời gian sắp tới."
+      ]
+    },
+    "PhuongLongChanh_00076": {
+      "source_id": "user-ebd2a701882e",
+      "partial_count": 17,
+      "final_count": 1,
+      "first_partial_seconds": 15.731,
+      "first_final_seconds": 32.312,
+      "final_texts": [
+        "Xem đây là cái mô hình chuyển đổi số các xã thì nó sẽ là có bốn lớp và cái lớp tổ chức an ninh mạng cho em thì sẽ có hai."
+      ]
+    },
+    "PhuongLongChanh_00629": {
+      "source_id": "user-aa8dbf2870f5",
+      "partial_count": 11,
+      "final_count": 2,
+      "first_partial_seconds": 17.431,
+      "first_final_seconds": 29.582,
+      "final_texts": [
+        "Học sinh là chất lượng các lớp chốt trẻ ăn ở chỉ số là có mặt rồi có hai.",
+        "Em học sinh."
+      ]
+    }
+  },
+  "event_count": 79,
+  "stored_final_count": 5,
+  "meeting_dictionary_reset": true,
+  "quality": {
+    "final_count": 5,
+    "duplicate_segment_ids": 0,
+    "all_sources_have_final": true,
+    "mean_wer": 0.481,
+    "mean_cer": 0.4332,
+    "matches": [
+      {
+        "voice": "PhuongLongChanh_00086",
+        "segment_count": 1,
+        "reference": "mọi người sẽ xây dựng và mọi người sẽ chủ động thực hiện còn về cái kinh tế số và xã hội số thì ở đây có tám cái tiêu chí thì trong đó là có bốn cái tiêu chí đánh về giá xã hội và bốn tiêu chí về địa phương sẽ tự chủ động để",
+        "hypothesis": "SẼ CHỦ ĐỘNG THỰC HIỆN CÒN KINH TẾ SỐ VÀ XÃ HỘI SỐ THÌ ĐÂY LÀ CÓ TÁM CÁI TIÊU CHÍ LÀ CÓ BỐN TIÊU CHÍ VỀ VẬT CHẤT XÃ HỘI CỦA ĐỊA PHƯƠNG CŨNG SẼ TỰ ĐỘNG CHỦ ĐỘNG ĐỂ",
+        "wer": 0.4561,
+        "cer": 0.4509
+      },
+      {
+        "voice": "PhuongLongChanh_00269",
+        "segment_count": 1,
+        "reference": "các cái tiêu chí mà quan trọng nhất mục tiêu trong năm hai năm sau này mình thực hiện và đi kèm các tiêu chí đó thì VNPT có các giải pháp để hỗ trợ cũng như là triển khai trong thời gian sắp tới",
+        "hypothesis": "MÀ QUAN TRỌNG NHẤT VÀ MỤC TIÊU TRONG NĂM HAI SÁU NÀY THỰC HIỆN VÀ ĐI KÈM CÁC TIÊU CHÍ NHỎ ĐỂ KINH TẾ CÓ CÁC BIỆN PHÁP ĐỂ PHÒNG THỜ CŨNG NHƯ LÀ TRIỂN KHAI TRONG THỜI GIAN SẮP TỚI",
+        "wer": 0.3333,
+        "cer": 0.2577
+      },
+      {
+        "voice": "PhuongLongChanh_00076",
+        "segment_count": 1,
+        "reference": "dạ thì trên màn hình em đang show cho quý anh chị xem đây là cái mô hình chuyển đổi số cấp xã thì nó sẽ gồm có bốn lớp dạ cái lớp đầu tiên đó là cái lớp hạ tầng số và an ninh mạng trong đây thì sẽ có hai",
+        "hypothesis": "XEM ĐÂY LÀ CÁI MÔ HÌNH CHUYỂN ĐỔI SỐ CÁC XÃ THÌ NÓ SẼ LÀ CÓ BỐN LỚP VÀ CÁI LỚP TỔ CHỨC AN NINH MẠNG CHO EM THÌ SẼ CÓ HAI",
+        "wer": 0.5192,
+        "cer": 0.4729
+      },
+      {
+        "voice": "PhuongLongChanh_00629",
+        "segment_count": 2,
+        "reference": "cung cấp những thông tin cũng như là số liệu học sinh này chất lượng này rồi các lớp là số trẻ là nam nữ sĩ số là rồi có mặt rồi khó khăn các em học sinh có",
+        "hypothesis": "HỌC SINH LÀ CHẤT LƯỢNG CÁC LỚP CHỐT TRẺ ĂN Ở CHỈ SỐ LÀ CÓ MẶT RỒI CÓ HAI EM HỌC SINH",
+        "wer": 0.6154,
+        "cer": 0.5513
+      }
+    ]
+  },
+  "offline_baseline": {
+    "mean_wer": 0.3126,
+    "mean_cer": 0.278,
+    "items": [
+      {
+        "voice": "PhuongLongChanh_00086",
+        "wer": 0.2807,
+        "cer": 0.2634
+      },
+      {
+        "voice": "PhuongLongChanh_00269",
+        "wer": 0.1556,
+        "cer": 0.1186
+      },
+      {
+        "voice": "PhuongLongChanh_00076",
+        "wer": 0.25,
+        "cer": 0.2365
+      },
+      {
+        "voice": "PhuongLongChanh_00629",
+        "wer": 0.5641,
+        "cer": 0.4936
+      }
+    ]
+  },
+  "zipformer_scheduler": {
+    "submitted": 2626,
+    "completed": 2626,
+    "pending": 0,
+    "active_streams": 0,
+    "max_pending": 4,
+    "max_wait_ms": 152.0,
+    "max_queue_wait_ms": 117.7,
+    "mean_operation_ms": 3.0,
+    "max_operation_ms": 127.5
+  },
+  "demo_log": "/mnt/d/VNPT/Code/Multi_Speaker_Streaming/output/concurrent-streaming-demo.log"
+}
